@@ -1,6 +1,6 @@
 # rumk
 
-A fast, extensible linter for Makefiles written in Rust, inspired by tools like Ruff (Python) and Rumdl (Markdown).
+A fast linter for Makefiles written in Rust, inspired by tools like Ruff (Python) and Rumdl (Markdown).
 
 ## Features
 
@@ -31,7 +31,7 @@ rumk check path/to/Makefile
 rumk fix
 
 # Explain a specific rule
-rumk explain syntax/tab-in-recipe
+rumk explain MK001
 ```
 
 ### Configuration
@@ -40,29 +40,29 @@ Create a `.rumk.toml` file in your project:
 
 ```toml
 [rules]
-"style/line-length" = { enabled = true, options = { max = 100 } }
-"style/variable-naming" = { enabled = true, options = { style = "UPPER_CASE" } }
-"practice/missing-phony" = { enabled = true }
+"MK101" = { enabled = true, options = { max = 100 } }
+"MK102" = { enabled = true, options = { style = "UPPER_CASE" } }
+"MK201" = { enabled = true }
 
 [ignore]
 paths = ["vendor/*", "third_party/*"]
-rules = ["style/line-length"]
+rules = ["MK101"]
 ```
 
 ## Rules
 
-### Syntax Rules
-- `syntax/tab-in-recipe` - Recipes must use tab indentation
-- `syntax/invalid-variable` - Invalid variable syntax
+### Syntax Rules (MK000-MK099)
+- `MK001` - Recipes must use tab indentation
+- `MK002` - Invalid variable syntax
 
-### Style Rules
-- `style/line-length` - Line exceeds maximum length
-- `style/variable-naming` - Variable naming convention
-- `style/target-naming` - Target naming convention
+### Style Rules (MK100-MK199)
+- `MK101` - Line exceeds maximum length
+- `MK102` - Variable naming convention
+- `MK103` - Target naming convention
 
-### Best Practice Rules
-- `practice/missing-phony` - Non-file targets should be .PHONY
-- `practice/hardcoded-path` - Avoid hardcoded absolute paths
+### Best Practice Rules (MK200-MK299)
+- `MK201` - Non-file targets should be .PHONY
+- `MK202` - Avoid hardcoded absolute paths
 
 ## Example
 
@@ -81,12 +81,13 @@ test:
 Running `rumk check` produces:
 
 ```
-Makefile:2:1: error: Recipe must be indented with tab, not spaces [syntax/tab-in-recipe]
-Makefile:4:7: warning: Variable 'FOO' contains hardcoded absolute path [practice/hardcoded-path]
-Makefile:1:1: warning: Target 'clean' should be declared .PHONY [practice/missing-phony]
-Makefile:6:1: warning: Target 'test' should be declared .PHONY [practice/missing-phony]
+Makefile:2:1: [MK001] Recipe must be indented with tab, not spaces [*]
+Makefile:4:7: [MK202] Variable 'FOO' contains hardcoded absolute path
+Makefile:1:1: [MK201] Target 'clean' should be declared .PHONY
+Makefile:6:1: [MK201] Target 'test' should be declared .PHONY
 
-Found 1 error, 3 warnings
+Found 4 issues in 1 file (1 file checked)
+Run with --fix to automatically fix issues
 ```
 
 ## Contributing

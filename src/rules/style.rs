@@ -22,7 +22,7 @@ impl LineLength {
 
 impl Rule for LineLength {
     fn id(&self) -> &'static str {
-        "style/line-length"
+        "MK101"
     }
     
     fn name(&self) -> &'static str {
@@ -74,7 +74,7 @@ impl VariableNaming {
 
 impl Rule for VariableNaming {
     fn id(&self) -> &'static str {
-        "style/variable-naming"
+        "MK102"
     }
     
     fn name(&self) -> &'static str {
@@ -126,7 +126,7 @@ impl TargetNaming {
 
 impl Rule for TargetNaming {
     fn id(&self) -> &'static str {
-        "style/target-naming"
+        "MK103"
     }
     
     fn name(&self) -> &'static str {

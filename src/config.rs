@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 use crate::rules::{self, Rule};
 
-#[derive(Debug, Clone)]
 pub struct Config {
     pub rules: Vec<Box<dyn Rule>>,
     pub rule_config: HashMap<String, RuleConfig>,

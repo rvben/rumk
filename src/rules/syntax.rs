@@ -6,7 +6,7 @@ pub struct TabInRecipe;
 
 impl Rule for TabInRecipe {
     fn id(&self) -> &'static str {
-        "syntax/tab-in-recipe"
+        "MK001"
     }
     
     fn name(&self) -> &'static str {
@@ -59,7 +59,7 @@ pub struct InvalidVariableSyntax;
 
 impl Rule for InvalidVariableSyntax {
     fn id(&self) -> &'static str {
-        "syntax/invalid-variable"
+        "MK002"
     }
     
     fn name(&self) -> &'static str {

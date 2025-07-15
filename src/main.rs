@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use walkdir::WalkDir;
 
 mod parser;
 mod rules;
@@ -13,7 +14,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 
 #[derive(Parser)]
 #[command(name = "rumk")]
-#[command(about = "A fast, extensible linter for Makefiles", long_about = None)]
+#[command(about = "A fast linter for Makefiles", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -31,15 +32,8 @@ enum Commands {
         #[arg(long, default_value = "text")]
         format: OutputFormat,
         
-        #[arg(long)]
+        #[arg(long, help = "Fix any fixable issues")]
         fix: bool,
-    },
-    Fix {
-        #[arg(default_value = "Makefile")]
-        path: PathBuf,
-        
-        #[arg(short, long)]
-        config: Option<PathBuf>,
     },
     Explain {
         rule: String,
@@ -59,11 +53,7 @@ fn main() -> Result<()> {
     match cli.command {
         Commands::Check { path, config, format, fix } => {
             let config = load_config(config)?;
-            check_file(&path, &config, format, fix)?;
-        }
-        Commands::Fix { path, config } => {
-            let config = load_config(config)?;
-            fix_file(&path, &config)?;
+            check_path(&path, &config, format, fix)?;
         }
         Commands::Explain { rule } => {
             explain_rule(&rule)?;
@@ -76,7 +66,124 @@ fn main() -> Result<()> {
 fn load_config(path: Option<PathBuf>) -> Result<Config> {
     match path {
         Some(path) => Config::from_file(&path),
-        None => Config::find_and_load().unwrap_or_else(|_| Config::default()),
+        None => Ok(Config::find_and_load().unwrap_or_else(|_| Config::default())),
+    }
+}
+
+fn check_path(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<()> {
+    if path.is_file() {
+        check_file(path, config, format, auto_fix)
+    } else if path.is_dir() {
+        check_directory(path, config, format, auto_fix)
+    } else {
+        anyhow::bail!("Path '{}' is neither a file nor a directory", path.display())
+    }
+}
+
+
+fn check_directory(dir: &PathBuf, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<()> {
+    use colored::*;
+    
+    let mut total_files = 0;
+    let mut files_with_issues = 0;
+    let mut total_issues = 0;
+    let mut has_errors = false;
+    
+    for entry in WalkDir::new(dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        let path = entry.path();
+        
+        // Check if this looks like a Makefile
+        if is_makefile(path) {
+            total_files += 1;
+            
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    match parser::parse(&content) {
+                        Ok(makefile) => {
+                            let mut diagnostics = Vec::new();
+                            
+                            for rule in &config.rules {
+                                let rule_diagnostics = rule.check(&makefile, &content);
+                                diagnostics.extend(rule_diagnostics);
+                            }
+                            
+                            diagnostics.sort_by_key(|d| (d.line, d.column));
+                            
+                            if auto_fix && !diagnostics.is_empty() {
+                                let fixed_content = fix::apply_fixes(&content, &diagnostics);
+                                if fixed_content != content {
+                                    std::fs::write(path, fixed_content)?;
+                                }
+                            }
+                            
+                            if !diagnostics.is_empty() {
+                                files_with_issues += 1;
+                                total_issues += diagnostics.len();
+                                has_errors = has_errors || diagnostics.iter().any(|d| matches!(d.severity, diagnostic::Severity::Error));
+                            }
+                            
+                            output_diagnostics(&diagnostics, format, &path.to_path_buf());
+                        }
+                        Err(e) => {
+                            eprintln!("{}: Failed to parse: {}", path.display().to_string().red(), e);
+                            files_with_issues += 1;
+                            has_errors = true;
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("{}: Failed to read: {}", path.display().to_string().red(), e);
+                    files_with_issues += 1;
+                    has_errors = true;
+                }
+            }
+        }
+    }
+    
+    // Print summary for text format
+    if matches!(format, OutputFormat::Text) && total_files > 0 {
+        println!();
+        if total_issues == 0 {
+            println!("{} All {} {} checked successfully", 
+                "✓".green(),
+                total_files,
+                if total_files == 1 { "file" } else { "files" }
+            );
+        } else {
+            println!("Found {} {} in {} {} ({} {} checked)", 
+                total_issues.to_string().red(),
+                if total_issues == 1 { "issue" } else { "issues" },
+                files_with_issues.to_string().red(),
+                if files_with_issues == 1 { "file" } else { "files" },
+                total_files,
+                if total_files == 1 { "file" } else { "files" }
+            );
+            
+            if !auto_fix {
+                println!("Run with {} to automatically fix issues", "--fix".green());
+            }
+        }
+    }
+    
+    if has_errors {
+        std::process::exit(1);
+    }
+    
+    Ok(())
+}
+
+fn is_makefile(path: &std::path::Path) -> bool {
+    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        // Common Makefile names
+        matches!(name, "Makefile" | "makefile" | "GNUmakefile") ||
+        // Common extensions
+        name.ends_with(".mk") || name.ends_with(".make")
+    } else {
+        false
     }
 }
 
@@ -103,6 +210,24 @@ fn check_file(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: b
     
     output_diagnostics(&diagnostics, format, path);
     
+    // Print summary for text format
+    if matches!(format, OutputFormat::Text) && !diagnostics.is_empty() {
+        use colored::*;
+        
+        let issue_count = diagnostics.len();
+        let fixable_count = diagnostics.iter().filter(|d| d.fixable).count();
+        
+        println!();
+        println!("Found {} {} in 1 file (1 file checked)", 
+            issue_count.to_string().red(),
+            if issue_count == 1 { "issue" } else { "issues" }
+        );
+        
+        if fixable_count > 0 && !auto_fix {
+            println!("Run with {} to automatically fix issues", "--fix".green());
+        }
+    }
+    
     let has_errors = diagnostics.iter().any(|d| matches!(d.severity, Severity::Error));
     if has_errors {
         std::process::exit(1);
@@ -111,9 +236,6 @@ fn check_file(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: b
     Ok(())
 }
 
-fn fix_file(path: &PathBuf, config: &Config) -> Result<()> {
-    check_file(path, config, OutputFormat::Text, true)
-}
 
 fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &PathBuf) {
     match format {
@@ -126,30 +248,30 @@ fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &P
 fn output_text(diagnostics: &[Diagnostic], path: &PathBuf) {
     use colored::*;
     
-    for diag in diagnostics {
-        let severity_str = match diag.severity {
-            Severity::Error => "error".red().bold(),
-            Severity::Warning => "warning".yellow().bold(),
-            Severity::Info => "info".blue().bold(),
-        };
-        
-        println!(
-            "{}:{}:{}: {}: {} [{}]",
-            path.display(),
-            diag.line,
-            diag.column,
-            severity_str,
-            diag.message,
-            diag.rule_id
-        );
+    if diagnostics.is_empty() {
+        println!("{} No issues found in {}", "✓".green(), path.display());
+        return;
     }
     
-    if !diagnostics.is_empty() {
-        let errors = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Error)).count();
-        let warnings = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Warning)).count();
-        let infos = diagnostics.iter().filter(|d| matches!(d.severity, Severity::Info)).count();
+    for diag in diagnostics {
+        let rule_color = match diag.severity {
+            Severity::Error => "red",
+            Severity::Warning => "yellow",
+            Severity::Info => "cyan",
+        };
         
-        println!("\nFound {} errors, {} warnings, {} info", errors, warnings, infos);
+        // Format: filename:line:column: [RULE_ID] message [*]
+        let fix_indicator = if diag.fixable { " [*]" } else { "" };
+        
+        println!(
+            "{}:{}:{}: {} {}{}",
+            path.display().to_string().cyan(),
+            diag.line,
+            diag.column,
+            format!("[{}]", diag.rule_id).color(rule_color),
+            diag.message,
+            fix_indicator.yellow()
+        );
     }
 }
 

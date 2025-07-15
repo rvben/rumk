@@ -44,20 +44,18 @@ fn apply_edit(lines: &mut Vec<String>, edit: &crate::diagnostic::Edit) {
         let end_line_idx = (edit.end_line - 1).min(lines.len() - 1);
         let end_col = edit.end_column.saturating_sub(1);
         
-        if let Some(first_line) = lines.get_mut(line_idx) {
-            let prefix = first_line[..start_col.min(first_line.len())].to_string();
-            let suffix = if end_line_idx < lines.len() {
-                lines[end_line_idx][end_col.min(lines[end_line_idx].len())..].to_string()
-            } else {
-                String::new()
-            };
-            
-            *first_line = format!("{}{}{}", prefix, edit.replacement, suffix);
-            
-            for _ in line_idx + 1..=end_line_idx.min(lines.len() - 1) {
-                if line_idx + 1 < lines.len() {
-                    lines.remove(line_idx + 1);
-                }
+        let prefix = lines[line_idx][..start_col.min(lines[line_idx].len())].to_string();
+        let suffix = if end_line_idx < lines.len() {
+            lines[end_line_idx][end_col.min(lines[end_line_idx].len())..].to_string()
+        } else {
+            String::new()
+        };
+        
+        lines[line_idx] = format!("{}{}{}", prefix, edit.replacement, suffix);
+        
+        for _ in line_idx + 1..=end_line_idx.min(lines.len() - 1) {
+            if line_idx + 1 < lines.len() {
+                lines.remove(line_idx + 1);
             }
         }
     }

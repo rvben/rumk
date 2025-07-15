@@ -7,7 +7,7 @@ pub struct MissingPhony;
 
 impl Rule for MissingPhony {
     fn id(&self) -> &'static str {
-        "practice/missing-phony"
+        "MK201"
     }
     
     fn name(&self) -> &'static str {
@@ -51,7 +51,7 @@ pub struct HardcodedPath;
 
 impl Rule for HardcodedPath {
     fn id(&self) -> &'static str {
-        "practice/hardcoded-path"
+        "MK202"
     }
     
     fn name(&self) -> &'static str {

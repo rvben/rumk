@@ -1,4 +1,4 @@
-use crate::diagnostic::{Diagnostic, Severity, Fix, Edit};
+use crate::diagnostic::Diagnostic;
 use crate::parser::Makefile;
 use anyhow::{Result, bail};
 

@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt clean install help
+.PHONY: all build test lint fmt clean install run check-examples help
 
 # Configuration
 CARGO = cargo
@@ -26,6 +26,12 @@ clean:
 install: build
 	install -m 755 target/release/$(BINARY_NAME) $(INSTALL_PREFIX)/bin/
 
+run: build
+	./target/release/$(BINARY_NAME) check Makefile
+
+check-examples: build
+	./target/release/$(BINARY_NAME) check examples/
+
 help:
 	@echo "Available targets:"
 	@echo "  all     - Run lint, build, and test"
@@ -35,3 +41,5 @@ help:
 	@echo "  fmt     - Format code"
 	@echo "  clean   - Clean build artifacts"
 	@echo "  install - Install binary to $(INSTALL_PREFIX)/bin"
+	@echo "  run     - Run rumk on this Makefile"
+	@echo "  check-examples - Check example Makefiles"
