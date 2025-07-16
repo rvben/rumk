@@ -4,10 +4,8 @@ use crate::rules::{Rule, RuleCategory};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NamingStyle {
-    UpperCase,
-    LowerCase,
-    CamelCase,
-    SnakeCase,
+    Upper,
+    Lower,
 }
 
 pub struct LineLength {
@@ -148,8 +146,7 @@ impl Rule for TargetNaming {
                         self.id(),
                         Severity::Warning,
                         format!(
-                            "Target '{}' does not follow {} convention",
-                            target, expected
+                            "Target '{target}' does not follow {expected} convention"
                         ),
                         rule.line,
                         rule.column,
@@ -164,22 +161,14 @@ impl Rule for TargetNaming {
 
 fn matches_naming_style(name: &str, style: NamingStyle) -> bool {
     match style {
-        NamingStyle::UpperCase => name.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()),
-        NamingStyle::LowerCase => name.chars().all(|c| !c.is_alphabetic() || c.is_lowercase()),
-        NamingStyle::CamelCase => {
-            !name.is_empty() && name.chars().next().unwrap().is_uppercase() && !name.contains('_')
-        }
-        NamingStyle::SnakeCase => name
-            .chars()
-            .all(|c| c.is_lowercase() || c == '_' || c.is_numeric()),
+        NamingStyle::Upper => name.chars().all(|c| !c.is_alphabetic() || c.is_uppercase()),
+        NamingStyle::Lower => name.chars().all(|c| !c.is_alphabetic() || c.is_lowercase()),
     }
 }
 
 fn naming_style_description(style: NamingStyle) -> &'static str {
     match style {
-        NamingStyle::UpperCase => "UPPER_CASE",
-        NamingStyle::LowerCase => "lower_case",
-        NamingStyle::CamelCase => "CamelCase",
-        NamingStyle::SnakeCase => "snake_case",
+        NamingStyle::Upper => "UPPER_CASE",
+        NamingStyle::Lower => "lower_case",
     }
 }

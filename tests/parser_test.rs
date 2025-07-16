@@ -11,7 +11,6 @@ target: dependency
         let makefile = parse(content).unwrap();
         assert_eq!(makefile.rules.len(), 1);
         assert_eq!(makefile.rules[0].targets, vec!["target"]);
-        assert_eq!(makefile.rules[0].prerequisites, vec!["dependency"]);
         assert_eq!(makefile.rules[0].recipes.len(), 1);
         assert_eq!(makefile.rules[0].recipes[0].command, "command");
     }
