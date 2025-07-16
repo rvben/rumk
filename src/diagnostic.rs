@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostic {
@@ -55,13 +55,13 @@ impl Diagnostic {
             fix: None,
         }
     }
-    
+
     pub fn with_end_position(mut self, end_line: usize, end_column: usize) -> Self {
         self.end_line = Some(end_line);
         self.end_column = Some(end_column);
         self
     }
-    
+
     pub fn with_fix(mut self, fix: Fix) -> Self {
         self.fixable = true;
         self.fix = Some(fix);
@@ -76,7 +76,7 @@ impl Fix {
             edits: Vec::new(),
         }
     }
-    
+
     pub fn add_edit(mut self, edit: Edit) -> Self {
         self.edits.push(edit);
         self

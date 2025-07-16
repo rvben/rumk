@@ -1,10 +1,10 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::Makefile;
-use anyhow::{Result, bail};
+use anyhow::{bail, Result};
 
-pub mod syntax;
-pub mod style;
 pub mod best_practices;
+pub mod style;
+pub mod syntax;
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
@@ -25,7 +25,7 @@ pub enum RuleCategory {
 
 pub fn get_rule_explanation(rule_id: &str) -> Result<String> {
     let all_rules = get_all_rules();
-    
+
     for rule in all_rules {
         if rule.id() == rule_id {
             return Ok(format!(
@@ -37,7 +37,7 @@ pub fn get_rule_explanation(rule_id: &str) -> Result<String> {
             ));
         }
     }
-    
+
     bail!("Unknown rule: {}", rule_id)
 }
 

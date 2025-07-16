@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use rumk::parser::parse;
-    
+
     #[test]
     fn test_parse_simple_rule() {
         let content = r#"
@@ -15,7 +15,7 @@ target: dependency
         assert_eq!(makefile.rules[0].recipes.len(), 1);
         assert_eq!(makefile.rules[0].recipes[0].command, "command");
     }
-    
+
     #[test]
     fn test_parse_variable() {
         let content = "FOO = bar";
@@ -24,7 +24,7 @@ target: dependency
         assert!(makefile.variables.contains_key("FOO"));
         assert_eq!(makefile.variables["FOO"].value, "bar");
     }
-    
+
     #[test]
     fn test_parse_phony() {
         let content = ".PHONY: clean test";

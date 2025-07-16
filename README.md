@@ -27,8 +27,11 @@ rumk check
 # Check a specific file
 rumk check path/to/Makefile
 
+# Check all Makefiles in a directory
+rumk check path/to/directory/
+
 # Auto-fix issues
-rumk fix
+rumk check --fix
 
 # Explain a specific rule
 rumk explain MK001
