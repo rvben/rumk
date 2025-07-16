@@ -56,7 +56,6 @@ impl Diagnostic {
         }
     }
 
-
     pub fn with_fix(mut self, fix: Fix) -> Self {
         self.fixable = true;
         self.fix = Some(fix);

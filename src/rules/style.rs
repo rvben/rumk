@@ -145,9 +145,7 @@ impl Rule for TargetNaming {
                     diagnostics.push(Diagnostic::new(
                         self.id(),
                         Severity::Warning,
-                        format!(
-                            "Target '{target}' does not follow {expected} convention"
-                        ),
+                        format!("Target '{target}' does not follow {expected} convention"),
                         rule.line,
                         rule.column,
                     ));
