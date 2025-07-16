@@ -1,6 +1,6 @@
 [package]
 name = "rumk"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
 authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
 description = "A fast linter for Makefiles"
