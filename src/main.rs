@@ -1,6 +1,6 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 mod config;
@@ -140,7 +140,7 @@ fn check_directory(
                                     .any(|d| matches!(d.severity, diagnostic::Severity::Error));
                         }
 
-                        output_diagnostics(&diagnostics, format, &path.to_path_buf());
+                        output_diagnostics(&diagnostics, format, path);
                     }
                     Err(e) => {
                         eprintln!(
@@ -269,7 +269,7 @@ fn check_file(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: b
     Ok(())
 }
 
-fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &PathBuf) {
+fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &Path) {
     match format {
         OutputFormat::Text => output_text(diagnostics, path),
         OutputFormat::Json => output_json(diagnostics),
@@ -277,7 +277,7 @@ fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &P
     }
 }
 
-fn output_text(diagnostics: &[Diagnostic], path: &PathBuf) {
+fn output_text(diagnostics: &[Diagnostic], path: &Path) {
     use colored::*;
 
     if diagnostics.is_empty() {
@@ -309,10 +309,10 @@ fn output_text(diagnostics: &[Diagnostic], path: &PathBuf) {
 
 fn output_json(diagnostics: &[Diagnostic]) {
     let json = serde_json::to_string_pretty(diagnostics).unwrap();
-    println!("{}", json);
+    println!("{json}");
 }
 
-fn output_github(diagnostics: &[Diagnostic], path: &PathBuf) {
+fn output_github(diagnostics: &[Diagnostic], path: &Path) {
     for diag in diagnostics {
         let level = match diag.severity {
             Severity::Error => "error",
@@ -333,6 +333,6 @@ fn output_github(diagnostics: &[Diagnostic], path: &PathBuf) {
 
 fn explain_rule(rule_id: &str) -> Result<()> {
     let explanation = rules::get_rule_explanation(rule_id)?;
-    println!("{}", explanation);
+    println!("{explanation}");
     Ok(())
 }

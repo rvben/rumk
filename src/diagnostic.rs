@@ -56,11 +56,6 @@ impl Diagnostic {
         }
     }
 
-    pub fn with_end_position(mut self, end_line: usize, end_column: usize) -> Self {
-        self.end_line = Some(end_line);
-        self.end_column = Some(end_column);
-        self
-    }
 
     pub fn with_fix(mut self, fix: Fix) -> Self {
         self.fixable = true;

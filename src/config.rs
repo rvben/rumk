@@ -6,8 +6,6 @@ use std::path::{Path, PathBuf};
 
 pub struct Config {
     pub rules: Vec<Box<dyn Rule>>,
-    pub rule_config: HashMap<String, RuleConfig>,
-    pub ignore: IgnoreConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -27,8 +25,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             rules: rules::get_default_rules(),
-            rule_config: HashMap::new(),
-            ignore: IgnoreConfig::default(),
         }
     }
 }
@@ -89,8 +85,6 @@ impl TomlConfig {
 
         Config {
             rules,
-            rule_config: self.rules,
-            ignore: self.ignore,
         }
     }
 }

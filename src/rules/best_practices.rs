@@ -34,7 +34,7 @@ impl Rule for MissingPhony {
                     diagnostics.push(Diagnostic::new(
                         self.id(),
                         Severity::Warning,
-                        format!("Target '{}' should be declared .PHONY", target),
+                        format!("Target '{target}' should be declared .PHONY"),
                         rule.line,
                         rule.column,
                     ));

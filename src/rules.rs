@@ -19,8 +19,6 @@ pub enum RuleCategory {
     Syntax,
     Style,
     BestPractices,
-    Security,
-    Performance,
 }
 
 pub fn get_rule_explanation(rule_id: &str) -> Result<String> {
@@ -46,8 +44,8 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(syntax::TabInRecipe),
         Box::new(syntax::InvalidVariableSyntax),
         Box::new(style::LineLength::new(120)),
-        Box::new(style::VariableNaming::new(style::NamingStyle::UpperCase)),
-        Box::new(style::TargetNaming::new(style::NamingStyle::LowerCase)),
+        Box::new(style::VariableNaming::new(style::NamingStyle::Upper)),
+        Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
         Box::new(best_practices::MissingPhony),
         Box::new(best_practices::HardcodedPath),
     ]
