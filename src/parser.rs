@@ -32,8 +32,6 @@ pub struct Variable {
     pub column: usize,
 }
 
-
-
 pub fn parse(content: &str) -> Result<Makefile> {
     let mut parser = Parser::new(content);
     parser.parse()
@@ -86,7 +84,6 @@ impl<'a> Parser<'a> {
 
         Ok(self.makefile.clone())
     }
-
 
     fn parse_phony(&mut self, line: &str) -> Result<()> {
         let targets = line
@@ -173,7 +170,6 @@ impl<'a> Parser<'a> {
             .split_whitespace()
             .map(|s| s.to_string())
             .collect();
-
 
         let mut recipes = Vec::new();
         self.current_line += 1;

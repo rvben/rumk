@@ -83,8 +83,6 @@ impl TomlConfig {
             }
         }
 
-        Config {
-            rules,
-        }
+        Config { rules }
     }
 }
