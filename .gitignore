@@ -31,3 +31,6 @@ coverage/
 # Local configuration
 .rumk.toml
 rumk.toml
+
+# Environment variables (secrets)
+.env
