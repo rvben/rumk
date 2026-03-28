@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt clean install run check-examples help
+.PHONY: all build test lint fmt clean install run check-examples help release-patch release-minor release-major
 
 # Configuration
 CARGO = cargo
@@ -43,3 +43,12 @@ help:
 	@echo "  install - Install binary to $(INSTALL_PREFIX)/bin"
 	@echo "  run     - Run rumk on this Makefile"
 	@echo "  check-examples - Check example Makefiles"
+
+release-patch:
+	vership bump patch
+
+release-minor:
+	vership bump minor
+
+release-major:
+	vership bump major
