@@ -46,6 +46,7 @@ jobs:
     name: Build and Upload
     needs: create-release
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -62,31 +63,40 @@ jobs:
             os: ubuntu-latest
             ext: ''
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: [self-hosted, Linux, ARM64]
             ext: ''
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      
+
       - name: Install cross-compilation tools
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        # Native arm64 runner uses cargo-zigbuild (pre-installed) instead.
+        if: matrix.target == 'aarch64-unknown-linux-gnu' && runner.arch != 'ARM64'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          
+
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" && "${{ runner.arch }}" == "ARM64" ]]; then
+            # Native arm64 host: cargo-zigbuild targets glibc 2.28 for
+            # wide Linux compat instead of Pi host's newer glibc.
+            cargo zigbuild --release --target aarch64-unknown-linux-gnu.2.28
+          else
+            cargo build --release --target ${{ matrix.target }}
+          fi
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-          
+
       - name: Strip binary (Linux/macOS)
         if: matrix.os != 'windows-latest'
         run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" && "${{ runner.arch }}" != "ARM64" ]]; then
             aarch64-linux-gnu-strip target/${{ matrix.target }}/release/rumk
           else
             strip target/${{ matrix.target }}/release/rumk
