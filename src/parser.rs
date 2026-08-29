@@ -66,13 +66,10 @@ impl<'a> Parser<'a> {
                 continue;
             }
 
-            if trimmed.starts_with('.') || trimmed.starts_with('#') {
-                // Skip comments and special directives except .PHONY
-                if trimmed.starts_with(".PHONY:") {
-                    self.parse_phony(line)?;
-                } else {
-                    self.current_line += 1;
-                }
+            if trimmed.starts_with('#') {
+                self.current_line += 1;
+            } else if Self::is_phony_line(line) {
+                self.parse_phony(line)?;
             } else if self.is_variable_assignment(line) {
                 self.parse_variable(line)?;
             } else if self.is_rule_line(line) {
@@ -87,8 +84,9 @@ impl<'a> Parser<'a> {
 
     fn parse_phony(&mut self, line: &str) -> Result<()> {
         let targets = line
-            .trim_start()
-            .trim_start_matches(".PHONY:")
+            .split_once(':')
+            .map(|(_, prerequisites)| prerequisites)
+            .unwrap_or_default()
             .split_whitespace()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
@@ -98,39 +96,35 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    fn is_phony_line(line: &str) -> bool {
+        line.split_once(':')
+            .is_some_and(|(target, _)| target.trim() == ".PHONY")
+    }
+
     fn is_variable_assignment(&self, line: &str) -> bool {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
             return false;
         }
 
-        trimmed.contains("=") && !trimmed.contains(':')
+        assignment_separator(trimmed).is_some_and(|(position, _)| {
+            let name = trimmed[..position].trim();
+            !name.is_empty() && !name.contains(':')
+        })
     }
 
     fn parse_variable(&mut self, line: &str) -> Result<()> {
         let column = line.len() - line.trim_start().len() + 1;
         let content = line.trim_start();
-
-        let sep = if content.contains(":=") {
-            ":="
-        } else if content.contains("?=") {
-            "?="
-        } else if content.contains("+=") {
-            "+="
-        } else {
-            "="
+        let assignment_line = self.current_line + 1;
+        let Some((separator_position, separator)) = assignment_separator(content) else {
+            bail!("Invalid variable assignment at line {assignment_line}");
         };
 
-        let parts: Vec<&str> = content.splitn(2, sep).collect();
-        if parts.len() != 2 {
-            bail!(
-                "Invalid variable assignment at line {}",
-                self.current_line + 1
-            );
-        }
-
-        let name = parts[0].trim().to_string();
-        let mut value = parts[1].trim().to_string();
+        let name = content[..separator_position].trim().to_string();
+        let mut value = content[separator_position + separator.len()..]
+            .trim()
+            .to_string();
 
         while self.current_line + 1 < self.lines.len()
             && self.lines[self.current_line].ends_with('\\')
@@ -145,7 +139,7 @@ impl<'a> Parser<'a> {
             Variable {
                 name,
                 value,
-                line: self.current_line + 1,
+                line: assignment_line,
                 column,
             },
         );
@@ -161,6 +155,7 @@ impl<'a> Parser<'a> {
 
     fn parse_rule(&mut self) -> Result<()> {
         let line = self.lines[self.current_line];
+        let rule_line = self.current_line + 1;
         let column = line.len() - line.trim_start().len() + 1;
 
         let colon_pos = line.find(':').unwrap();
@@ -208,10 +203,25 @@ impl<'a> Parser<'a> {
         self.makefile.rules.push(Rule {
             targets,
             recipes,
-            line: self.current_line + 1,
+            line: rule_line,
             column,
         });
 
         Ok(())
     }
+}
+
+fn assignment_separator(line: &str) -> Option<(usize, &'static str)> {
+    const SEPARATORS: [&str; 7] = [":::=", "::=", ":=", "?=", "+=", "!=", "="];
+
+    SEPARATORS
+        .iter()
+        .filter_map(|separator| line.find(separator).map(|position| (position, *separator)))
+        .min_by(
+            |(left_position, left_separator), (right_position, right_separator)| {
+                left_position
+                    .cmp(right_position)
+                    .then_with(|| right_separator.len().cmp(&left_separator.len()))
+            },
+        )
 }

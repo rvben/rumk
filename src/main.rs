@@ -1,16 +1,12 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use colored::Colorize;
+use rumk::config::Config;
+use rumk::diagnostic::{Diagnostic, Severity};
+use rumk::{fix, parser, rules};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-
-mod config;
-mod diagnostic;
-mod fix;
-mod parser;
-mod rules;
-
-use crate::config::Config;
-use crate::diagnostic::{Diagnostic, Severity};
 
 #[derive(Parser)]
 #[command(name = "rumk")]
@@ -47,6 +43,20 @@ enum OutputFormat {
     Github,
 }
 
+#[derive(Serialize)]
+struct JsonReport<'a> {
+    files: &'a [FileReport],
+}
+
+#[derive(Serialize)]
+struct FileReport {
+    path: String,
+    diagnostics: Vec<Diagnostic>,
+
+    #[serde(skip)]
+    fixed_count: usize,
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
@@ -58,11 +68,11 @@ fn main() -> Result<()> {
             fix,
         } => {
             let config = load_config(config)?;
-            check_path(&path, &config, format, fix)?;
+            if check_path(&path, &config, format, fix)? {
+                std::process::exit(1);
+            }
         }
-        Commands::Explain { rule } => {
-            explain_rule(&rule)?;
-        }
+        Commands::Explain { rule } => explain_rule(&rule)?,
     }
 
     Ok(())
@@ -71,11 +81,11 @@ fn main() -> Result<()> {
 fn load_config(path: Option<PathBuf>) -> Result<Config> {
     match path {
         Some(path) => Config::from_file(&path),
-        None => Ok(Config::find_and_load().unwrap_or_else(|_| Config::default())),
+        None => Config::find_and_load(),
     }
 }
 
-fn check_path(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<()> {
+fn check_path(path: &Path, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<bool> {
     if path.is_file() {
         check_file(path, config, format, auto_fix)
     } else if path.is_dir() {
@@ -89,232 +99,153 @@ fn check_path(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: b
 }
 
 fn check_directory(
-    dir: &PathBuf,
+    dir: &Path,
     config: &Config,
     format: OutputFormat,
     auto_fix: bool,
-) -> Result<()> {
-    use colored::*;
+) -> Result<bool> {
+    let mut reports = Vec::new();
 
-    let mut total_files = 0;
-    let mut files_with_issues = 0;
-    let mut total_issues = 0;
-    let mut has_errors = false;
-
-    for entry in WalkDir::new(dir)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-    {
-        let path = entry.path();
-
-        // Check if this looks like a Makefile
-        if is_makefile(path) {
-            total_files += 1;
-
-            match std::fs::read_to_string(path) {
-                Ok(content) => match parser::parse(&content) {
-                    Ok(makefile) => {
-                        let mut diagnostics = Vec::new();
-
-                        for rule in &config.rules {
-                            let rule_diagnostics = rule.check(&makefile, &content);
-                            diagnostics.extend(rule_diagnostics);
-                        }
-
-                        diagnostics.sort_by_key(|d| (d.line, d.column));
-
-                        if auto_fix && !diagnostics.is_empty() {
-                            let fixed_content = fix::apply_fixes(&content, &diagnostics);
-                            if fixed_content != content {
-                                std::fs::write(path, fixed_content)?;
-                            }
-                        }
-
-                        if !diagnostics.is_empty() {
-                            files_with_issues += 1;
-                            total_issues += diagnostics.len();
-                            has_errors = has_errors
-                                || diagnostics
-                                    .iter()
-                                    .any(|d| matches!(d.severity, diagnostic::Severity::Error));
-                        }
-
-                        output_diagnostics(&diagnostics, format, path);
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "{}: Failed to parse: {}",
-                            path.display().to_string().red(),
-                            e
-                        );
-                        files_with_issues += 1;
-                        has_errors = true;
-                    }
-                },
-                Err(e) => {
-                    eprintln!(
-                        "{}: Failed to read: {}",
-                        path.display().to_string().red(),
-                        e
-                    );
-                    files_with_issues += 1;
-                    has_errors = true;
-                }
-            }
+    for entry in WalkDir::new(dir) {
+        let entry =
+            entry.with_context(|| format!("Failed to walk directory: {}", dir.display()))?;
+        if !entry.file_type().is_file() || !is_makefile(entry.path()) {
+            continue;
         }
-    }
 
-    // Print summary for text format
-    if matches!(format, OutputFormat::Text) && total_files > 0 {
-        println!();
-        if total_issues == 0 {
-            println!(
-                "{} All {} {} checked successfully",
-                "✓".green(),
-                total_files,
-                if total_files == 1 { "file" } else { "files" }
-            );
-        } else {
-            println!(
-                "Found {} {} in {} {} ({} {} checked)",
-                total_issues.to_string().red(),
-                if total_issues == 1 { "issue" } else { "issues" },
-                files_with_issues.to_string().red(),
-                if files_with_issues == 1 {
-                    "file"
-                } else {
-                    "files"
-                },
-                total_files,
-                if total_files == 1 { "file" } else { "files" }
-            );
-
-            if !auto_fix {
-                println!("Run with {} to automatically fix issues", "--fix".green());
-            }
+        let relative_path = entry.path().strip_prefix(dir).unwrap_or(entry.path());
+        if config.is_path_ignored(relative_path) {
+            continue;
         }
+
+        reports.push(process_file(entry.path(), config, auto_fix)?);
     }
 
-    if has_errors {
-        std::process::exit(1);
+    reports.sort_by(|left, right| left.path.cmp(&right.path));
+    output_reports(&reports, format)?;
+
+    if matches!(format, OutputFormat::Text) {
+        output_directory_summary(&reports, auto_fix);
     }
 
-    Ok(())
+    Ok(has_errors(&reports))
 }
 
-fn is_makefile(path: &std::path::Path) -> bool {
-    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-        // Common Makefile names
-        matches!(name, "Makefile" | "makefile" | "GNUmakefile") ||
-        // Common extensions
-        name.ends_with(".mk") || name.ends_with(".make")
+fn check_file(path: &Path, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<bool> {
+    let ignore_path = std::env::current_dir()
+        .ok()
+        .and_then(|current_dir| path.strip_prefix(current_dir).ok())
+        .unwrap_or(path);
+    let reports = if config.is_path_ignored(ignore_path) {
+        Vec::new()
     } else {
-        false
+        vec![process_file(path, config, auto_fix)?]
+    };
+
+    output_reports(&reports, format)?;
+
+    if matches!(format, OutputFormat::Text) {
+        output_file_summary(&reports, auto_fix);
     }
+
+    Ok(has_errors(&reports))
 }
 
-fn check_file(path: &PathBuf, config: &Config, format: OutputFormat, auto_fix: bool) -> Result<()> {
-    let content = std::fs::read_to_string(path)?;
-    let makefile = parser::parse(&content)?;
-
-    let mut diagnostics = Vec::new();
-
-    for rule in &config.rules {
-        let rule_diagnostics = rule.check(&makefile, &content);
-        diagnostics.extend(rule_diagnostics);
-    }
-
-    diagnostics.sort_by_key(|d| (d.line, d.column));
+fn process_file(path: &Path, config: &Config, auto_fix: bool) -> Result<FileReport> {
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read Makefile: {}", path.display()))?;
+    let mut diagnostics = lint(&content, config)
+        .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    let mut fixed_count = 0;
 
     if auto_fix {
         let fixed_content = fix::apply_fixes(&content, &diagnostics);
         if fixed_content != content {
-            std::fs::write(path, fixed_content)?;
+            fixed_count = diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.fixable)
+                .count();
+            std::fs::write(path, &fixed_content)
+                .with_context(|| format!("Failed to write fixed Makefile: {}", path.display()))?;
+            diagnostics = lint(&fixed_content, config)
+                .with_context(|| format!("Failed to parse fixed Makefile: {}", path.display()))?;
+        }
+    }
+
+    Ok(FileReport {
+        path: path.display().to_string(),
+        diagnostics,
+        fixed_count,
+    })
+}
+
+fn lint(content: &str, config: &Config) -> Result<Vec<Diagnostic>> {
+    let makefile = parser::parse(content)?;
+    let mut diagnostics = config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.check(&makefile, content))
+        .collect::<Vec<_>>();
+    diagnostics.sort_by_key(|diagnostic| (diagnostic.line, diagnostic.column));
+    Ok(diagnostics)
+}
+
+fn is_makefile(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            matches!(name, "Makefile" | "makefile" | "GNUmakefile")
+                || name.ends_with(".mk")
+                || name.ends_with(".make")
+        })
+}
+
+fn output_reports(reports: &[FileReport], format: OutputFormat) -> Result<()> {
+    match format {
+        OutputFormat::Text => {
+            for report in reports {
+                output_text(report);
+            }
+        }
+        OutputFormat::Json => {
             println!(
-                "Fixed {} issues",
-                diagnostics.iter().filter(|d| d.fixable).count()
+                "{}",
+                serde_json::to_string_pretty(&JsonReport { files: reports })?
             );
         }
-    }
-
-    output_diagnostics(&diagnostics, format, path);
-
-    // Print summary for text format
-    if matches!(format, OutputFormat::Text) && !diagnostics.is_empty() {
-        use colored::*;
-
-        let issue_count = diagnostics.len();
-        let fixable_count = diagnostics.iter().filter(|d| d.fixable).count();
-
-        println!();
-        println!(
-            "Found {} {} in 1 file (1 file checked)",
-            issue_count.to_string().red(),
-            if issue_count == 1 { "issue" } else { "issues" }
-        );
-
-        if fixable_count > 0 && !auto_fix {
-            println!("Run with {} to automatically fix issues", "--fix".green());
+        OutputFormat::Github => {
+            for report in reports {
+                output_github(report);
+            }
         }
     }
-
-    let has_errors = diagnostics
-        .iter()
-        .any(|d| matches!(d.severity, Severity::Error));
-    if has_errors {
-        std::process::exit(1);
-    }
-
     Ok(())
 }
 
-fn output_diagnostics(diagnostics: &[Diagnostic], format: OutputFormat, path: &Path) {
-    match format {
-        OutputFormat::Text => output_text(diagnostics, path),
-        OutputFormat::Json => output_json(diagnostics),
-        OutputFormat::Github => output_github(diagnostics, path),
-    }
-}
-
-fn output_text(diagnostics: &[Diagnostic], path: &Path) {
-    use colored::*;
-
-    if diagnostics.is_empty() {
-        println!("{} No issues found in {}", "✓".green(), path.display());
-        return;
-    }
-
-    for diag in diagnostics {
-        let rule_color = match diag.severity {
+fn output_text(report: &FileReport) {
+    for diagnostic in &report.diagnostics {
+        let rule_color = match diagnostic.severity {
             Severity::Error => "red",
             Severity::Warning => "yellow",
             Severity::Info => "cyan",
         };
-
-        // Format: filename:line:column: [RULE_ID] message [*]
-        let fix_indicator = if diag.fixable { " [*]" } else { "" };
+        let fix_indicator = if diagnostic.fixable { " [*]" } else { "" };
 
         println!(
             "{}:{}:{}: {} {}{}",
-            path.display().to_string().cyan(),
-            diag.line,
-            diag.column,
-            format!("[{}]", diag.rule_id).color(rule_color),
-            diag.message,
+            report.path.cyan(),
+            diagnostic.line,
+            diagnostic.column,
+            format!("[{}]", diagnostic.rule_id).color(rule_color),
+            diagnostic.message,
             fix_indicator.yellow()
         );
     }
 }
 
-fn output_json(diagnostics: &[Diagnostic]) {
-    let json = serde_json::to_string_pretty(diagnostics).unwrap();
-    println!("{json}");
-}
-
-fn output_github(diagnostics: &[Diagnostic], path: &Path) {
-    for diag in diagnostics {
-        let level = match diag.severity {
+fn output_github(report: &FileReport) {
+    for diagnostic in &report.diagnostics {
+        let level = match diagnostic.severity {
             Severity::Error => "error",
             Severity::Warning => "warning",
             Severity::Info => "notice",
@@ -323,16 +254,131 @@ fn output_github(diagnostics: &[Diagnostic], path: &Path) {
         println!(
             "::{} file={},line={},col={}::{}",
             level,
-            path.display(),
-            diag.line,
-            diag.column,
-            diag.message
+            escape_github_property(&report.path),
+            diagnostic.line,
+            diagnostic.column,
+            escape_github_message(&diagnostic.message)
         );
     }
 }
 
+fn escape_github_message(value: &str) -> String {
+    value
+        .replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
+fn escape_github_property(value: &str) -> String {
+    escape_github_message(value)
+        .replace(':', "%3A")
+        .replace(',', "%2C")
+}
+
+fn output_file_summary(reports: &[FileReport], auto_fix: bool) {
+    let Some(report) = reports.first() else {
+        println!("{} File ignored by configuration", "✓".green());
+        return;
+    };
+
+    if report.fixed_count > 0 {
+        println!(
+            "Fixed {} {}",
+            report.fixed_count,
+            pluralize(report.fixed_count, "issue", "issues")
+        );
+    }
+
+    if report.diagnostics.is_empty() {
+        println!("{} No issues found in {}", "✓".green(), report.path);
+        return;
+    }
+
+    println!();
+    println!(
+        "Found {} {} in 1 file (1 file checked)",
+        report.diagnostics.len().to_string().red(),
+        pluralize(report.diagnostics.len(), "issue", "issues")
+    );
+    let fixable_count = report
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.fixable)
+        .count();
+    if fixable_count > 0 && !auto_fix {
+        println!("Run with {} to automatically fix issues", "--fix".green());
+    }
+}
+
+fn output_directory_summary(reports: &[FileReport], auto_fix: bool) {
+    let fixed_count: usize = reports.iter().map(|report| report.fixed_count).sum();
+    if fixed_count > 0 {
+        println!(
+            "Fixed {} {}",
+            fixed_count,
+            pluralize(fixed_count, "issue", "issues")
+        );
+    }
+
+    println!();
+    if reports.is_empty() {
+        println!("{} No Makefiles found", "✓".green());
+        return;
+    }
+
+    let total_issues: usize = reports.iter().map(|report| report.diagnostics.len()).sum();
+    if total_issues == 0 {
+        println!(
+            "{} All {} {} checked successfully",
+            "✓".green(),
+            reports.len(),
+            pluralize(reports.len(), "file", "files")
+        );
+        return;
+    }
+
+    let files_with_issues = reports
+        .iter()
+        .filter(|report| !report.diagnostics.is_empty())
+        .count();
+    println!(
+        "Found {} {} in {} {} ({} {} checked)",
+        total_issues.to_string().red(),
+        pluralize(total_issues, "issue", "issues"),
+        files_with_issues.to_string().red(),
+        pluralize(files_with_issues, "file", "files"),
+        reports.len(),
+        pluralize(reports.len(), "file", "files")
+    );
+
+    let fixable_count = reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| diagnostic.fixable)
+        .count();
+    if fixable_count > 0 && !auto_fix {
+        println!("Run with {} to automatically fix issues", "--fix".green());
+    }
+}
+
+fn has_errors(reports: &[FileReport]) -> bool {
+    reports.iter().any(|report| {
+        report
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Error)
+    })
+}
+
+fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 {
+        singular
+    } else {
+        plural
+    }
+}
+
 fn explain_rule(rule_id: &str) -> Result<()> {
-    let explanation = rules::get_rule_explanation(rule_id)?;
-    println!("{explanation}");
+    println!("{}", rules::get_rule_explanation(rule_id)?);
     Ok(())
 }

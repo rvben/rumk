@@ -43,13 +43,33 @@ Create a `.rumk.toml` file in your project:
 
 ```toml
 [rules]
-"MK101" = { enabled = true, options = { max = 100 } }
+"MK101" = { enabled = true, severity = "warning", options = { max = 100 } }
 "MK102" = { enabled = true, options = { style = "UPPER_CASE" } }
 "MK201" = { enabled = true }
 
 [ignore]
 paths = ["vendor/*", "third_party/*"]
 rules = ["MK101"]
+```
+
+Rules omitted from the configuration keep their built-in enabled or disabled state. Supported
+severity values are `error`, `warning`, and `info`. Path ignores support `*`, `**`, and `?` glob
+wildcards and are matched relative to the directory being checked.
+
+### JSON output
+
+JSON output is a single document for both file and directory checks. Every entry includes its
+source path:
+
+```json
+{
+  "files": [
+    {
+      "path": "Makefile",
+      "diagnostics": []
+    }
+  ]
+}
 ```
 
 ## Rules

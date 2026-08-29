@@ -1,59 +1,71 @@
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Diagnostic, Edit};
 
 pub fn apply_fixes(content: &str, diagnostics: &[Diagnostic]) -> String {
-    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let mut fixable_diagnostics: Vec<_> = diagnostics
+    let mut edits: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d.fixable && d.fix.is_some())
+        .filter(|diagnostic| diagnostic.fixable)
+        .filter_map(|diagnostic| diagnostic.fix.as_ref())
+        .flat_map(|fix| &fix.edits)
+        .filter_map(|edit| resolve_edit(content, edit))
         .collect();
 
-    fixable_diagnostics.sort_by(|a, b| b.line.cmp(&a.line).then_with(|| b.column.cmp(&a.column)));
+    edits.sort_by(|left, right| {
+        right
+            .start
+            .cmp(&left.start)
+            .then_with(|| right.end.cmp(&left.end))
+    });
 
-    for diagnostic in fixable_diagnostics {
-        if let Some(fix) = &diagnostic.fix {
-            for edit in &fix.edits {
-                apply_edit(&mut lines, edit);
-            }
+    let mut fixed = content.to_string();
+    let mut next_available_offset = content.len();
+    for edit in edits {
+        if edit.end > next_available_offset {
+            continue;
         }
+
+        fixed.replace_range(edit.start..edit.end, edit.replacement);
+        next_available_offset = edit.start;
     }
 
-    lines.join("\n")
+    fixed
 }
 
-fn apply_edit(lines: &mut Vec<String>, edit: &crate::diagnostic::Edit) {
-    if edit.start_line == 0 || edit.start_line > lines.len() {
-        return;
+struct ResolvedEdit<'a> {
+    start: usize,
+    end: usize,
+    replacement: &'a str,
+}
+
+fn resolve_edit<'a>(content: &str, edit: &'a Edit) -> Option<ResolvedEdit<'a>> {
+    let start = position_to_offset(content, edit.start_line, edit.start_column)?;
+    let end = position_to_offset(content, edit.end_line, edit.end_column)?;
+
+    (start <= end && content.is_char_boundary(start) && content.is_char_boundary(end)).then_some(
+        ResolvedEdit {
+            start,
+            end,
+            replacement: &edit.replacement,
+        },
+    )
+}
+
+fn position_to_offset(content: &str, line: usize, column: usize) -> Option<usize> {
+    if line == 0 || column == 0 {
+        return None;
     }
 
-    let line_idx = edit.start_line - 1;
-
-    if edit.start_line == edit.end_line {
-        if let Some(line) = lines.get_mut(line_idx) {
-            let start_col = edit.start_column.saturating_sub(1);
-            let end_col = edit.end_column.saturating_sub(1).min(line.len());
-
-            if start_col <= line.len() && start_col <= end_col {
-                line.replace_range(start_col..end_col, &edit.replacement);
-            }
-        }
-    } else {
-        let start_col = edit.start_column.saturating_sub(1);
-        let end_line_idx = (edit.end_line - 1).min(lines.len() - 1);
-        let end_col = edit.end_column.saturating_sub(1);
-
-        let prefix = lines[line_idx][..start_col.min(lines[line_idx].len())].to_string();
-        let suffix = if end_line_idx < lines.len() {
-            lines[end_line_idx][end_col.min(lines[end_line_idx].len())..].to_string()
-        } else {
-            String::new()
-        };
-
-        lines[line_idx] = format!("{}{}{}", prefix, edit.replacement, suffix);
-
-        for _ in line_idx + 1..=end_line_idx.min(lines.len() - 1) {
-            if line_idx + 1 < lines.len() {
-                lines.remove(line_idx + 1);
-            }
-        }
+    let mut line_start = 0;
+    for _ in 1..line {
+        let newline = content[line_start..].find('\n')?;
+        line_start += newline + 1;
     }
+
+    let mut line_end = content[line_start..]
+        .find('\n')
+        .map_or(content.len(), |newline| line_start + newline);
+    if line_end > line_start && content.as_bytes()[line_end - 1] == b'\r' {
+        line_end -= 1;
+    }
+
+    Some(line_start + column.saturating_sub(1).min(line_end - line_start))
 }
