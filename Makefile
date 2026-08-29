@@ -30,7 +30,12 @@ run: build
 	./target/release/$(BINARY_NAME) check Makefile
 
 check-examples: build
-	./target/release/$(BINARY_NAME) check examples/
+	./target/release/$(BINARY_NAME) check examples/good.mk
+	@if ./target/release/$(BINARY_NAME) check examples/bad.mk >/dev/null 2>&1; then \
+		echo "Expected examples/bad.mk to fail linting"; exit 1; \
+	else \
+		echo "Confirmed examples/bad.mk contains detectable violations"; \
+	fi
 
 help:
 	@echo "Available targets:"
