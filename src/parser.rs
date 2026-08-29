@@ -114,7 +114,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_variable(&mut self, line: &str) -> Result<()> {
-        let column = line.len() - line.trim_start().len() + 1;
+        let column = line[..line.len() - line.trim_start().len()].chars().count() + 1;
         let content = line.trim_start();
         let assignment_line = self.current_line + 1;
         let Some((separator_position, separator)) = assignment_separator(content) else {
@@ -156,7 +156,7 @@ impl<'a> Parser<'a> {
     fn parse_rule(&mut self) -> Result<()> {
         let line = self.lines[self.current_line];
         let rule_line = self.current_line + 1;
-        let column = line.len() - line.trim_start().len() + 1;
+        let column = line[..line.len() - line.trim_start().len()].chars().count() + 1;
 
         let colon_pos = line.find(':').unwrap();
         let targets_str = line[..colon_pos].trim();

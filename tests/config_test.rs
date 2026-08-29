@@ -49,3 +49,116 @@ rules = ["MK202"]
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].severity, Severity::Error);
 }
+
+#[test]
+fn rumdl_shaped_config_is_canonical() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(".rumk.toml");
+    std::fs::write(
+        &path,
+        r#"
+[global]
+exclude = ["vendor/**"]
+disable = ["MK201"]
+
+[MK101]
+line-length = 3
+severity = "error"
+
+[MK202]
+enabled = true
+
+[per-file-ignores]
+"vendor/**" = ["MK001"]
+"#,
+    )
+    .unwrap();
+
+    let config = Config::from_file(&path).unwrap();
+    let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
+    assert_eq!(ids, ["MK001", "MK002", "MK101", "MK202"]);
+    assert!(config.is_path_ignored(std::path::Path::new("vendor/a.mk")));
+    assert!(
+        config.is_rule_ignored_for_path(directory.path().join("vendor/a.mk").as_path(), "MK001")
+    );
+    assert!(config.render(false, false).contains("[per-file-ignores]"));
+
+    let diagnostics = config
+        .rules
+        .iter()
+        .find(|rule| rule.id() == "MK101")
+        .unwrap()
+        .check(&parse("1234\n").unwrap(), "1234\n");
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+}
+
+#[test]
+fn discovery_walks_up_to_the_project_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let nested = directory.path().join("a/b");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 88\n",
+    )
+    .unwrap();
+
+    let discovered = Config::find_from(&nested).unwrap();
+    assert_eq!(
+        discovered.source_path(),
+        Some(directory.path().join(".rumk.toml").as_path())
+    );
+    assert_eq!(discovered.get("MK101.line-length").as_deref(), Some("88"));
+}
+
+#[test]
+fn effective_configuration_output_is_valid_and_can_be_reloaded() {
+    let defaults = Config::default();
+    let rendered = defaults.render(false, false);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rendered.toml");
+    std::fs::write(&path, rendered).unwrap();
+
+    assert!(Config::from_file(&path).is_ok());
+    assert!(defaults.render(false, true).is_empty());
+}
+
+#[test]
+fn line_length_uses_character_columns_instead_of_utf8_bytes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rumk.toml");
+    std::fs::write(&path, "[MK101]\nline-length = 3\n").unwrap();
+    let config = Config::from_file(&path).unwrap();
+    let rule = config
+        .rules
+        .iter()
+        .find(|rule| rule.id() == "MK101")
+        .unwrap();
+
+    assert!(rule.check(&parse("ééé\n").unwrap(), "ééé\n").is_empty());
+    assert_eq!(rule.check(&parse("éééé\n").unwrap(), "éééé\n")[0].column, 4);
+}
+
+#[test]
+fn config_extends_merges_parent_settings_and_detects_cycles() {
+    let directory = tempfile::tempdir().unwrap();
+    let parent = directory.path().join("parent.toml");
+    let child = directory.path().join("child.toml");
+    std::fs::write(&parent, "[MK101]\nline-length = 80\n").unwrap();
+    std::fs::write(
+        &child,
+        "extends = \"parent.toml\"\n[MK101]\nseverity = \"error\"\n",
+    )
+    .unwrap();
+
+    let config = Config::from_file(&child).unwrap();
+    assert_eq!(config.get("MK101.line-length").as_deref(), Some("80"));
+    assert_eq!(config.get("MK101.severity").as_deref(), Some("error"));
+
+    std::fs::write(&parent, "extends = \"child.toml\"\n").unwrap();
+    assert!(Config::from_file(&child)
+        .err()
+        .unwrap()
+        .to_string()
+        .contains("Failed to parse config file"));
+}

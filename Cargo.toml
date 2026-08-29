@@ -2,6 +2,7 @@
 name = "rumk"
 version = "0.0.1"
 edition = "2021"
+rust-version = "1.82"
 authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
 description = "A fast linter for Makefiles"
 repository = "https://github.com/rvben/rumk"
@@ -14,19 +15,12 @@ categories = ["development-tools", "command-line-utilities"]
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+similar = "2.7"
+tempfile = "3.23"
 toml = "0.9"
 anyhow = "1.0"
-thiserror = "2.0"
 colored = "2.1"
-regex = "1.12"
-walkdir = "2.5"
-rayon = "1.10"
-once_cell = "1.19"
-
-[dev-dependencies]
-insta = "1.39"
-tempfile = "3.23"
-pretty_assertions = "1.4"
+ignore = "0.4"
 
 [[bin]]
 name = "rumk"

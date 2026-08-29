@@ -15,3 +15,12 @@ fn a_fix_preserves_crlf_and_the_final_newline() {
 
     assert_eq!(apply_fixes(content, &[diagnostic]), "clean:\r\n\ttrue\r\n");
 }
+
+#[test]
+fn edit_columns_are_character_based_for_utf8_input() {
+    let content = "éx\n";
+    let diagnostic = Diagnostic::new("TEST", Severity::Warning, "replace", 1, 2)
+        .with_fix(Fix::new("replace x").add_edit(Edit::new(1, 2, 1, 3, "y")));
+
+    assert_eq!(apply_fixes(content, &[diagnostic]), "éy\n");
+}

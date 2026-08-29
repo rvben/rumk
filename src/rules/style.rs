@@ -39,14 +39,14 @@ impl Rule for LineLength {
         let mut diagnostics = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
-            if line.len() > self.max_length {
+            let line_length = line.chars().count();
+            if line_length > self.max_length {
                 diagnostics.push(Diagnostic::new(
                     self.id(),
                     Severity::Warning,
                     format!(
                         "Line length {} exceeds maximum of {}",
-                        line.len(),
-                        self.max_length
+                        line_length, self.max_length
                     ),
                     line_num + 1,
                     self.max_length + 1,

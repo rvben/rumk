@@ -22,6 +22,10 @@ impl Rule for TabInRecipe {
         RuleCategory::Syntax
     }
 
+    fn fixable(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 

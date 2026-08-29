@@ -49,6 +49,10 @@ fn resolve_edit<'a>(content: &str, edit: &'a Edit) -> Option<ResolvedEdit<'a>> {
     )
 }
 
+pub fn edit_byte_range(content: &str, edit: &Edit) -> Option<(usize, usize)> {
+    resolve_edit(content, edit).map(|edit| (edit.start, edit.end))
+}
+
 fn position_to_offset(content: &str, line: usize, column: usize) -> Option<usize> {
     if line == 0 || column == 0 {
         return None;
@@ -67,5 +71,10 @@ fn position_to_offset(content: &str, line: usize, column: usize) -> Option<usize
         line_end -= 1;
     }
 
-    Some(line_start + column.saturating_sub(1).min(line_end - line_start))
+    let line_content = &content[line_start..line_end];
+    let byte_column = line_content
+        .char_indices()
+        .nth(column - 1)
+        .map_or(line_content.len(), |(offset, _)| offset);
+    Some(line_start + byte_column)
 }

@@ -6,11 +6,18 @@ pub mod best_practices;
 pub mod style;
 pub mod syntax;
 
+pub const RULE_IDS: &[&str] = &[
+    "MK001", "MK002", "MK101", "MK102", "MK103", "MK201", "MK202",
+];
+
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn category(&self) -> RuleCategory;
+    fn fixable(&self) -> bool {
+        false
+    }
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic>;
 }
 
