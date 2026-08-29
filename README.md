@@ -1,14 +1,22 @@
 # rumk
 
-A fast linter for Makefiles written in Rust, inspired by tools like Ruff (Python) and Rumdl (Markdown).
+A fast Makefile linter written in Rust, built as the Makefile sibling of
+[Rumdl](https://github.com/rvben/rumdl).
+
+Rumk is currently alpha software. Its CLI, configuration model, diagnostics, fixing behavior,
+and exit codes intentionally follow Rumdl so existing Rumdl users can reuse their workflow.
 
 ## Features
 
-- **Fast**: Written in Rust for maximum performance
-- **Comprehensive**: Checks syntax, style, best practices, and security issues
-- **Configurable**: Customize rules via TOML configuration
-- **Auto-fix**: Automatically fix common issues
-- **Multiple output formats**: Text, JSON, and GitHub Actions annotations
+- Lints individual Makefiles or entire directory trees
+- Safely fixes tab-indented recipe violations
+- Supports GNU Make assignment flavors and dot-prefixed targets
+- Preserves LF/CRLF line endings and final newlines during fixes
+- Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
+- Discovers `.rumk.toml` upward through the project tree
+- Respects `.gitignore` by default
+- Supports rule selection, file globs, per-file ignores, severities, and fix allowlists
+- Emits text, flat JSON, and GitHub Actions annotations
 
 ## Installation
 
@@ -16,107 +24,182 @@ A fast linter for Makefiles written in Rust, inspired by tools like Ruff (Python
 cargo install rumk
 ```
 
-## Usage
-
-### Basic usage
+## Quick start
 
 ```bash
-# Check a Makefile
+# Check Makefiles below the current directory
 rumk check
 
-# Check a specific file
-rumk check path/to/Makefile
+# Check specific files or directories
+rumk check Makefile build/
 
-# Check all Makefiles in a directory
-rumk check path/to/directory/
-
-# Auto-fix issues
+# Apply safe fixes, then fail only if violations remain
 rumk check --fix
 
-# Explain a specific rule
-rumk explain MK001
+# Format files with formatter-style exit behavior
+rumk fmt
+
+# Preview formatting changes
+rumk fmt --diff
+
+# Fail when formatting changes are required
+rumk fmt --check
+
+# Inspect rules and effective configuration
+rumk rule
+rumk rule MK101
+rumk config
+rumk config get MK101.line-length
+rumk config file
 ```
 
-### Configuration
+Run `rumk --help` or `rumk <command> --help` for all options.
 
-Create a `.rumk.toml` file in your project:
+## Configuration
+
+Create a `.rumk.toml` file manually or run `rumk init`:
 
 ```toml
-[rules]
-"MK101" = { enabled = true, severity = "warning", options = { max = 100 } }
-"MK102" = { enabled = true, options = { style = "UPPER_CASE" } }
-"MK201" = { enabled = true }
+[global]
+dialect = "gnu"
+respect-gitignore = true
+exclude = ["vendor/**", "generated/**"]
+disable = ["MK101"]
+fixable = ["MK001"]
 
-[ignore]
-paths = ["vendor/*", "third_party/*"]
-rules = ["MK101"]
+[MK101]
+enabled = true
+severity = "warning"
+line-length = 100
+
+[MK102]
+enabled = true
+style = "upper-case"
+
+[per-file-ignores]
+"vendor/**/*.mk" = ["MK202"]
 ```
 
-Rules omitted from the configuration keep their built-in enabled or disabled state. Supported
-severity values are `error`, `warning`, and `info`. Path ignores support `*`, `**`, and `?` glob
-wildcards and are matched relative to the directory being checked.
+Configuration discovery checks `.rumk.toml`, `rumk.toml`, and `.config/rumk.toml` while walking
+upward, stopping at a Git project boundary. Use `--config <PATH>` for an explicit file or
+`--no-config`/`--isolated` for built-in defaults.
 
-### JSON output
+Configurations can inherit another file with `extends = "../.rumk.toml"`; nested tables are
+merged, child values win, relative paths resolve from the extending file, and cycles are rejected.
 
-JSON output is a single document for both file and directory checks. Every entry includes its
-source path:
+Rules can be suppressed in Make comments without changing project configuration:
+
+```makefile
+# rumk-disable MK202
+INSTALL_PREFIX := /usr/local
+# rumk-enable MK202
+
+# rumk-disable-next-line MK201
+clean:
+	rm -rf build
+```
+
+`rumk-disable`, `rumk-enable`, `rumk-disable-line`, and `rumk-disable-next-line` are supported.
+Recipe shell comments are not interpreted as Rumk directives.
+
+The original Rumk `[rules]` and `[ignore]` configuration sections remain accepted for migration.
+
+### Rule and file selection
+
+Rumk follows Rumdl's selection vocabulary:
+
+```bash
+rumk check --enable MK001,MK002 .
+rumk check --disable MK101 .
+rumk check --extend-enable MK202 .
+rumk check --exclude "vendor/**,generated/**" .
+rumk check --include "src/**" .
+rumk check --respect-gitignore=false .
+rumk fmt --fixable MK001 .
+```
+
+### Exit codes
+
+- `0`: success, or all selected violations were fixed
+- `1`: lint violations, or `fmt --check` found required changes
+- `2`: configuration, file access, or other tool error
+
+`rumk check` fails on any diagnostic by default. Use `--fail-on warning`, `--fail-on error`, or
+`--fail-on never` to change that policy. `rumk fmt` exits successfully after formatting even if
+non-fixable lint diagnostics remain.
+
+## Output
+
+Text diagnostics follow Rumdl's familiar form:
+
+```text
+Makefile:2:1: [MK001] Recipe must be indented with tab, not spaces [*]
+```
+
+JSON output is a flat array collected across all files:
+
+```bash
+rumk check --output-format json .
+```
 
 ```json
-{
-  "files": [
-    {
-      "path": "Makefile",
-      "diagnostics": []
+[
+  {
+    "file": "Makefile",
+    "line": 2,
+    "column": 1,
+    "end_line": 2,
+    "end_column": 1,
+    "rule": "MK001",
+    "message": "Recipe must be indented with tab, not spaces",
+    "severity": "error",
+    "fixable": true,
+    "fix": {
+      "range": { "start": 7, "end": 11 },
+      "replacement": "\t"
     }
-  ]
-}
+  }
+]
 ```
+
+The legacy `--format` spelling remains an alias for `--output-format`.
 
 ## Rules
 
-### Syntax Rules (MK000-MK099)
-- `MK001` - Recipes must use tab indentation
-- `MK002` - Invalid variable syntax
+Rules marked **default** run without configuration.
 
-### Style Rules (MK100-MK199)
-- `MK101` - Line exceeds maximum length
-- `MK102` - Variable naming convention
-- `MK103` - Target naming convention
+### Syntax
 
-### Best Practice Rules (MK200-MK299)
-- `MK201` - Non-file targets should be .PHONY
-- `MK202` - Avoid hardcoded absolute paths
+- `MK001` — Recipes must use tab indentation (**default**, fixable)
+- `MK002` — Invalid variable syntax (**default**)
 
-## Example
+### Style
 
-Given this Makefile:
+- `MK101` — Line exceeds the configured maximum length (**default**)
+- `MK102` — Variable naming convention
+- `MK103` — Target naming convention
 
-```makefile
-clean:
-    rm -rf build/  # Uses spaces instead of tab
+### Best practices
 
-FOO = /usr/local/bin  # Hardcoded path
+- `MK201` — Common non-file targets should be `.PHONY` (**default**)
+- `MK202` — Avoid hardcoded absolute paths
 
-test:
-	pytest tests/
+## Development
+
+```bash
+cargo test --all-targets --all-features
+cargo clippy --all-targets --all-features -- -D warnings
+cargo fmt --all -- --check
+cargo build --release
 ```
 
-Running `rumk check` produces:
-
-```
-Makefile:2:1: [MK001] Recipe must be indented with tab, not spaces [*]
-Makefile:4:7: [MK202] Variable 'FOO' contains hardcoded absolute path
-Makefile:1:1: [MK201] Target 'clean' should be declared .PHONY
-Makefile:6:1: [MK201] Target 'test' should be declared .PHONY
-
-Found 4 issues in 1 file (1 file checked)
-Run with --fix to automatically fix issues
-```
+The product-level compatibility contract is documented in
+[`docs/rumdl-compatibility.md`](docs/rumdl-compatibility.md).
 
 ## Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).
