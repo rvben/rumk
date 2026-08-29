@@ -1,8 +1,12 @@
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
+use crate::syntax::SyntaxTree;
+
 #[derive(Debug, Clone)]
 pub struct Makefile {
+    /// Lossless, source-ordered syntax for tools that need exact text or spans.
+    pub syntax: SyntaxTree,
     pub rules: Vec<Rule>,
     pub variables: HashMap<String, Variable>,
     pub phonies: Vec<String>,
@@ -49,6 +53,7 @@ impl<'a> Parser<'a> {
             lines: content.lines().collect(),
             current_line: 0,
             makefile: Makefile {
+                syntax: SyntaxTree::parse(content),
                 rules: Vec::new(),
                 variables: HashMap::new(),
                 phonies: Vec::new(),
