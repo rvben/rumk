@@ -88,7 +88,7 @@ impl Rule for VariableNaming {
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        for variable in makefile.variables.values() {
+        for variable in &makefile.assignments {
             if !matches_naming_style(&variable.name, self.style) {
                 let expected = naming_style_description(self.style);
                 diagnostics.push(Diagnostic::new(

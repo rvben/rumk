@@ -94,6 +94,7 @@ impl SyntaxTree {
         let mut offset = 0;
         let mut line = 1;
         let mut define_depth = 0usize;
+        let mut recipe_prefix = '\t';
 
         while offset < source.len() {
             let remaining = &source[offset..];
@@ -108,7 +109,12 @@ impl SyntaxTree {
             };
 
             let content = &source[offset..content_end];
-            let kind = classify(content, &mut define_depth);
+            let kind = classify(content, &mut define_depth, recipe_prefix);
+            if define_depth == 0 {
+                if let Some(prefix) = assigned_recipe_prefix(content) {
+                    recipe_prefix = prefix;
+                }
+            }
             let content_columns = content.chars().count() + 1;
             let next_position = if line_ending == LineEnding::None {
                 SourcePosition {
@@ -173,7 +179,7 @@ impl SyntaxTree {
     }
 }
 
-fn classify(line: &str, define_depth: &mut usize) -> SyntaxKind {
+fn classify(line: &str, define_depth: &mut usize, recipe_prefix: char) -> SyntaxKind {
     let trimmed = line.trim_start();
     let keyword = directive_keyword(trimmed);
 
@@ -195,7 +201,7 @@ fn classify(line: &str, define_depth: &mut usize) -> SyntaxKind {
     if trimmed.starts_with('#') {
         return SyntaxKind::Comment;
     }
-    if line.starts_with('\t') {
+    if line.starts_with(recipe_prefix) {
         return SyntaxKind::Recipe;
     }
 
@@ -224,6 +230,27 @@ fn classify(line: &str, define_depth: &mut usize) -> SyntaxKind {
     } else {
         SyntaxKind::Unknown
     }
+}
+
+fn assigned_recipe_prefix(line: &str) -> Option<char> {
+    let trimmed = line.trim_start();
+    let separator = assignment_separator(trimmed)?;
+    let name = trimmed[..separator].split_whitespace().last()?;
+    if name != ".RECIPEPREFIX" {
+        return None;
+    }
+
+    let operator_length = [":::=", "::=", ":=", "?=", "+=", "!=", "="]
+        .iter()
+        .find(|operator| trimmed[separator..].starts_with(**operator))?
+        .len();
+    Some(
+        trimmed[separator + operator_length..]
+            .trim_start()
+            .chars()
+            .next()
+            .unwrap_or('\t'),
+    )
 }
 
 fn directive_keyword(line: &str) -> Option<&str> {

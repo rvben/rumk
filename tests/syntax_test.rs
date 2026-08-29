@@ -128,6 +128,18 @@ fn recognizes_prefixed_assignments_and_directives() {
 }
 
 #[test]
+fn classifies_custom_recipe_prefixes_contextually() {
+    let source = ".RECIPEPREFIX := >\nall:\n>@echo ok\n";
+    let tree = SyntaxTree::parse(source);
+    let kinds: Vec<_> = tree.nodes().iter().map(|node| node.kind).collect();
+
+    assert_eq!(
+        kinds,
+        vec![SyntaxKind::Assignment, SyntaxKind::Rule, SyntaxKind::Recipe]
+    );
+}
+
+#[test]
 fn semantic_parser_exposes_the_lossless_tree() {
     let source = "name := naïve\nall:\n\t@echo $(name)\n";
     let makefile = parser::parse(source).unwrap();

@@ -8,6 +8,8 @@ pub struct Makefile {
     /// Lossless, source-ordered syntax for tools that need exact text or spans.
     pub syntax: SyntaxTree,
     pub rules: Vec<Rule>,
+    /// All assignments in source order. `variables` remains a last-value lookup.
+    pub assignments: Vec<Variable>,
     pub variables: HashMap<String, Variable>,
     pub phonies: Vec<String>,
 }
@@ -15,6 +17,10 @@ pub struct Makefile {
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub targets: Vec<String>,
+    pub prerequisites: Vec<String>,
+    pub order_only_prerequisites: Vec<String>,
+    pub double_colon: bool,
+    pub grouped: bool,
     pub recipes: Vec<Recipe>,
     pub line: usize,
     pub column: usize,
@@ -23,6 +29,10 @@ pub struct Rule {
 #[derive(Debug, Clone)]
 pub struct Recipe {
     pub command: String,
+    pub inline: bool,
+    pub silent: bool,
+    pub ignore_errors: bool,
+    pub recursive: bool,
     pub line: usize,
     pub column: usize,
     pub indentation: String,
@@ -32,8 +42,43 @@ pub struct Recipe {
 pub struct Variable {
     pub name: String,
     pub value: String,
+    pub operator: AssignmentOperator,
+    pub modifiers: VariableModifiers,
     pub line: usize,
     pub column: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignmentOperator {
+    Recursive,
+    Simple,
+    SimplePosix,
+    ImmediateRecursive,
+    Conditional,
+    Append,
+    Shell,
+}
+
+impl AssignmentOperator {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Recursive => "=",
+            Self::Simple => ":=",
+            Self::SimplePosix => "::=",
+            Self::ImmediateRecursive => ":::=",
+            Self::Conditional => "?=",
+            Self::Append => "+=",
+            Self::Shell => "!=",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct VariableModifiers {
+    pub export: bool,
+    pub unexport: bool,
+    pub override_: bool,
+    pub private: bool,
 }
 
 pub fn parse(content: &str) -> Result<Makefile> {
@@ -45,6 +90,7 @@ struct Parser<'a> {
     lines: Vec<&'a str>,
     current_line: usize,
     makefile: Makefile,
+    recipe_prefix: char,
 }
 
 impl<'a> Parser<'a> {
@@ -55,9 +101,11 @@ impl<'a> Parser<'a> {
             makefile: Makefile {
                 syntax: SyntaxTree::parse(content),
                 rules: Vec::new(),
+                assignments: Vec::new(),
                 variables: HashMap::new(),
                 phonies: Vec::new(),
             },
+            recipe_prefix: '\t',
         }
     }
 
@@ -126,7 +174,7 @@ impl<'a> Parser<'a> {
             bail!("Invalid variable assignment at line {assignment_line}");
         };
 
-        let name = content[..separator_position].trim().to_string();
+        let (name, modifiers) = parse_variable_name(&content[..separator_position]);
         let mut value = content[separator_position + separator.len()..]
             .trim()
             .to_string();
@@ -139,15 +187,20 @@ impl<'a> Parser<'a> {
             value.push_str(self.lines[self.current_line].trim_start());
         }
 
-        self.makefile.variables.insert(
-            name.clone(),
-            Variable {
-                name,
-                value,
-                line: assignment_line,
-                column,
-            },
-        );
+        let variable = Variable {
+            name: name.clone(),
+            value: value.clone(),
+            operator: AssignmentOperator::from_separator(separator),
+            modifiers,
+            line: assignment_line,
+            column,
+        };
+        self.makefile.assignments.push(variable.clone());
+        self.makefile.variables.insert(name.clone(), variable);
+
+        if name == ".RECIPEPREFIX" {
+            self.recipe_prefix = value.chars().next().unwrap_or('\t');
+        }
 
         self.current_line += 1;
         Ok(())
@@ -164,38 +217,62 @@ impl<'a> Parser<'a> {
         let column = line[..line.len() - line.trim_start().len()].chars().count() + 1;
 
         let colon_pos = line.find(':').unwrap();
-        let targets_str = line[..colon_pos].trim();
+        let before_colon = line[..colon_pos].trim_end();
+        let grouped = before_colon.ends_with('&');
+        let targets_str = before_colon
+            .strip_suffix('&')
+            .unwrap_or(before_colon)
+            .trim();
+        let double_colon = line[colon_pos + 1..].starts_with(':');
+        let separator_end = colon_pos + if double_colon { 2 } else { 1 };
 
-        let targets: Vec<String> = targets_str
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect();
+        let targets = split_make_words(targets_str);
+
+        let rule_body = &line[separator_end..];
+        let inline_separator = find_unescaped(rule_body, ';');
+        let (prerequisite_text, inline_command) = split_once_unescaped(rule_body, ';');
+        let prerequisite_text = strip_unescaped_comment(prerequisite_text);
+        let (normal_prerequisites, order_only_prerequisites) =
+            split_once_unescaped(prerequisite_text, '|');
+        let prerequisites = split_make_words(normal_prerequisites);
+        let order_only_prerequisites = order_only_prerequisites
+            .map(split_make_words)
+            .unwrap_or_default();
 
         let mut recipes = Vec::new();
+        if let Some(command) = inline_command {
+            if !command.trim().is_empty() {
+                let command_column = line[..separator_end].chars().count()
+                    + rule_body[..=inline_separator.expect("inline command has a separator")]
+                        .chars()
+                        .count()
+                    + 1;
+                recipes.push(parse_recipe(command, rule_line, command_column, "", true));
+            }
+        }
         self.current_line += 1;
 
         while self.current_line < self.lines.len() {
             let recipe_line = self.lines[self.current_line];
 
-            if recipe_line.starts_with('\t') || recipe_line.starts_with(' ') {
-                let mut command = recipe_line.trim_start().to_string();
-                let indentation =
-                    &recipe_line[..recipe_line.len() - recipe_line.trim_start().len()];
+            if recipe_line.trim_start().starts_with('#') {
+                self.current_line += 1;
+            } else if recipe_line.starts_with(self.recipe_prefix) || recipe_line.starts_with(' ') {
+                let indentation_length = if recipe_line.starts_with(self.recipe_prefix) {
+                    self.recipe_prefix.len_utf8()
+                } else {
+                    recipe_line.len() - recipe_line.trim_start().len()
+                };
+                let indentation = &recipe_line[..indentation_length];
+                let command = &recipe_line[indentation_length..];
 
-                if command.starts_with('@') {
-                    command = command[1..].to_string();
-                }
-
-                if command.starts_with('-') {
-                    command = command[1..].to_string();
-                }
-
-                recipes.push(Recipe {
+                recipes.push(parse_recipe(
                     command,
-                    line: self.current_line + 1,
-                    column: 1,
-                    indentation: indentation.to_string(),
-                });
+                    self.current_line + 1,
+                    indentation.chars().count() + 1,
+                    indentation,
+                    false,
+                ));
 
                 self.current_line += 1;
             } else if recipe_line.trim().is_empty() {
@@ -207,6 +284,10 @@ impl<'a> Parser<'a> {
 
         self.makefile.rules.push(Rule {
             targets,
+            prerequisites,
+            order_only_prerequisites,
+            double_colon,
+            grouped,
             recipes,
             line: rule_line,
             column,
@@ -214,6 +295,146 @@ impl<'a> Parser<'a> {
 
         Ok(())
     }
+}
+
+impl AssignmentOperator {
+    fn from_separator(separator: &str) -> Self {
+        match separator {
+            "=" => Self::Recursive,
+            ":=" => Self::Simple,
+            "::=" => Self::SimplePosix,
+            ":::=" => Self::ImmediateRecursive,
+            "?=" => Self::Conditional,
+            "+=" => Self::Append,
+            "!=" => Self::Shell,
+            _ => unreachable!("assignment separator is validated before conversion"),
+        }
+    }
+}
+
+fn parse_variable_name(left_hand_side: &str) -> (String, VariableModifiers) {
+    let mut modifiers = VariableModifiers::default();
+    let mut words = left_hand_side.split_whitespace().peekable();
+
+    while let Some(word) = words.peek().copied() {
+        let recognized = match word {
+            "export" => {
+                modifiers.export = true;
+                true
+            }
+            "unexport" => {
+                modifiers.unexport = true;
+                true
+            }
+            "override" => {
+                modifiers.override_ = true;
+                true
+            }
+            "private" => {
+                modifiers.private = true;
+                true
+            }
+            _ => false,
+        };
+        if !recognized {
+            break;
+        }
+        words.next();
+    }
+
+    (words.collect::<Vec<_>>().join(" "), modifiers)
+}
+
+fn parse_recipe(
+    source: &str,
+    line: usize,
+    column: usize,
+    indentation: &str,
+    inline: bool,
+) -> Recipe {
+    let mut command = source.trim_start();
+    let mut command_column = column + source[..source.len() - command.len()].chars().count();
+    let mut silent = false;
+    let mut ignore_errors = false;
+    let mut recursive = false;
+
+    loop {
+        match command.chars().next() {
+            Some('@') => silent = true,
+            Some('-') => ignore_errors = true,
+            Some('+') => recursive = true,
+            _ => break,
+        }
+        command = &command[1..];
+        command_column += 1;
+    }
+
+    Recipe {
+        command: command.to_string(),
+        inline,
+        silent,
+        ignore_errors,
+        recursive,
+        line,
+        column: command_column,
+        indentation: indentation.to_string(),
+    }
+}
+
+fn strip_unescaped_comment(line: &str) -> &str {
+    split_once_unescaped(line, '#').0
+}
+
+fn split_once_unescaped(line: &str, separator: char) -> (&str, Option<&str>) {
+    if let Some(index) = find_unescaped(line, separator) {
+        let after = index + separator.len_utf8();
+        (&line[..index], Some(&line[after..]))
+    } else {
+        (line, None)
+    }
+}
+
+fn find_unescaped(line: &str, separator: char) -> Option<usize> {
+    let mut escaped = false;
+    for (index, character) in line.char_indices() {
+        if character == separator && !escaped {
+            return Some(index);
+        }
+        escaped = character == '\\' && !escaped;
+        if character != '\\' {
+            escaped = false;
+        }
+    }
+    None
+}
+
+fn split_make_words(input: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut escaped = false;
+
+    for character in input.chars() {
+        if escaped {
+            current.push(character);
+            escaped = false;
+        } else if character == '\\' {
+            escaped = true;
+        } else if character.is_whitespace() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(character);
+        }
+    }
+    if escaped {
+        current.push('\\');
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+
+    words
 }
 
 fn assignment_separator(line: &str) -> Option<(usize, &'static str)> {

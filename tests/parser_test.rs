@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use rumk::parser::parse;
+    use rumk::parser::{parse, AssignmentOperator};
 
     #[test]
     fn test_parse_simple_rule() {
@@ -62,5 +62,87 @@ target: dependency
         assert_eq!(makefile.rules[0].targets, vec![".DEFAULT"]);
         assert_eq!(makefile.rules[0].recipes.len(), 1);
         assert_eq!(makefile.rules[0].recipes[0].line, 2);
+    }
+
+    #[test]
+    fn preserves_assignment_order_flavor_and_modifiers() {
+        let content = concat!(
+            "export override CC := clang\n",
+            "CC += -pthread\n",
+            "private OUTPUT ?= app\n",
+            "POSIX ::= expanded\n",
+            "IMMEDIATE :::= value\n",
+        );
+        let makefile = parse(content).unwrap();
+
+        assert_eq!(makefile.assignments.len(), 5);
+        assert_eq!(makefile.assignments[0].name, "CC");
+        assert_eq!(makefile.assignments[0].operator, AssignmentOperator::Simple);
+        assert!(makefile.assignments[0].modifiers.export);
+        assert!(makefile.assignments[0].modifiers.override_);
+        assert_eq!(makefile.assignments[1].operator, AssignmentOperator::Append);
+        assert_eq!(makefile.variables["CC"].value, "-pthread");
+        assert_eq!(
+            makefile.assignments[2].operator.as_str(),
+            AssignmentOperator::Conditional.as_str()
+        );
+        assert!(makefile.assignments[2].modifiers.private);
+        assert_eq!(
+            makefile.assignments[3].operator,
+            AssignmentOperator::SimplePosix
+        );
+        assert_eq!(
+            makefile.assignments[4].operator,
+            AssignmentOperator::ImmediateRecursive
+        );
+    }
+
+    #[test]
+    fn models_rule_separators_and_prerequisite_classes() {
+        let content = "one\\ two archive &: input.o lib.o | generated stamp\n";
+        let makefile = parse(content).unwrap();
+        let rule = &makefile.rules[0];
+
+        assert_eq!(rule.targets, ["one two", "archive"]);
+        assert_eq!(rule.prerequisites, ["input.o", "lib.o"]);
+        assert_eq!(rule.order_only_prerequisites, ["generated", "stamp"]);
+        assert!(rule.grouped);
+        assert!(!rule.double_colon);
+    }
+
+    #[test]
+    fn parses_double_colon_and_inline_recipes() {
+        let content = "clean:: ; -@+rm -rf build # handled by the shell\n";
+        let makefile = parse(content).unwrap();
+        let rule = &makefile.rules[0];
+        let recipe = &rule.recipes[0];
+
+        assert!(rule.double_colon);
+        assert!(recipe.inline);
+        assert!(recipe.silent);
+        assert!(recipe.ignore_errors);
+        assert!(recipe.recursive);
+        assert_eq!(recipe.command, "rm -rf build # handled by the shell");
+        assert_eq!(recipe.column, 14);
+    }
+
+    #[test]
+    fn honors_custom_recipe_prefixes() {
+        let content = ".RECIPEPREFIX := >\nall:\n>@echo ok\n";
+        let makefile = parse(content).unwrap();
+        let recipe = &makefile.rules[0].recipes[0];
+
+        assert_eq!(recipe.indentation, ">");
+        assert!(recipe.silent);
+        assert_eq!(recipe.command, "echo ok");
+    }
+
+    #[test]
+    fn comments_between_a_rule_and_recipe_are_not_commands() {
+        let content = "all:\n  # explanation\n\ttrue\n";
+        let makefile = parse(content).unwrap();
+
+        assert_eq!(makefile.rules[0].recipes.len(), 1);
+        assert_eq!(makefile.rules[0].recipes[0].command, "true");
     }
 }

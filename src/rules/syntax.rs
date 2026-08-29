@@ -31,7 +31,7 @@ impl Rule for TabInRecipe {
 
         for rule in &makefile.rules {
             for recipe in &rule.recipes {
-                if !recipe.indentation.starts_with('\t') {
+                if !recipe.inline && recipe.indentation.starts_with(' ') {
                     let fix = Fix::new("Replace spaces with tab").add_edit(Edit::new(
                         recipe.line,
                         1,
@@ -46,7 +46,7 @@ impl Rule for TabInRecipe {
                             Severity::Error,
                             "Recipe must be indented with tab, not spaces",
                             recipe.line,
-                            recipe.column,
+                            1,
                         )
                         .with_fix(fix),
                     );
@@ -80,7 +80,7 @@ impl Rule for InvalidVariableSyntax {
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        for variable in makefile.variables.values() {
+        for variable in &makefile.assignments {
             if !is_valid_variable_name(&variable.name) {
                 diagnostics.push(Diagnostic::new(
                     self.id(),
@@ -102,5 +102,5 @@ fn is_valid_variable_name(name: &str) -> bool {
     }
 
     name.chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
 }

@@ -69,7 +69,7 @@ impl Rule for HardcodedPath {
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 
-        for variable in makefile.variables.values() {
+        for variable in &makefile.assignments {
             if contains_absolute_path(&variable.value) {
                 diagnostics.push(Diagnostic::new(
                     self.id(),
