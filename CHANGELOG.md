@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   autofix behavior, special cases, and the source of each convention.
 - `rumk rule <RULE>` now shows category, default state, fixability, analysis
   scope, rule-option defaults, and a documentation link.
+- Native PyPI wheels for supported Linux, macOS, and Windows platforms.
 
 ### Fixed
 

@@ -32,8 +32,17 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 cargo install rumk --locked --version 0.0.5
 ```
 
+Or install the native executable from PyPI with a Python tool manager:
+
+```bash
+uv tool install rumk==0.0.5
+# or
+pipx install rumk==0.0.5
+```
+
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
-archives include SHA-256 checksums and GitHub build-provenance attestations.
+archives and Python wheels cover Linux, macOS, and Windows. GitHub release assets include SHA-256
+checksums and build-provenance attestations.
 
 ## Quick start
 

@@ -137,3 +137,16 @@ jobs:
 
       - name: Validate package and publication metadata
         run: ./scripts/validate-release.sh
+
+      - name: Install Python package builder
+        run: python -m pip install "maturin>=1.8,<2.0"
+
+      - name: Build Python wheel and source distribution
+        run: maturin build --locked --release --sdist
+
+      - name: Smoke-test Python wheel
+        shell: bash
+        run: |
+          python -m venv /tmp/rumk-wheel-test
+          /tmp/rumk-wheel-test/bin/python -m pip install target/wheels/*.whl
+          /tmp/rumk-wheel-test/bin/rumk version
