@@ -10,7 +10,10 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 
 - Lints individual Makefiles or entire directory trees
 - Safely fixes tab-indented recipe violations
-- Supports GNU Make assignment flavors and dot-prefixed targets
+- Parses continued logical statements and nested `$(...)`/`${...}` expressions
+- Models GNU Make assignment flavors, static patterns, target-specific variables, includes,
+  conditionals, `define` blocks, custom recipe prefixes, and `.ONESHELL`
+- Builds semantic indexes for variables, references, targets, dependencies, and includes
 - Preserves LF/CRLF line endings and final newlines during fixes
 - Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
 - Discovers `.rumk.toml` upward through the project tree
@@ -172,6 +175,7 @@ Rules marked **default** run without configuration.
 
 - `MK001` — Recipes must use tab indentation (**default**, fixable)
 - `MK002` — Invalid variable syntax (**default**)
+- `MK003` — Malformed conditional structure (**default**)
 
 ### Style
 
@@ -183,6 +187,9 @@ Rules marked **default** run without configuration.
 
 - `MK201` — Common non-file targets should be `.PHONY` (**default**)
 - `MK202` — Avoid hardcoded absolute paths
+- `MK203` — Recursive Make invocations should use `$(MAKE)` (**default**)
+- `MK204` — Concrete targets should not declare multiple single-colon recipes (**default**)
+- `MK205` — Explicit target dependencies must not form cycles (**default**)
 
 ## Development
 
@@ -191,6 +198,7 @@ cargo test --all-targets --all-features
 cargo clippy --all-targets --all-features -- -D warnings
 cargo fmt --all -- --check
 cargo build --release
+make check-gnu-fixtures
 ```
 
 The product-level compatibility contract is documented in

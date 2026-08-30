@@ -7,7 +7,8 @@ pub mod style;
 pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
-    "MK001", "MK002", "MK101", "MK102", "MK103", "MK201", "MK202",
+    "MK001", "MK002", "MK003", "MK101", "MK102", "MK103", "MK201", "MK202", "MK203", "MK204",
+    "MK205",
 ];
 
 pub trait Rule: Send + Sync {
@@ -50,11 +51,15 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(syntax::TabInRecipe),
         Box::new(syntax::InvalidVariableSyntax),
+        Box::new(syntax::ConditionalStructure),
         Box::new(style::LineLength::new(120)),
         Box::new(style::VariableNaming::new(style::NamingStyle::Upper)),
         Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
         Box::new(best_practices::MissingPhony),
         Box::new(best_practices::HardcodedPath),
+        Box::new(best_practices::RecursiveMake),
+        Box::new(best_practices::DuplicateRecipe),
+        Box::new(best_practices::DependencyCycle),
     ]
 }
 
@@ -62,7 +67,11 @@ pub fn get_default_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(syntax::TabInRecipe),
         Box::new(syntax::InvalidVariableSyntax),
+        Box::new(syntax::ConditionalStructure),
         Box::new(style::LineLength::new(120)),
         Box::new(best_practices::MissingPhony),
+        Box::new(best_practices::RecursiveMake),
+        Box::new(best_practices::DuplicateRecipe),
+        Box::new(best_practices::DependencyCycle),
     ]
 }

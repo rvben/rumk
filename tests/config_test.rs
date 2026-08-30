@@ -11,7 +11,10 @@ fn an_empty_config_keeps_the_builtin_default_rule_set() {
     let config = Config::from_file(&path).unwrap();
     let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
 
-    assert_eq!(ids, ["MK001", "MK002", "MK101", "MK201"]);
+    assert_eq!(
+        ids,
+        ["MK001", "MK002", "MK003", "MK101", "MK201", "MK203", "MK204", "MK205"]
+    );
 }
 
 #[test]
@@ -35,7 +38,10 @@ rules = ["MK202"]
 
     let config = Config::from_file(&path).unwrap();
     let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
-    assert_eq!(ids, ["MK001", "MK002", "MK101"]);
+    assert_eq!(
+        ids,
+        ["MK001", "MK002", "MK003", "MK101", "MK203", "MK204", "MK205"]
+    );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/lib/Makefile")));
     assert!(!config.is_path_ignored(std::path::Path::new("src/Makefile")));
 
@@ -76,7 +82,10 @@ enabled = true
 
     let config = Config::from_file(&path).unwrap();
     let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
-    assert_eq!(ids, ["MK001", "MK002", "MK101", "MK202"]);
+    assert_eq!(
+        ids,
+        ["MK001", "MK002", "MK003", "MK101", "MK202", "MK203", "MK204", "MK205"]
+    );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/a.mk")));
     assert!(
         config.is_rule_ignored_for_path(directory.path().join("vendor/a.mk").as_path(), "MK001")

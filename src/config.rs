@@ -6,7 +6,9 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-const DEFAULT_RULES: &[&str] = &["MK001", "MK002", "MK101", "MK201"];
+const DEFAULT_RULES: &[&str] = &[
+    "MK001", "MK002", "MK003", "MK101", "MK201", "MK203", "MK204", "MK205",
+];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
 pub struct Config {
@@ -742,6 +744,7 @@ fn build_rule(rule_id: &str, settings: &RuleSettings) -> Result<Box<dyn Rule>> {
     let rule: Box<dyn Rule> = match rule_id {
         "MK001" => Box::new(rules::syntax::TabInRecipe),
         "MK002" => Box::new(rules::syntax::InvalidVariableSyntax),
+        "MK003" => Box::new(rules::syntax::ConditionalStructure),
         "MK101" => Box::new(rules::style::LineLength::new(integer_option(
             rule_id, settings, "max", 120,
         )?)),
@@ -757,6 +760,9 @@ fn build_rule(rule_id: &str, settings: &RuleSettings) -> Result<Box<dyn Rule>> {
         )?)),
         "MK201" => Box::new(rules::best_practices::MissingPhony),
         "MK202" => Box::new(rules::best_practices::HardcodedPath),
+        "MK203" => Box::new(rules::best_practices::RecursiveMake),
+        "MK204" => Box::new(rules::best_practices::DuplicateRecipe),
+        "MK205" => Box::new(rules::best_practices::DependencyCycle),
         _ => bail!("Unknown rule: {rule_id}"),
     };
 

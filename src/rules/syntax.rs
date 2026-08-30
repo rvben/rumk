@@ -1,3 +1,4 @@
+use crate::analysis::StructuralIssueKind;
 use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
 use crate::parser::Makefile;
 use crate::rules::{Rule, RuleCategory};
@@ -103,4 +104,53 @@ fn is_valid_variable_name(name: &str) -> bool {
 
     name.chars()
         .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+}
+
+pub struct ConditionalStructure;
+
+impl Rule for ConditionalStructure {
+    fn id(&self) -> &'static str {
+        "MK003"
+    }
+
+    fn name(&self) -> &'static str {
+        "Malformed conditional structure"
+    }
+
+    fn description(&self) -> &'static str {
+        "Make conditionals must have balanced if/endif directives and at most one else branch."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Syntax
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        makefile
+            .analysis()
+            .structural_issues
+            .iter()
+            .map(|issue| {
+                let message = match issue.kind {
+                    StructuralIssueKind::UnexpectedElse => "Unexpected else without a matching if",
+                    StructuralIssueKind::DuplicateElse => {
+                        "Conditional block contains more than one else"
+                    }
+                    StructuralIssueKind::UnexpectedEndif => {
+                        "Unexpected endif without a matching if"
+                    }
+                    StructuralIssueKind::UnterminatedConditional => {
+                        "Conditional block is missing an endif"
+                    }
+                };
+                Diagnostic::new(
+                    self.id(),
+                    Severity::Error,
+                    message,
+                    issue.location.line,
+                    issue.location.column,
+                )
+            })
+            .collect()
+    }
 }
