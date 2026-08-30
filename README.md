@@ -28,7 +28,7 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 ## Installation
 
 ```bash
-cargo install rumk --locked --version 0.0.2
+cargo install rumk --locked --version 0.0.3
 ```
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
