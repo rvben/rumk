@@ -194,20 +194,28 @@ The legacy `--format` spelling remains an alias for `--output-format`.
 ## Rules
 
 Rules marked **default** run without configuration.
+Each rule page documents its behavior, configuration, fixes, edge cases, and
+the GNU Make, POSIX, or Rumk convention on which it is based.
 
 ### Syntax
 
-- `MK001` — Recipes must use tab indentation (**default**, fixable)
-- `MK002` — Invalid variable syntax (**default**)
-- `MK003` — Malformed conditional structure (**default**)
-- `MK004` — Targets must not mix single- and double-colon declarations (**default**)
-- `MK005` — GNU Make special targets must stand alone (**default**)
+- [`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md) — Recipes must use tab
+  indentation (**default**, fixable)
+- [`MK002`](https://github.com/rvben/rumk/blob/main/docs/mk002.md) — Invalid variable syntax
+  (**default**)
+- [`MK003`](https://github.com/rvben/rumk/blob/main/docs/mk003.md) — Malformed conditional
+  structure (**default**)
+- [`MK004`](https://github.com/rvben/rumk/blob/main/docs/mk004.md) — Targets must not mix
+  single- and double-colon declarations (**default**)
+- [`MK005`](https://github.com/rvben/rumk/blob/main/docs/mk005.md) — GNU Make special targets
+  must stand alone (**default**)
 
 ### Style
 
-- `MK101` — Declarative line exceeds the configured maximum length; comments and recipes are ignored by default (**default**)
-- `MK102` — Variable naming convention
-- `MK103` — Target naming convention
+- [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) — Declarative line exceeds
+  the configured maximum length; comments and recipes are ignored by default (**default**)
+- [`MK102`](https://github.com/rvben/rumk/blob/main/docs/mk102.md) — Variable naming convention
+- [`MK103`](https://github.com/rvben/rumk/blob/main/docs/mk103.md) — Target naming convention
 
 ### Best practices
 
@@ -215,15 +223,24 @@ Rules marked **default** run without configuration.
   non-file targets should be `.PHONY`;
   fixes consolidate canonical groups, preserve per-section style, and wrap long
   declarations (**default**, fixable)
-- `MK202` — Avoid hardcoded absolute paths
-- `MK203` — Recursive Make invocations should use `$(MAKE)` (**default**, fixable)
-- `MK204` — Concrete targets should not declare multiple single-colon recipes (**default**)
-- `MK205` — Explicit target dependencies must not form cycles (**default**)
-- `MK206` — Required static includes must resolve (**default**)
-- `MK207` — Static Makefile includes must not form cycles (**default**)
-- `MK208` — Static graph-level variable references must resolve (opt-in)
-- `MK209` — Targets must be reachable from explicitly configured entries (opt-in)
-- `MK210` — Explain include expressions blocked by safe evaluation (opt-in)
+- [`MK202`](https://github.com/rvben/rumk/blob/main/docs/mk202.md) — Avoid hardcoded absolute
+  paths (opt-in)
+- [`MK203`](https://github.com/rvben/rumk/blob/main/docs/mk203.md) — Recursive Make invocations
+  should use `$(MAKE)` (**default**, fixable)
+- [`MK204`](https://github.com/rvben/rumk/blob/main/docs/mk204.md) — Concrete targets should not
+  declare multiple single-colon recipes (**default**)
+- [`MK205`](https://github.com/rvben/rumk/blob/main/docs/mk205.md) — Explicit target dependencies
+  must not form cycles (**default**)
+- [`MK206`](https://github.com/rvben/rumk/blob/main/docs/mk206.md) — Required static includes must
+  resolve (**default**)
+- [`MK207`](https://github.com/rvben/rumk/blob/main/docs/mk207.md) — Static Makefile includes must
+  not form cycles (**default**)
+- [`MK208`](https://github.com/rvben/rumk/blob/main/docs/mk208.md) — Static graph-level variable
+  references must resolve (opt-in)
+- [`MK209`](https://github.com/rvben/rumk/blob/main/docs/mk209.md) — Targets must be reachable
+  from explicitly configured entries (opt-in)
+- [`MK210`](https://github.com/rvben/rumk/blob/main/docs/mk210.md) — Explain include expressions
+  blocked by safe evaluation (opt-in)
 
 ## Development
 

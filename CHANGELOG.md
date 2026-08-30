@@ -12,6 +12,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `MK201.placement` controls where autofixes add missing `.PHONY` declarations:
   `auto` preserves the established file style, `top` groups names in the
   earliest declaration, and `adjacent` places declarations beside their rules.
+- Complete reference pages for every rule, including examples, configuration,
+  autofix behavior, special cases, and the source of each convention.
+- `rumk rule <RULE>` now shows category, default state, fixability, analysis
+  scope, rule-option defaults, and a documentation link.
+
+### Fixed
+
+- `MK002` accepts GNU Make variable names containing valid punctuation or
+  internal whitespace and conservatively accepts computed variable names.
+- Required includes no longer treat trailing Make comments as filenames.
+- Space-indented conditional directives after a rule are no longer mistaken
+  for malformed recipes, preventing a project-analysis panic.
 
 ## [0.0.4] - 2026-08-30
 
