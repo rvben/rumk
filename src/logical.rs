@@ -129,14 +129,24 @@ fn fold_lines(nodes: &[crate::syntax::SyntaxNode], source: &str) -> String {
 
     for (index, node) in nodes.iter().enumerate() {
         let content = node.content(source);
-        if index == 0 {
-            folded.push_str(content.strip_suffix('\\').unwrap_or(content));
+        let continued = index + 1 < nodes.len();
+        let part = if continued {
+            content
+                .strip_suffix('\\')
+                .expect("non-final logical line has a continuation")
+                .trim_end()
+        } else if index == 0 {
+            content
         } else {
-            let continuation = content.trim_start();
-            if !folded.is_empty() && !folded.ends_with(char::is_whitespace) {
+            content.trim_start()
+        };
+        if index == 0 {
+            folded.push_str(part);
+        } else {
+            if !folded.is_empty() && !part.is_empty() {
                 folded.push(' ');
             }
-            folded.push_str(continuation.strip_suffix('\\').unwrap_or(continuation));
+            folded.push_str(part.trim_start());
         }
     }
 

@@ -3,7 +3,7 @@ use rumk::syntax::SyntaxTree;
 
 #[test]
 fn folds_continuations_without_losing_the_original_source() {
-    let source = "SOURCES := one.c \\\r\n  two.c \\\r\n\tthree.c\r\n";
+    let source = "SOURCES := one.c    \\\r\n  two.c \t\\\r\n\tthree.c\r\n";
     let syntax = SyntaxTree::parse(source);
     let document = LogicalDocument::parse(&syntax);
     let statement = &document.statements()[0];
@@ -14,6 +14,16 @@ fn folds_continuations_without_losing_the_original_source() {
     assert_eq!(statement.end_line, 3);
     assert_eq!(statement.text(), "SOURCES := one.c two.c three.c");
     assert_eq!(statement.raw(source), source);
+}
+
+#[test]
+fn preserves_a_dangling_backslash_without_a_following_line() {
+    let source = "VALUE := unfinished\\";
+    let syntax = SyntaxTree::parse(source);
+    let document = LogicalDocument::parse(&syntax);
+
+    assert_eq!(document.statements()[0].text(), source);
+    assert_eq!(document.statements()[0].raw(source), source);
 }
 
 #[test]
