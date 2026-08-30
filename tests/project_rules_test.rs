@@ -91,6 +91,19 @@ fn missing_include_reports_the_expanded_path() {
 }
 
 #[test]
+fn include_comments_are_not_treated_as_missing_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let shared = directory.path().join("shared.mk");
+    std::fs::write(&root, "include shared.mk # generated settings\n").unwrap();
+    std::fs::write(&shared, "VALUE := yes\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty());
+}
+
+#[test]
 fn reports_include_cycles_on_the_closing_directive() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

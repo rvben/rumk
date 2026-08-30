@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use rumk::logical::ConditionalKind;
     use rumk::parser::{parse, AssignmentOperator};
 
     #[test]
@@ -147,6 +148,19 @@ target: dependency
     }
 
     #[test]
+    fn indented_conditionals_after_a_rule_are_not_parsed_as_recipes() {
+        let content = "all:\n\t@echo all\n  ifeq ($(MODE),debug)\n  CFLAGS := -g\n  endif\n";
+
+        let makefile = parse(content).unwrap();
+
+        assert_eq!(makefile.rules.len(), 1);
+        assert_eq!(makefile.rules[0].recipes.len(), 1);
+        assert_eq!(makefile.conditionals.len(), 2);
+        assert_eq!(makefile.conditionals[0].kind, ConditionalKind::Ifeq);
+        assert_eq!(makefile.conditionals[1].kind, ConditionalKind::Endif);
+    }
+
+    #[test]
     fn parses_expression_aware_continued_rules() {
         let content = concat!(
             "$(call target,a:b=c): $(call deps,x:y=z) \\\n  generated.o | stamp\n",
@@ -193,6 +207,14 @@ target: dependency
             makefile.variables["banner"].value,
             makefile.definitions[0].value
         );
+    }
+
+    #[test]
+    fn strips_inline_comments_from_include_paths() {
+        let makefile = parse("include mk/common.mk\t# shared settings\n").unwrap();
+
+        assert_eq!(makefile.includes.len(), 1);
+        assert_eq!(makefile.includes[0].paths, ["mk/common.mk"]);
     }
 
     #[test]

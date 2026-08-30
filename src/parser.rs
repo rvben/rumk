@@ -218,7 +218,7 @@ impl Parser {
     fn parse_include(&mut self, statement: &LogicalStatement, kind: IncludeKind) {
         let text = statement.text().trim_start();
         let keyword_length = text.find(char::is_whitespace).unwrap_or(text.len());
-        let paths = split_top_level_words(text[keyword_length..].trim());
+        let paths = split_top_level_words(strip_top_level_comment(text[keyword_length..].trim()));
         self.makefile.includes.push(Include {
             paths,
             optional: kind == IncludeKind::Optional,
@@ -402,11 +402,7 @@ impl Parser {
 
             let recipe_line = recipe_statement.text();
             let is_recipe = recipe_statement.kind == LogicalKind::Recipe
-                || (recipe_line.starts_with(' ')
-                    && !matches!(
-                        recipe_statement.kind,
-                        LogicalKind::Assignment | LogicalKind::Rule
-                    ));
+                || (recipe_line.starts_with(' ') && recipe_statement.kind == LogicalKind::Unknown);
             if is_recipe {
                 let indentation_length = if recipe_line.starts_with(self.recipe_prefix) {
                     self.recipe_prefix.len_utf8()

@@ -237,6 +237,19 @@ fn never_executes_unsafe_make_functions_while_loading() {
 }
 
 #[test]
+fn loads_indented_conditionals_after_a_recipe_without_panicking() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    let content = "all:\n\t@echo all\n  ifeq ($(MODE),debug)\n  CFLAGS := -g\n  endif\n";
+    std::fs::write(&path, content).unwrap();
+
+    let project = Project::load(&path, &ProjectOptions::default()).unwrap();
+
+    assert_eq!(project.files().len(), 1);
+    assert!(!project.analysis().has_structural_issues());
+}
+
+#[test]
 fn honors_predefined_variables_and_infers_gnu_default_goal() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
