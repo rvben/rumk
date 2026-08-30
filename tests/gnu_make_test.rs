@@ -97,3 +97,45 @@ fn project_fixture_is_accepted_by_gnu_make_and_rumk() {
         rumk::project::IncludeResolution::Resolved(_)
     )));
 }
+
+#[test]
+fn safe_evaluator_matches_gnu_make_on_a_controlled_project() {
+    let directory = fixture("evaluator");
+    let output = match Command::new("make")
+        .current_dir(&directory)
+        .args(["--no-builtin-rules", "-f", "Makefile", "verify"])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => panic!("failed to launch GNU Make: {error}"),
+    };
+    assert!(
+        output.status.success(),
+        "GNU Make evaluator fixture failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let project = Project::load(&directory.join("Makefile"), &ProjectOptions::default()).unwrap();
+    assert_eq!(project.files().len(), 3);
+    assert_eq!(
+        project
+            .edges()
+            .iter()
+            .filter_map(|edge| edge.expanded.as_deref())
+            .collect::<Vec<_>>(),
+        ["mk/one.mk", "mk/two.mk"]
+    );
+    assert_eq!(
+        project.evaluation().expand("$(FILES)").as_known(),
+        Some("mk/one.mk mk/two.mk")
+    );
+    let all = project.analysis().target("all").unwrap();
+    assert_eq!(
+        all.dependencies
+            .iter()
+            .map(|dependency| dependency.prerequisite.as_str())
+            .collect::<Vec<_>>(),
+        ["one", "two"]
+    );
+}

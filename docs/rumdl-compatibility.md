@@ -27,6 +27,8 @@ semantics require a different design.
   Makefile that owns the finding.
 - Project settings live under `[global]` as `include-paths`, `predefined-variables`, and
   `entry-targets`, following Rumdl's kebab-case configuration vocabulary.
+- Static project analysis safely expands known variables, conditionals, includes, targets, and
+  prerequisites. Unknown or side-effecting expressions remain unresolved and are never executed.
 - Rumk's analysis context contains rules, targets, prerequisites, variables, includes, recipes,
   and source-preserving syntax instead of Markdown elements.
 - Fixes must preserve Make behavior and every source byte outside their declared edit ranges.

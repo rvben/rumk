@@ -14,7 +14,9 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 - Models GNU Make assignment flavors, static patterns, target-specific variables, includes,
   conditionals, `define` blocks, custom recipe prefixes, and `.ONESHELL`
 - Builds semantic indexes for variables, references, targets, dependencies, and includes
-- Resolves static include graphs and reports cross-file findings at their real source paths
+- Safely evaluates statically knowable variables and conditionals without running recipes,
+  shell commands, or side-effecting Make functions
+- Resolves expanded include graphs and reports cross-file findings at their real source paths
 - Preserves LF/CRLF line endings and final newlines during fixes
 - Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
 - Discovers `.rumk.toml` upward through the project tree
@@ -112,9 +114,10 @@ Recipe shell comments are not interpreted as Rumk directives.
 The original Rumk `[rules]` and `[ignore]` configuration sections remain accepted for migration.
 
 `include-paths` models GNU Make's `-I` search directories and resolves relative entries from the
-configuration directory. `predefined-variables` supplies names expected from the environment or
-command line to opt-in rule `MK208`. `entry-targets` defines roots for opt-in reachability rule
-`MK209`; without explicit entries, that rule deliberately emits nothing.
+configuration directory. `predefined-variables` supplies command-line-style values to safe
+evaluation and names expected by opt-in rule `MK208`. `entry-targets` overrides the roots for
+opt-in reachability rule `MK209`; without explicit entries, Rumk follows GNU Make's inferred
+default goal when it can determine that goal safely.
 
 ### Rule and file selection
 
@@ -204,7 +207,7 @@ Rules marked **default** run without configuration.
 - `MK206` — Required static includes must resolve (**default**)
 - `MK207` — Static Makefile includes must not form cycles (**default**)
 - `MK208` — Static variable references must resolve (opt-in)
-- `MK209` — Targets must be reachable from configured entry targets (opt-in)
+- `MK209` — Targets must be reachable from configured entries or the inferred default goal (opt-in)
 
 ## Development
 
