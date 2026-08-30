@@ -1,6 +1,8 @@
 use anyhow::{bail, Result};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
+use crate::analysis::SemanticIndex;
 use crate::logical::{
     find_top_level_assignment, find_top_level_char, find_top_level_rule_separator,
     split_top_level_words, ConditionalKind, IncludeKind, LogicalDocument, LogicalKind,
@@ -23,6 +25,7 @@ pub struct Makefile {
     pub conditionals: Vec<Conditional>,
     pub definitions: Vec<Definition>,
     pub oneshell: bool,
+    analysis: OnceLock<SemanticIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +138,13 @@ pub fn parse(content: &str) -> Result<Makefile> {
     Parser::new(content).parse()
 }
 
+impl Makefile {
+    /// Returns the semantic index, building it once on first use.
+    pub fn analysis(&self) -> &SemanticIndex {
+        self.analysis.get_or_init(|| SemanticIndex::build(self))
+    }
+}
+
 struct Parser {
     current_statement: usize,
     makefile: Makefile,
@@ -158,6 +168,7 @@ impl Parser {
                 conditionals: Vec::new(),
                 definitions: Vec::new(),
                 oneshell: false,
+                analysis: OnceLock::new(),
             },
             recipe_prefix: '\t',
         }
