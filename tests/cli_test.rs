@@ -314,3 +314,193 @@ fn explicit_files_bypass_include_filters_but_not_excludes() {
     assert_eq!(included.status.code(), Some(1));
     assert_eq!(excluded.status.code(), Some(0));
 }
+
+#[test]
+fn project_diagnostics_point_to_included_files_and_are_deduplicated() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "include shared.mk\nserver: first\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "server:: second\n").unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", ".", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let mixed = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["rule"] == "MK004")
+        .collect::<Vec<_>>();
+
+    assert_eq!(mixed.len(), 1);
+    assert_eq!(mixed[0]["file"], "Makefile");
+    assert_eq!(mixed[0]["line"], 2);
+}
+
+#[test]
+fn required_include_diagnostics_respect_optional_and_generated_makefiles() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        concat!(
+            "include missing.mk\n",
+            "-include optional.mk\n",
+            "include generated.mk\n",
+            "generated.mk:\n\t@touch $@\n",
+        ),
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let missing = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|diagnostic| diagnostic["rule"] == "MK206")
+        .collect::<Vec<_>>();
+
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0]["file"], "Makefile");
+    assert!(missing[0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("missing.mk"));
+}
+
+#[test]
+fn project_configuration_drives_include_search_and_opt_in_semantics() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(directory.path().join("src")).unwrap();
+    std::fs::create_dir_all(directory.path().join("mk")).unwrap();
+    std::fs::write(
+        directory.path().join("src/Makefile"),
+        "include shared.mk\nall: library\n\t@echo $(FROM_CLI) $(MISSING)\norphan:\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("mk/shared.mk"), "library:\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        concat!(
+            "[global]\n",
+            "include-paths = [\"mk\"]\n",
+            "predefined-variables = { FROM_CLI = \"yes\" }\n",
+            "entry-targets = [\"all\"]\n",
+            "[MK208]\n",
+            "enabled = true\n",
+            "[MK209]\n",
+            "enabled = true\n",
+        ),
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "src/Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let diagnostics = diagnostics.as_array().unwrap();
+
+    assert!(!diagnostics.iter().any(|item| item["rule"] == "MK206"));
+    assert!(diagnostics.iter().any(
+        |item| item["rule"] == "MK208" && item["message"].as_str().unwrap().contains("MISSING")
+    ));
+    assert!(!diagnostics.iter().any(|item| {
+        item["rule"] == "MK208" && item["message"].as_str().unwrap().contains("FROM_CLI")
+    }));
+    assert!(diagnostics.iter().any(|item| {
+        item["rule"] == "MK209" && item["message"].as_str().unwrap().contains("orphan")
+    }));
+}
+
+#[test]
+fn included_phony_declarations_prevent_standalone_false_positives() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "include shared.mk\nall:\n\t@:\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("shared.mk"), ".PHONY: all\n").unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", ".", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(!diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["rule"] == "MK201"));
+}
+
+#[test]
+fn explicit_roots_lint_unselected_includes_without_fixing_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let shared = directory.path().join("shared.mk");
+    std::fs::write(directory.path().join("Makefile"), "include shared.mk\n").unwrap();
+    std::fs::write(&shared, "target:\n    echo wrong\n").unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let recipe = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK001")
+        .unwrap();
+
+    assert_eq!(recipe["file"], "shared.mk");
+    assert_eq!(recipe["fixable"], false);
+    assert_eq!(
+        std::fs::read_to_string(shared).unwrap(),
+        "target:\n    echo wrong\n"
+    );
+}
+
+#[test]
+fn per_file_ignores_apply_to_project_diagnostic_source_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "server:: first\ninclude shared.mk\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "server: second\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[per-file-ignores]\n\"shared.mk\" = [\"MK004\"]\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert!(!diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|diagnostic| diagnostic["rule"] == "MK004"));
+}

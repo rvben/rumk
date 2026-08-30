@@ -1,0 +1,141 @@
+use rumk::project::{Project, ProjectOptions};
+use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony};
+use rumk::rules::project::{
+    IncludeCycle, MissingInclude, MixedTargetSeparators, UndefinedVariableReference,
+    UnreachableTarget,
+};
+use rumk::rules::Rule;
+
+fn load(root: &std::path::Path) -> Project {
+    Project::load(root, &ProjectOptions::default()).unwrap()
+}
+
+#[test]
+fn reports_mixed_separators_across_files_at_the_conflicting_source() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let shared = directory.path().join("shared.mk");
+    std::fs::write(&root, "include shared.mk\nserver: first\n").unwrap();
+    std::fs::write(&shared, "server:: second\n").unwrap();
+
+    let diagnostics = MixedTargetSeparators.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].rule_id, "MK004");
+    assert_eq!(
+        diagnostics[0].source.as_deref(),
+        Some(root.canonicalize().unwrap().as_path())
+    );
+}
+
+#[test]
+fn missing_include_allows_optional_dynamic_and_remakeable_files() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "include missing.mk\n",
+            "-include optional.mk\n",
+            "include $(wildcard generated/*.mk)\n",
+            "include generated.mk\n",
+            "generated.mk:\n\t@touch $@\n",
+        ),
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("missing.mk"));
+}
+
+#[test]
+fn reports_include_cycles_on_the_closing_directive() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let shared = directory.path().join("shared.mk");
+    std::fs::write(&root, "include shared.mk\n").unwrap();
+    std::fs::write(&shared, "VALUE := yes\ninclude Makefile\n").unwrap();
+
+    let diagnostics = IncludeCycle.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(
+        diagnostics[0].source.as_deref(),
+        Some(shared.canonicalize().unwrap().as_path())
+    );
+}
+
+#[test]
+fn undefined_references_respect_project_builtins_and_predefined_variables() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        "KNOWN := yes\nall:\n\t@echo $(KNOWN) $(MAKE) $(FROM_CLI) $(MISSING)\n",
+    )
+    .unwrap();
+    let rule = UndefinedVariableReference::new([String::from("FROM_CLI")]);
+
+    let diagnostics = rule.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("MISSING"));
+}
+
+#[test]
+fn reachability_is_inert_without_entries_and_follows_cross_file_edges() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(&root, "include shared.mk\nall: library\norphan:\n\t@:\n").unwrap();
+    std::fs::write(
+        directory.path().join("shared.mk"),
+        "library: object\nobject:\n",
+    )
+    .unwrap();
+    let project = load(&root);
+
+    assert!(UnreachableTarget::default()
+        .check_project(&project)
+        .is_empty());
+    let diagnostics = UnreachableTarget::new(vec![String::from("all")]).check_project(&project);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("orphan"));
+}
+
+#[test]
+fn context_sensitive_rules_merge_phonies_recipes_and_dependency_edges() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "include shared.mk\n",
+            "all: library\n",
+            "server:\n\t@echo root\n",
+            "library: object\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("shared.mk"),
+        concat!(
+            ".PHONY: all\n",
+            "server:\n\t@echo shared\n",
+            "object: library\n",
+        ),
+    )
+    .unwrap();
+    let project = load(&root);
+
+    assert!(MissingPhony.check_project(&project).is_empty());
+    let duplicate = DuplicateRecipe.check_project(&project);
+    assert_eq!(duplicate.len(), 1);
+    assert_eq!(duplicate[0].rule_id, "MK204");
+    let cycles = DependencyCycle.check_project(&project);
+    assert_eq!(cycles.len(), 1);
+    assert_eq!(cycles[0].rule_id, "MK205");
+}

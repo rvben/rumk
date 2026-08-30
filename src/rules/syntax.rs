@@ -154,3 +154,65 @@ impl Rule for ConditionalStructure {
             .collect()
     }
 }
+
+pub struct SpecialTargetPlacement;
+
+impl Rule for SpecialTargetPlacement {
+    fn id(&self) -> &'static str {
+        "MK005"
+    }
+
+    fn name(&self) -> &'static str {
+        "Special target must stand alone"
+    }
+
+    fn description(&self) -> &'static str {
+        "GNU Make special targets should be the sole target on the left-hand side; combining one with ordinary targets changes the declaration's meaning."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Syntax
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        makefile
+            .rules
+            .iter()
+            .filter(|rule| rule.targets.len() > 1)
+            .flat_map(|rule| {
+                rule.targets
+                    .iter()
+                    .filter(|target| SPECIAL_TARGETS.contains(&target.as_str()))
+                    .map(|target| {
+                        Diagnostic::new(
+                            self.id(),
+                            Severity::Error,
+                            format!("Special target '{target}' must be declared by itself"),
+                            rule.line,
+                            rule.column,
+                        )
+                    })
+            })
+            .collect()
+    }
+}
+
+const SPECIAL_TARGETS: &[&str] = &[
+    ".DEFAULT",
+    ".DELETE_ON_ERROR",
+    ".EXPORT_ALL_VARIABLES",
+    ".IGNORE",
+    ".INTERMEDIATE",
+    ".LOW_RESOLUTION_TIME",
+    ".NOTINTERMEDIATE",
+    ".NOTPARALLEL",
+    ".ONESHELL",
+    ".PHONY",
+    ".POSIX",
+    ".PRECIOUS",
+    ".SECONDARY",
+    ".SECONDEXPANSION",
+    ".SILENT",
+    ".SUFFIXES",
+    ".WAIT",
+];

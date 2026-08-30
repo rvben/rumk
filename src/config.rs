@@ -1,5 +1,6 @@
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::parser::Makefile;
+use crate::project::{Project, ProjectOptions};
 use crate::rules::{self, Rule, RuleCategory};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -7,7 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_RULES: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK101", "MK201", "MK203", "MK204", "MK205",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK201", "MK203", "MK204", "MK205",
+    "MK206", "MK207",
 ];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
@@ -30,6 +32,9 @@ pub struct GlobalConfig {
     pub unfixable: Vec<String>,
     pub exclude: Vec<String>,
     pub include: Vec<String>,
+    pub include_paths: Vec<String>,
+    pub predefined_variables: BTreeMap<String, String>,
+    pub entry_targets: Vec<String>,
     pub respect_gitignore: bool,
     pub dialect: Option<String>,
 }
@@ -45,6 +50,9 @@ impl Default for GlobalConfig {
             unfixable: Vec::new(),
             exclude: Vec::new(),
             include: Vec::new(),
+            include_paths: Vec::new(),
+            predefined_variables: BTreeMap::new(),
+            entry_targets: Vec::new(),
             respect_gitignore: true,
             dialect: Some("gnu".to_string()),
         }
@@ -113,6 +121,30 @@ impl Config {
         self.source_path.as_deref()
     }
 
+    pub fn project_options(&self, makefile: &Path) -> ProjectOptions {
+        let config_root = self.project_root();
+        let include_paths = self
+            .global
+            .include_paths
+            .iter()
+            .map(PathBuf::from)
+            .map(|path| {
+                if path.is_absolute() {
+                    path
+                } else if let Some(root) = config_root {
+                    root.join(path)
+                } else {
+                    path
+                }
+            })
+            .collect();
+        ProjectOptions {
+            working_directory: makefile.parent().map(Path::to_path_buf),
+            include_paths,
+            ..ProjectOptions::default()
+        }
+    }
+
     pub fn apply_rule_overrides(
         &mut self,
         enable: Option<&[String]>,
@@ -169,7 +201,7 @@ impl Config {
     }
 
     pub fn is_path_ignored(&self, path: &Path) -> bool {
-        let normalized = normalize_path(path);
+        let normalized = self.relative_to_project(path);
         if !self.global.include.is_empty()
             && !self
                 .global
@@ -187,7 +219,7 @@ impl Config {
     }
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
-        let normalized = normalize_path(path);
+        let normalized = self.relative_to_project(path);
         self.global
             .exclude
             .iter()
@@ -214,6 +246,11 @@ impl Config {
                 "respect-gitignore" => Some(self.global.respect_gitignore.to_string()),
                 "exclude" => Some(format_string_list(&self.global.exclude)),
                 "include" => Some(format_string_list(&self.global.include)),
+                "include-paths" => Some(format_string_list(&self.global.include_paths)),
+                "predefined-variables" => {
+                    Some(format_string_map(&self.global.predefined_variables))
+                }
+                "entry-targets" => Some(format_string_list(&self.global.entry_targets)),
                 "disable" => Some(format_string_list(&self.global.disable)),
                 "extend-enable" => Some(format_string_list(&self.global.extend_enable)),
                 "extend-disable" => Some(format_string_list(&self.global.extend_disable)),
@@ -367,15 +404,26 @@ impl Config {
             .iter()
             .filter_map(|rule_id| {
                 let settings = &self.settings[*rule_id];
-                settings.enabled.then(|| build_rule(rule_id, settings))
+                settings
+                    .enabled
+                    .then(|| build_rule(rule_id, settings, &self.global))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(())
     }
 
     fn relative_to_project(&self, path: &Path) -> String {
-        let config_root = self
-            .source_path
+        let config_root = self.project_root();
+        let current_dir = std::env::current_dir().ok();
+        let root = config_root.or(current_dir.as_deref());
+        let relative = root
+            .and_then(|root| path.strip_prefix(root).ok())
+            .unwrap_or(path);
+        normalize_path(relative)
+    }
+
+    fn project_root(&self) -> Option<&Path> {
+        self.source_path
             .as_deref()
             .and_then(Path::parent)
             .map(|parent| {
@@ -384,13 +432,7 @@ impl Config {
                 } else {
                     parent
                 }
-            });
-        let current_dir = std::env::current_dir().ok();
-        let root = config_root.or(current_dir.as_deref());
-        let relative = root
-            .and_then(|root| path.strip_prefix(root).ok())
-            .unwrap_or(path);
-        normalize_path(relative)
+            })
     }
 }
 
@@ -724,11 +766,32 @@ fn render_global(output: &mut String, global: &GlobalConfig, defaults: Option<&G
                 .map(|value| value.include.as_slice())
                 .unwrap_or_default(),
         ),
+        (
+            "include-paths",
+            global.include_paths.as_slice(),
+            defaults
+                .map(|value| value.include_paths.as_slice())
+                .unwrap_or_default(),
+        ),
+        (
+            "entry-targets",
+            global.entry_targets.as_slice(),
+            defaults
+                .map(|value| value.entry_targets.as_slice())
+                .unwrap_or_default(),
+        ),
     ];
     for (key, values, default_values) in lists {
         if show(values != default_values) {
             output.push_str(&format!("{key} = {}\n", format_string_list(values)));
         }
+    }
+    let default_predefined = defaults.map(|value| &value.predefined_variables);
+    if show(default_predefined != Some(&global.predefined_variables)) {
+        output.push_str(&format!(
+            "predefined-variables = {}\n",
+            format_string_map(&global.predefined_variables)
+        ));
     }
 }
 
@@ -740,11 +803,17 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
     }
 }
 
-fn build_rule(rule_id: &str, settings: &RuleSettings) -> Result<Box<dyn Rule>> {
+fn build_rule(
+    rule_id: &str,
+    settings: &RuleSettings,
+    global: &GlobalConfig,
+) -> Result<Box<dyn Rule>> {
     let rule: Box<dyn Rule> = match rule_id {
         "MK001" => Box::new(rules::syntax::TabInRecipe),
         "MK002" => Box::new(rules::syntax::InvalidVariableSyntax),
         "MK003" => Box::new(rules::syntax::ConditionalStructure),
+        "MK004" => Box::new(rules::project::MixedTargetSeparators),
+        "MK005" => Box::new(rules::syntax::SpecialTargetPlacement),
         "MK101" => Box::new(rules::style::LineLength::new(integer_option(
             rule_id, settings, "max", 120,
         )?)),
@@ -763,6 +832,14 @@ fn build_rule(rule_id: &str, settings: &RuleSettings) -> Result<Box<dyn Rule>> {
         "MK203" => Box::new(rules::best_practices::RecursiveMake),
         "MK204" => Box::new(rules::best_practices::DuplicateRecipe),
         "MK205" => Box::new(rules::best_practices::DependencyCycle),
+        "MK206" => Box::new(rules::project::MissingInclude),
+        "MK207" => Box::new(rules::project::IncludeCycle),
+        "MK208" => Box::new(rules::project::UndefinedVariableReference::new(
+            global.predefined_variables.keys().cloned(),
+        )),
+        "MK209" => Box::new(rules::project::UnreachableTarget::new(
+            global.entry_targets.clone(),
+        )),
         _ => bail!("Unknown rule: {rule_id}"),
     };
 
@@ -845,6 +922,17 @@ fn format_string_list(values: &[String]) -> String {
     )
 }
 
+fn format_string_map(values: &BTreeMap<String, String>) -> String {
+    format!(
+        "{{{}}}",
+        values
+            .iter()
+            .map(|(key, value)| format!("{key:?} = {value:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
 struct SeverityOverride {
     rule: Box<dyn Rule>,
     severity: Severity,
@@ -871,8 +959,20 @@ impl Rule for SeverityOverride {
         self.rule.fixable()
     }
 
+    fn project_aware(&self) -> bool {
+        self.rule.project_aware()
+    }
+
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = self.rule.check(makefile, content);
+        for diagnostic in &mut diagnostics {
+            diagnostic.severity = self.severity;
+        }
+        diagnostics
+    }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        let mut diagnostics = self.rule.check_project(project);
         for diagnostic in &mut diagnostics {
             diagnostic.severity = self.severity;
         }

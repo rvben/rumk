@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use rumk::parser::{parse, VariableScope};
+use rumk::project::{Project, ProjectOptions};
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -63,4 +64,36 @@ fn advanced_fixture_has_the_expected_rumk_structure() {
         .unwrap();
     assert_eq!(static_pattern.target_pattern.as_deref(), Some("%.o"));
     assert_eq!(static_pattern.prerequisites, ["%.c"]);
+}
+
+#[test]
+fn project_fixture_is_accepted_by_gnu_make_and_rumk() {
+    let directory = fixture("project");
+    let output = match Command::new("make")
+        .current_dir(&directory)
+        .args([
+            "--no-builtin-rules",
+            "--dry-run",
+            "-f",
+            "Makefile",
+            "validate",
+        ])
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => panic!("failed to launch GNU Make: {error}"),
+    };
+    assert!(
+        output.status.success(),
+        "GNU Make rejected project fixture:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let project = Project::load(&directory.join("Makefile"), &ProjectOptions::default()).unwrap();
+    assert_eq!(project.files().len(), 3);
+    assert!(project.edges().iter().all(|edge| matches!(
+        edge.resolution,
+        rumk::project::IncludeResolution::Resolved(_)
+    )));
 }

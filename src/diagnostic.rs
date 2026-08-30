@@ -1,7 +1,12 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Diagnostic {
+    /// Source file for project-level diagnostics. Single-file diagnostics use
+    /// the path supplied by their report instead.
+    #[serde(skip)]
+    pub source: Option<PathBuf>,
     pub rule_id: String,
     pub severity: Severity,
     pub message: String,
@@ -44,6 +49,7 @@ impl Diagnostic {
         column: usize,
     ) -> Self {
         Self {
+            source: None,
             rule_id: rule_id.into(),
             severity,
             message: message.into(),
@@ -59,6 +65,11 @@ impl Diagnostic {
     pub fn with_fix(mut self, fix: Fix) -> Self {
         self.fixable = true;
         self.fix = Some(fix);
+        self
+    }
+
+    pub fn with_source(mut self, source: impl Into<PathBuf>) -> Self {
+        self.source = Some(source.into());
         self
     }
 }

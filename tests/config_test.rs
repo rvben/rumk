@@ -13,7 +13,10 @@ fn an_empty_config_keeps_the_builtin_default_rule_set() {
 
     assert_eq!(
         ids,
-        ["MK001", "MK002", "MK003", "MK101", "MK201", "MK203", "MK204", "MK205"]
+        [
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK201", "MK203", "MK204",
+            "MK205", "MK206", "MK207"
+        ]
     );
 }
 
@@ -40,7 +43,10 @@ rules = ["MK202"]
     let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
     assert_eq!(
         ids,
-        ["MK001", "MK002", "MK003", "MK101", "MK203", "MK204", "MK205"]
+        [
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK203", "MK204", "MK205",
+            "MK206", "MK207"
+        ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/lib/Makefile")));
     assert!(!config.is_path_ignored(std::path::Path::new("src/Makefile")));
@@ -84,7 +90,10 @@ enabled = true
     let ids: Vec<_> = config.rules.iter().map(|rule| rule.id()).collect();
     assert_eq!(
         ids,
-        ["MK001", "MK002", "MK003", "MK101", "MK202", "MK203", "MK204", "MK205"]
+        [
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK202", "MK203", "MK204",
+            "MK205", "MK206", "MK207"
+        ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/a.mk")));
     assert!(
@@ -170,4 +179,42 @@ fn config_extends_merges_parent_settings_and_detects_cycles() {
         .unwrap()
         .to_string()
         .contains("Failed to parse config file"));
+}
+
+#[test]
+fn project_configuration_is_queryable_and_resolves_include_paths_from_the_config() {
+    let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join(".rumk.toml");
+    let makefile = directory.path().join("src/Makefile");
+    std::fs::create_dir(directory.path().join("src")).unwrap();
+    std::fs::write(
+        &config_path,
+        concat!(
+            "[global]\n",
+            "include-paths = [\"mk\"]\n",
+            "entry-targets = [\"all\"]\n",
+            "predefined-variables = { FROM_CLI = \"yes\" }\n",
+            "[MK208]\n",
+            "enabled = true\n",
+        ),
+    )
+    .unwrap();
+
+    let config = Config::from_file(&config_path).unwrap();
+    let options = config.project_options(&makefile);
+
+    assert_eq!(options.working_directory.as_deref(), makefile.parent());
+    assert_eq!(options.include_paths, [directory.path().join("mk")]);
+    assert_eq!(
+        config.get("global.entry-targets").as_deref(),
+        Some("[\"all\"]")
+    );
+    assert_eq!(
+        config.get("global.predefined-variables").as_deref(),
+        Some("{\"FROM_CLI\" = \"yes\"}")
+    );
+    let rendered = config.render(false, false);
+    let rendered_path = directory.path().join("rendered.toml");
+    std::fs::write(&rendered_path, rendered).unwrap();
+    assert!(Config::from_file(&rendered_path).is_ok());
 }

@@ -1,6 +1,8 @@
 use rumk::parser::parse;
 use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, RecursiveMake};
-use rumk::rules::syntax::{ConditionalStructure, InvalidVariableSyntax, TabInRecipe};
+use rumk::rules::syntax::{
+    ConditionalStructure, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
+};
 use rumk::rules::Rule;
 
 #[test]
@@ -140,4 +142,18 @@ fn dependency_cycle_rule_reports_components_once() {
     assert!(diagnostics
         .iter()
         .all(|diagnostic| diagnostic.rule_id == "MK205"));
+}
+
+#[test]
+fn special_targets_must_not_share_the_left_hand_side() {
+    let valid = ".PHONY: all\nall:\n\t@:\n";
+    let invalid = ".PHONY all:\n\t@:\n";
+
+    assert!(SpecialTargetPlacement
+        .check(&parse(valid).unwrap(), valid)
+        .is_empty());
+    let diagnostics = SpecialTargetPlacement.check(&parse(invalid).unwrap(), invalid);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].rule_id, "MK005");
 }

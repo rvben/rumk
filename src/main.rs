@@ -4,6 +4,7 @@ use colored::Colorize;
 use ignore::WalkBuilder;
 use rumk::config::Config;
 use rumk::diagnostic::{Diagnostic, Severity};
+use rumk::project::Project;
 use rumk::{fix, inline_config, parser, rules};
 use serde::Serialize;
 use similar::TextDiff;
@@ -259,7 +260,7 @@ struct FileReport {
 
 #[derive(Serialize)]
 struct JsonDiagnostic<'a> {
-    file: &'a str,
+    file: String,
     line: usize,
     column: usize,
     end_line: usize,
@@ -429,11 +430,52 @@ fn run_files(
     }
 
     let files = discover_files(&paths, config)?;
+    let mut project_roots = paths
+        .iter()
+        .filter(|path| path.is_file())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    project_roots.extend(
+        files
+            .iter()
+            .filter(|path| is_primary_makefile(path))
+            .cloned(),
+    );
+    if project_roots.is_empty() && files.len() == 1 {
+        project_roots.insert(files[0].clone());
+    }
+    let mut included_files = BTreeSet::new();
+    if config.rules.iter().any(|rule| rule.project_aware()) {
+        for root in &project_roots {
+            let project = Project::load(root, &config.project_options(root))
+                .with_context(|| format!("Failed to load Make project: {}", root.display()))?;
+            included_files.extend(
+                project
+                    .files()
+                    .iter()
+                    .filter(|file| file.id != project.root())
+                    .map(|file| file.path.clone()),
+            );
+        }
+    }
+    let covered_files = files.iter().map(|path| path_identity(path)).collect();
     let mut reports = files
         .iter()
-        .map(|path| process_file(path, config, operation))
+        .map(|path| {
+            let project_root = project_roots.contains(path);
+            let contextual = project_root || included_files.contains(&path_identity(path));
+            process_file(
+                path,
+                config,
+                operation,
+                project_root,
+                contextual,
+                &covered_files,
+            )
+        })
         .collect::<Result<Vec<_>>>()?;
     reports.sort_by(|left, right| left.path.cmp(&right.path));
+    deduplicate_diagnostics(&mut reports);
 
     if !args.silent {
         output_reports(&reports, args.output_format, operation)?;
@@ -515,11 +557,25 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Vec<PathBuf>> {
     Ok(files.into_iter().collect())
 }
 
-fn process_file(path: &Path, config: &Config, operation: Operation) -> Result<FileReport> {
+fn process_file(
+    path: &Path,
+    config: &Config,
+    operation: Operation,
+    project_root: bool,
+    contextual: bool,
+    covered_files: &BTreeSet<PathBuf>,
+) -> Result<FileReport> {
     let original = std::fs::read_to_string(path)
         .with_context(|| format!("Failed to read Makefile: {}", path.display()))?;
-    let initial_diagnostics = lint(&original, config, path)
-        .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    let initial_diagnostics = lint(
+        &original,
+        config,
+        path,
+        project_root,
+        contextual,
+        covered_files,
+    )
+    .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
     let mut diagnostics = initial_diagnostics.clone();
     let mut content = original.clone();
     let mut fixed_diagnostics = Vec::new();
@@ -543,9 +599,15 @@ fn process_file(path: &Path, config: &Config, operation: Operation) -> Result<Fi
                     .cloned(),
             );
             content = fixed;
-            diagnostics = lint(&content, config, path).with_context(|| {
-                format!("Failed to parse formatted Makefile: {}", path.display())
-            })?;
+            diagnostics = lint(
+                &content,
+                config,
+                path,
+                project_root,
+                contextual,
+                covered_files,
+            )
+            .with_context(|| format!("Failed to parse formatted Makefile: {}", path.display()))?;
             if iteration + 1 == MAX_FIX_ITERATIONS
                 && diagnostics.iter().any(|diagnostic| diagnostic.fixable)
             {
@@ -577,11 +639,19 @@ fn process_file(path: &Path, config: &Config, operation: Operation) -> Result<Fi
     })
 }
 
-fn lint(content: &str, config: &Config, path: &Path) -> Result<Vec<Diagnostic>> {
+fn lint(
+    content: &str,
+    config: &Config,
+    path: &Path,
+    project_root: bool,
+    contextual: bool,
+    covered_files: &BTreeSet<PathBuf>,
+) -> Result<Vec<Diagnostic>> {
     let makefile = parser::parse(content)?;
     let mut diagnostics = config
         .rules
         .iter()
+        .filter(|rule| !contextual || !rule.project_aware())
         .flat_map(|rule| rule.check(&makefile, content))
         .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
         .map(|mut diagnostic| {
@@ -594,8 +664,67 @@ fn lint(content: &str, config: &Config, path: &Path) -> Result<Vec<Diagnostic>> 
         .collect::<Vec<_>>();
     diagnostics = inline_config::apply_inline_suppressions(content, diagnostics)
         .map_err(anyhow::Error::msg)?;
+    if project_root {
+        let project = Project::load_with_root_content(
+            path,
+            content.to_string(),
+            &config.project_options(path),
+        )?;
+        let mut project_diagnostics = config
+            .rules
+            .iter()
+            .flat_map(|rule| rule.check_project(&project))
+            .map(|mut diagnostic| {
+                if diagnostic.source.is_none() {
+                    diagnostic.source = Some(project.file(project.root()).path.clone());
+                }
+                if !config.is_rule_fixable(&diagnostic.rule_id) {
+                    diagnostic.fixable = false;
+                    diagnostic.fix = None;
+                }
+                diagnostic
+            })
+            .collect::<Vec<_>>();
+        for file in project.files().iter().filter(|file| {
+            file.id != project.root()
+                && !covered_files.contains(&file.path)
+                && !config.is_path_ignored(&file.path)
+        }) {
+            project_diagnostics.extend(
+                config
+                    .rules
+                    .iter()
+                    .filter(|rule| !rule.project_aware())
+                    .flat_map(|rule| rule.check(&file.makefile, &file.content))
+                    .filter(|diagnostic| {
+                        !config.is_rule_ignored_for_path(&file.path, &diagnostic.rule_id)
+                    })
+                    .map(|mut diagnostic| {
+                        diagnostic.source = Some(file.path.clone());
+                        diagnostic.fixable = false;
+                        diagnostic.fix = None;
+                        diagnostic
+                    }),
+            );
+        }
+        for file in project.files() {
+            let source_diagnostics = project_diagnostics
+                .iter()
+                .filter(|diagnostic| diagnostic.source.as_deref() == Some(file.path.as_path()))
+                .filter(|diagnostic| {
+                    !config.is_rule_ignored_for_path(&file.path, &diagnostic.rule_id)
+                })
+                .cloned()
+                .collect();
+            diagnostics.extend(
+                inline_config::apply_inline_suppressions(&file.content, source_diagnostics)
+                    .map_err(anyhow::Error::msg)?,
+            );
+        }
+    }
     diagnostics.sort_by_key(|diagnostic| {
         (
+            diagnostic.source.clone(),
             diagnostic.line,
             diagnostic.column,
             diagnostic.rule_id.clone(),
@@ -650,6 +779,10 @@ fn display_path(path: &Path) -> String {
         .to_string()
 }
 
+fn path_identity(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 fn is_makefile(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -658,6 +791,49 @@ fn is_makefile(path: &Path) -> bool {
                 || name.ends_with(".mk")
                 || name.ends_with(".make")
         })
+}
+
+fn is_primary_makefile(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "Makefile" | "makefile" | "GNUmakefile"))
+}
+
+fn deduplicate_diagnostics(reports: &mut [FileReport]) {
+    fn retain_unique(
+        report_path: &str,
+        diagnostics: &mut Vec<Diagnostic>,
+        seen: &mut BTreeSet<(String, usize, usize, String, String)>,
+    ) {
+        diagnostics.retain(|diagnostic| {
+            seen.insert((
+                diagnostic
+                    .source
+                    .as_deref()
+                    .map(display_path)
+                    .unwrap_or_else(|| report_path.to_string()),
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.rule_id.clone(),
+                diagnostic.message.clone(),
+            ))
+        });
+    }
+
+    let mut current = BTreeSet::new();
+    let mut initial = BTreeSet::new();
+    for report in reports {
+        retain_unique(&report.path, &mut report.diagnostics, &mut current);
+        retain_unique(&report.path, &mut report.initial_diagnostics, &mut initial);
+    }
+}
+
+fn diagnostic_path(report: &FileReport, diagnostic: &Diagnostic) -> String {
+    diagnostic
+        .source
+        .as_deref()
+        .map(display_path)
+        .unwrap_or_else(|| report.path.clone())
 }
 
 fn output_reports(
@@ -696,7 +872,7 @@ fn output_text(report: &FileReport, operation: Operation) {
         for diagnostic in &report.fixed_diagnostics {
             println!(
                 "{}:{}:{}: {} {} {}",
-                report.path.cyan(),
+                diagnostic_path(report, diagnostic).cyan(),
                 diagnostic.line,
                 diagnostic.column,
                 format!("[{}]", diagnostic.rule_id).yellow(),
@@ -715,7 +891,7 @@ fn output_text(report: &FileReport, operation: Operation) {
         let fix_indicator = if diagnostic.fixable { " [*]" } else { "" };
         println!(
             "{}:{}:{}: {} {}{}",
-            report.path.cyan(),
+            diagnostic_path(report, diagnostic).cyan(),
             diagnostic.line,
             diagnostic.column,
             format!("[{}]", diagnostic.rule_id).color(rule_color),
@@ -733,6 +909,7 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                 let json_fix = diagnostic
                     .fix
                     .as_ref()
+                    .filter(|_| diagnostic.source.is_none())
                     .and_then(|fix| fix.edits.first())
                     .and_then(|edit| {
                         fix::edit_byte_range(&report.content, edit).map(|(start, end)| JsonFix {
@@ -741,7 +918,7 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                         })
                     });
                 JsonDiagnostic {
-                    file: &report.path,
+                    file: diagnostic_path(report, diagnostic),
                     line: diagnostic.line,
                     column: diagnostic.column,
                     end_line: diagnostic.end_line.unwrap_or(diagnostic.line),
@@ -769,7 +946,7 @@ fn output_github(report: &FileReport) {
         println!(
             "::{} file={},line={},col={}::{}",
             level,
-            escape_github_property(&report.path),
+            escape_github_property(&diagnostic_path(report, diagnostic)),
             diagnostic.line,
             diagnostic.column,
             escape_github_message(&diagnostic.message)
@@ -806,8 +983,14 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
     } else {
         let issue_files = reports
             .iter()
-            .filter(|report| !report.diagnostics.is_empty())
-            .count();
+            .flat_map(|report| {
+                report
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic_path(report, diagnostic))
+            })
+            .collect::<BTreeSet<_>>()
+            .len();
         println!();
         println!(
             "Found {issue_count} {} in {issue_files} {} ({} {} checked)",

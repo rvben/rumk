@@ -1,14 +1,16 @@
 use crate::diagnostic::Diagnostic;
 use crate::parser::Makefile;
+use crate::project::Project;
 use anyhow::{bail, Result};
 
 pub mod best_practices;
+pub mod project;
 pub mod style;
 pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK101", "MK102", "MK103", "MK201", "MK202", "MK203", "MK204",
-    "MK205",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK102", "MK103", "MK201", "MK202",
+    "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209",
 ];
 
 pub trait Rule: Send + Sync {
@@ -19,7 +21,13 @@ pub trait Rule: Send + Sync {
     fn fixable(&self) -> bool {
         false
     }
+    fn project_aware(&self) -> bool {
+        false
+    }
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic>;
+    fn check_project(&self, _project: &Project) -> Vec<Diagnostic> {
+        Vec::new()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +60,8 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(syntax::TabInRecipe),
         Box::new(syntax::InvalidVariableSyntax),
         Box::new(syntax::ConditionalStructure),
+        Box::new(project::MixedTargetSeparators),
+        Box::new(syntax::SpecialTargetPlacement),
         Box::new(style::LineLength::new(120)),
         Box::new(style::VariableNaming::new(style::NamingStyle::Upper)),
         Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
@@ -60,6 +70,10 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(best_practices::RecursiveMake),
         Box::new(best_practices::DuplicateRecipe),
         Box::new(best_practices::DependencyCycle),
+        Box::new(project::MissingInclude),
+        Box::new(project::IncludeCycle),
+        Box::new(project::UndefinedVariableReference::default()),
+        Box::new(project::UnreachableTarget::default()),
     ]
 }
 
@@ -68,10 +82,14 @@ pub fn get_default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(syntax::TabInRecipe),
         Box::new(syntax::InvalidVariableSyntax),
         Box::new(syntax::ConditionalStructure),
+        Box::new(project::MixedTargetSeparators),
+        Box::new(syntax::SpecialTargetPlacement),
         Box::new(style::LineLength::new(120)),
         Box::new(best_practices::MissingPhony),
         Box::new(best_practices::RecursiveMake),
         Box::new(best_practices::DuplicateRecipe),
         Box::new(best_practices::DependencyCycle),
+        Box::new(project::MissingInclude),
+        Box::new(project::IncludeCycle),
     ]
 }

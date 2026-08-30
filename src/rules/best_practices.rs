@@ -1,5 +1,6 @@
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::parser::Makefile;
+use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
 
 pub struct MissingPhony;
@@ -20,6 +21,10 @@ impl Rule for MissingPhony {
 
     fn category(&self) -> RuleCategory {
         RuleCategory::BestPractices
+    }
+
+    fn project_aware(&self) -> bool {
+        true
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
@@ -43,6 +48,33 @@ impl Rule for MissingPhony {
         }
 
         diagnostics
+    }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        let common = ["all", "clean", "test", "check", "install", "build", "help"];
+        let index = project.analysis();
+        project
+            .analysis()
+            .targets
+            .values()
+            .filter(|target| common.contains(&target.name.as_str()) && !target.phony)
+            .filter_map(|target| {
+                let declaration = target
+                    .declarations
+                    .iter()
+                    .find(|declaration| !index.is_conditional_location(declaration.location))?;
+                Some(
+                    Diagnostic::new(
+                        self.id(),
+                        Severity::Warning,
+                        format!("Target '{}' should be declared .PHONY", target.name),
+                        declaration.location.line,
+                        declaration.location.column,
+                    )
+                    .with_source(project.file(declaration.location.source).path.clone()),
+                )
+            })
+            .collect()
     }
 }
 
@@ -271,6 +303,10 @@ impl Rule for DuplicateRecipe {
         RuleCategory::BestPractices
     }
 
+    fn project_aware(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let index = makefile.analysis();
         if !index.structural_issues.is_empty() {
@@ -299,6 +335,36 @@ impl Rule for DuplicateRecipe {
             })
             .collect()
     }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        let index = project.analysis();
+        if index.has_structural_issues() {
+            return Vec::new();
+        }
+        index
+            .targets
+            .values()
+            .filter(|target| !target.name.contains(['$', '%']))
+            .flat_map(|target| {
+                let mut recipes = target.declarations.iter().filter(|declaration| {
+                    declaration.has_recipe
+                        && !declaration.double_colon
+                        && !index.is_conditional_location(declaration.location)
+                });
+                recipes.next();
+                recipes.map(|declaration| {
+                    Diagnostic::new(
+                        self.id(),
+                        Severity::Warning,
+                        format!("Target '{}' has more than one recipe", target.name),
+                        declaration.location.line,
+                        declaration.location.column,
+                    )
+                    .with_source(project.file(declaration.location.source).path.clone())
+                })
+            })
+            .collect()
+    }
 }
 
 pub struct DependencyCycle;
@@ -318,6 +384,10 @@ impl Rule for DependencyCycle {
 
     fn category(&self) -> RuleCategory {
         RuleCategory::BestPractices
+    }
+
+    fn project_aware(&self) -> bool {
+        true
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
@@ -340,6 +410,33 @@ impl Rule for DependencyCycle {
                     declaration.location.line,
                     declaration.location.column,
                 ))
+            })
+            .collect()
+    }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        let index = project.analysis();
+        index
+            .dependency_cycles()
+            .into_iter()
+            .filter_map(|cycle| {
+                let target = index.target(&cycle[0])?;
+                let declaration = target.declarations.first()?;
+                let description = if cycle.len() == 1 {
+                    format!("'{}' depends on itself", cycle[0])
+                } else {
+                    format!("targets {} form a cycle", cycle.join(", "))
+                };
+                Some(
+                    Diagnostic::new(
+                        self.id(),
+                        Severity::Warning,
+                        format!("Circular dependency: {description}"),
+                        declaration.location.line,
+                        declaration.location.column,
+                    )
+                    .with_source(project.file(declaration.location.source).path.clone()),
+                )
             })
             .collect()
     }
