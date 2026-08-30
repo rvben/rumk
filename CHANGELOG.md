@@ -22,6 +22,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Rumdl-compatible configuration discovery, inheritance, inline suppressions, per-file ignores,
   severities, output formats, and exit behavior.
 - Controlled GNU Make parity fixtures and a production-style regression corpus.
+- Conservative autofixes for missing `.PHONY` declarations and direct recursive Make invocations.
 
 ### Changed
 

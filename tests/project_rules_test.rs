@@ -29,6 +29,33 @@ fn reports_mixed_separators_across_files_at_the_conflicting_source() {
 }
 
 #[test]
+fn missing_phony_only_offers_fixes_for_the_processed_root_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let shared = directory.path().join("shared.mk");
+    std::fs::write(&root, "include shared.mk\nall clean:\n\t@:\n").unwrap();
+    std::fs::write(&shared, "test:\n\t@:\n").unwrap();
+
+    let diagnostics = MissingPhony.check_project(&load(&root));
+    let root_path = root.canonicalize().unwrap();
+    let shared_path = shared.canonicalize().unwrap();
+
+    assert_eq!(diagnostics.len(), 2);
+    let root_diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.source.as_deref() == Some(root_path.as_path()))
+        .unwrap();
+    assert!(root_diagnostic.fixable);
+    assert!(root_diagnostic.message.contains("'all', 'clean'"));
+    let included_diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.source.as_deref() == Some(shared_path.as_path()))
+        .unwrap();
+    assert!(!included_diagnostic.fixable);
+    assert!(included_diagnostic.fix.is_none());
+}
+
+#[test]
 fn missing_include_allows_optional_dynamic_and_remakeable_files() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

@@ -1,5 +1,6 @@
+use rumk::fix::apply_fixes;
 use rumk::parser::parse;
-use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, RecursiveMake};
+use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony, RecursiveMake};
 use rumk::rules::syntax::{
     ConditionalStructure, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
 };
@@ -24,6 +25,22 @@ fn tab_rule_still_fixes_the_complete_space_prefix() {
     assert_eq!(edit.start_column, 1);
     assert_eq!(edit.end_column, 5);
     assert_eq!(edit.replacement, "\t");
+}
+
+#[test]
+fn missing_phony_rule_groups_targets_and_preserves_crlf() {
+    let content = "all clean:\r\n\t@:\r\n";
+    let makefile = parse(content).unwrap();
+    let diagnostics = MissingPhony.check(&makefile, content);
+
+    assert!(MissingPhony.fixable());
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].fixable);
+    assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 1);
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        ".PHONY: all clean\r\nall clean:\r\n\t@:\r\n"
+    );
 }
 
 #[test]
@@ -62,6 +79,7 @@ fn recursive_make_rule_distinguishes_commands_from_arguments() {
         "\tmake -C first\n",
         "\tcd second && /usr/bin/make test\n",
         "\tMODE=debug command gmake check\n",
+        "\tC:\\tools\\make.exe windows\n",
         "\t@echo make\n",
         "\t@printf '%s\\n' 'make'\n",
         "\t+$(MAKE) -C good\n",
@@ -74,11 +92,49 @@ fn recursive_make_rule_distinguishes_commands_from_arguments() {
             .iter()
             .map(|diagnostic| diagnostic.line)
             .collect::<Vec<_>>(),
-        [2, 3, 4]
+        [2, 3, 4, 5]
     );
     assert!(diagnostics
         .iter()
         .all(|diagnostic| diagnostic.rule_id == "MK203"));
+    assert!(diagnostics.iter().all(|diagnostic| diagnostic.fixable));
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        concat!(
+            "all:\n",
+            "\t$(MAKE) -C first\n",
+            "\tcd second && $(MAKE) test\n",
+            "\tMODE=debug command $(MAKE) check\n",
+            "\t$(MAKE) windows\n",
+            "\t@echo make\n",
+            "\t@printf '%s\\n' 'make'\n",
+            "\t+$(MAKE) -C good\n",
+            "\t@echo $$MAKE\n",
+        )
+    );
+}
+
+#[test]
+fn recursive_make_fix_replaces_every_command_position_on_a_line() {
+    let content = ".PHONY: all\nall: ; make first && env MODE=debug gmake second\n";
+    let diagnostics = RecursiveMake.check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 2);
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        ".PHONY: all\nall: ; $(MAKE) first && env MODE=debug $(MAKE) second\n"
+    );
+}
+
+#[test]
+fn recursive_make_reports_but_does_not_rewrite_continued_recipes() {
+    let content = ".PHONY: all\nall:\n\tmake \\\n\t  -C sub\n";
+    let diagnostics = RecursiveMake.check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(!diagnostics[0].fixable);
+    assert!(diagnostics[0].fix.is_none());
 }
 
 #[test]

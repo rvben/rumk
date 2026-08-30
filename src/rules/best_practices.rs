@@ -1,7 +1,8 @@
-use crate::diagnostic::{Diagnostic, Severity};
+use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
 use crate::parser::Makefile;
 use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
+use std::collections::BTreeMap;
 
 pub struct MissingPhony;
 
@@ -23,27 +24,39 @@ impl Rule for MissingPhony {
         RuleCategory::BestPractices
     }
 
+    fn fixable(&self) -> bool {
+        true
+    }
+
     fn project_aware(&self) -> bool {
         true
     }
 
-    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+    fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let common_phony_targets = ["all", "clean", "test", "check", "install", "build", "help"];
 
         for rule in &makefile.rules {
-            for target in &rule.targets {
-                if common_phony_targets.contains(&target.as_str())
-                    && !makefile.phonies.contains(target)
-                {
-                    diagnostics.push(Diagnostic::new(
+            let missing = rule
+                .targets
+                .iter()
+                .filter(|target| {
+                    common_phony_targets.contains(&target.as_str())
+                        && !makefile.phonies.contains(target)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                diagnostics.push(
+                    Diagnostic::new(
                         self.id(),
                         Severity::Warning,
-                        format!("Target '{target}' should be declared .PHONY"),
+                        phony_message(&missing),
                         rule.line,
                         rule.column,
-                    ));
-                }
+                    )
+                    .with_fix(phony_fix(&missing, rule.line, content)),
+                );
             }
         }
 
@@ -53,28 +66,85 @@ impl Rule for MissingPhony {
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
         let common = ["all", "clean", "test", "check", "install", "build", "help"];
         let index = project.analysis();
-        project
-            .analysis()
+        let mut missing_by_declaration = BTreeMap::new();
+        for target in index
             .targets
             .values()
             .filter(|target| common.contains(&target.name.as_str()) && !target.phony)
-            .filter_map(|target| {
-                let declaration = target
-                    .declarations
-                    .iter()
-                    .find(|declaration| index.is_definitely_active(declaration.location))?;
-                Some(
-                    Diagnostic::new(
-                        self.id(),
-                        Severity::Warning,
-                        format!("Target '{}' should be declared .PHONY", target.name),
+        {
+            if let Some(declaration) = target
+                .declarations
+                .iter()
+                .find(|declaration| index.is_definitely_active(declaration.location))
+            {
+                missing_by_declaration
+                    .entry((
+                        declaration.location.source,
                         declaration.location.line,
                         declaration.location.column,
-                    )
-                    .with_source(project.file(declaration.location.source).path.clone()),
+                    ))
+                    .or_insert_with(Vec::new)
+                    .push(target.name.clone());
+            }
+        }
+
+        missing_by_declaration
+            .into_iter()
+            .map(|((source, line, column), targets)| {
+                let mut diagnostic = Diagnostic::new(
+                    self.id(),
+                    Severity::Warning,
+                    phony_message(&targets),
+                    line,
+                    column,
                 )
+                .with_source(project.file(source).path.clone());
+                if source == project.root() {
+                    diagnostic = diagnostic.with_fix(phony_fix(
+                        &targets,
+                        line,
+                        &project.file(project.root()).content,
+                    ));
+                }
+                diagnostic
             })
             .collect()
+    }
+}
+
+fn phony_message(targets: &[String]) -> String {
+    if targets.len() == 1 {
+        format!("Target '{}' should be declared .PHONY", targets[0])
+    } else {
+        format!(
+            "Targets {} should be declared .PHONY",
+            targets
+                .iter()
+                .map(|target| format!("'{target}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn phony_fix(targets: &[String], line: usize, content: &str) -> Fix {
+    let line_ending = preferred_line_ending(content, line);
+    let names = targets.join(" ");
+    Fix::new(format!("Declare {names} as .PHONY")).add_edit(Edit::new(
+        line,
+        1,
+        line,
+        1,
+        format!(".PHONY: {names}{line_ending}"),
+    ))
+}
+
+fn preferred_line_ending(content: &str, line: usize) -> &'static str {
+    match content.split_inclusive('\n').nth(line.saturating_sub(1)) {
+        Some(source_line) if source_line.ends_with("\r\n") => "\r\n",
+        Some(source_line) if source_line.ends_with('\n') => "\n",
+        _ if content.contains("\r\n") => "\r\n",
+        _ => "\n",
     }
 }
 
@@ -162,20 +232,39 @@ impl Rule for RecursiveMake {
         RuleCategory::BestPractices
     }
 
+    fn fixable(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         makefile
             .rules
             .iter()
             .flat_map(|rule| &rule.recipes)
-            .filter(|recipe| invokes_bare_make(&recipe.command))
-            .map(|recipe| {
-                Diagnostic::new(
+            .filter_map(|recipe| {
+                let invocations = bare_make_invocations(&recipe.command);
+                let first = invocations.first()?;
+                let mut diagnostic = Diagnostic::new(
                     self.id(),
                     Severity::Warning,
                     "Use $(MAKE) instead of invoking make directly",
                     recipe.line,
-                    recipe.column,
-                )
+                    recipe.column + recipe.command[..first.start].chars().count(),
+                );
+                if recipe.line == recipe.end_line {
+                    let fix = invocations.into_iter().fold(
+                        Fix::new("Replace direct Make invocation with $(MAKE)"),
+                        |fix, invocation| {
+                            let start =
+                                recipe.column + recipe.command[..invocation.start].chars().count();
+                            let end =
+                                recipe.column + recipe.command[..invocation.end].chars().count();
+                            fix.add_edit(Edit::new(recipe.line, start, recipe.line, end, "$(MAKE)"))
+                        },
+                    );
+                    diagnostic = diagnostic.with_fix(fix);
+                }
+                Some(diagnostic)
             })
             .collect()
     }
@@ -183,56 +272,83 @@ impl Rule for RecursiveMake {
 
 #[derive(Debug, PartialEq, Eq)]
 enum ShellToken {
-    Word { text: String, quoted: bool },
+    Word {
+        text: String,
+        quoted: bool,
+        start: usize,
+        end: usize,
+    },
     Separator,
 }
 
-fn invokes_bare_make(command: &str) -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Invocation {
+    start: usize,
+    end: usize,
+}
+
+fn bare_make_invocations(command: &str) -> Vec<Invocation> {
     let mut command_position = true;
+    let mut invocations = Vec::new();
     for token in shell_tokens(command) {
         match token {
             ShellToken::Separator => command_position = true,
-            ShellToken::Word { text, quoted } if command_position => {
+            ShellToken::Word {
+                text,
+                quoted,
+                start,
+                end,
+            } if command_position => {
                 if is_environment_assignment(&text)
                     || matches!(text.as_str(), "command" | "exec" | "env" | "sudo" | "time")
                 {
                     continue;
                 }
-                if !quoted && is_make_executable(&text) {
-                    return true;
+                if !quoted
+                    && (is_make_executable(&text) || is_make_executable(&command[start..end]))
+                {
+                    invocations.push(Invocation { start, end });
                 }
                 command_position = matches!(text.as_str(), "if" | "then" | "else" | "do");
             }
             ShellToken::Word { .. } => {}
         }
     }
-    false
+    invocations
 }
 
 fn shell_tokens(command: &str) -> Vec<ShellToken> {
     let mut tokens = Vec::new();
     let mut current = String::new();
+    let mut current_start = None;
     let mut quote = None;
     let mut quoted = false;
     let mut escaped = false;
 
-    let flush = |tokens: &mut Vec<ShellToken>, current: &mut String, quoted: &mut bool| {
+    let flush = |tokens: &mut Vec<ShellToken>,
+                 current: &mut String,
+                 current_start: &mut Option<usize>,
+                 quoted: &mut bool,
+                 end: usize| {
         if !current.is_empty() {
             tokens.push(ShellToken::Word {
                 text: std::mem::take(current),
                 quoted: *quoted,
+                start: current_start.take().expect("non-empty token has a start"),
+                end,
             });
             *quoted = false;
         }
     };
 
-    for character in command.chars() {
+    for (offset, character) in command.char_indices() {
         if escaped {
             current.push(character);
             escaped = false;
             continue;
         }
         if character == '\\' && quote != Some('\'') {
+            current_start.get_or_insert(offset);
             escaped = true;
             continue;
         }
@@ -245,26 +361,46 @@ fn shell_tokens(command: &str) -> Vec<ShellToken> {
             continue;
         }
         if matches!(character, '\'' | '"') {
+            current_start.get_or_insert(offset);
             quote = Some(character);
             quoted = true;
         } else if character.is_whitespace() {
-            flush(&mut tokens, &mut current, &mut quoted);
+            flush(
+                &mut tokens,
+                &mut current,
+                &mut current_start,
+                &mut quoted,
+                offset,
+            );
             if character == '\n' {
                 tokens.push(ShellToken::Separator);
             }
         } else if matches!(character, ';' | '|' | '&') {
-            flush(&mut tokens, &mut current, &mut quoted);
+            flush(
+                &mut tokens,
+                &mut current,
+                &mut current_start,
+                &mut quoted,
+                offset,
+            );
             if !matches!(tokens.last(), Some(ShellToken::Separator)) {
                 tokens.push(ShellToken::Separator);
             }
         } else {
+            current_start.get_or_insert(offset);
             current.push(character);
         }
     }
     if escaped {
         current.push('\\');
     }
-    flush(&mut tokens, &mut current, &mut quoted);
+    flush(
+        &mut tokens,
+        &mut current,
+        &mut current_start,
+        &mut quoted,
+        command.len(),
+    );
     tokens
 }
 
@@ -281,7 +417,7 @@ fn is_environment_assignment(word: &str) -> bool {
 fn is_make_executable(word: &str) -> bool {
     word.rsplit(['/', '\\'])
         .next()
-        .is_some_and(|name| matches!(name, "make" | "gmake"))
+        .is_some_and(|name| matches!(name, "make" | "gmake" | "make.exe" | "gmake.exe"))
 }
 
 pub struct DuplicateRecipe;

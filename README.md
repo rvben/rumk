@@ -9,7 +9,7 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 ## Features
 
 - Lints individual Makefiles or entire directory trees
-- Safely fixes tab-indented recipe violations
+- Safely fixes recipe indentation, missing `.PHONY` declarations, and recursive Make invocations
 - Parses continued logical statements and nested `$(...)`/`${...}` expressions
 - Models GNU Make assignment flavors, static patterns, target-specific variables, includes,
   conditionals, `define` blocks, custom recipe prefixes, and `.ONESHELL`
@@ -203,9 +203,9 @@ Rules marked **default** run without configuration.
 
 ### Best practices
 
-- `MK201` — Common non-file targets should be `.PHONY` (**default**)
+- `MK201` — Common non-file targets should be `.PHONY` (**default**, fixable)
 - `MK202` — Avoid hardcoded absolute paths
-- `MK203` — Recursive Make invocations should use `$(MAKE)` (**default**)
+- `MK203` — Recursive Make invocations should use `$(MAKE)` (**default**, fixable)
 - `MK204` — Concrete targets should not declare multiple single-colon recipes (**default**)
 - `MK205` — Explicit target dependencies must not form cycles (**default**)
 - `MK206` — Required static includes must resolve (**default**)

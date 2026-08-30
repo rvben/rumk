@@ -94,6 +94,29 @@ fn fix_reports_only_issues_remaining_after_the_write() {
 }
 
 #[test]
+fn check_fix_applies_all_safe_makefile_repairs() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all clean:\n    make -C sub && gmake test\n").unwrap();
+
+    let output = rumk()
+        .args(["check", path.to_str().unwrap(), "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        ".PHONY: all clean\nall clean:\n\t$(MAKE) -C sub && $(MAKE) test\n"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[MK001]"));
+    assert!(stdout.contains("[MK201]"));
+    assert!(stdout.contains("[MK203]"));
+    assert!(stdout.contains("Fixed 3 issues"));
+}
+
+#[test]
 fn directory_checks_enforce_ignored_paths() {
     let directory = tempfile::tempdir().unwrap();
     let ignored = directory.path().join("vendor");
@@ -190,6 +213,7 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
     .unwrap();
 
     let rule_output = rumk().args(["rule", "MK101"]).output().unwrap();
+    let fixable_output = rumk().args(["rule", "--fixable"]).output().unwrap();
     let config_output = rumk()
         .current_dir(directory.path())
         .args(["config", "get", "MK101.line-length"])
@@ -203,6 +227,13 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
 
     assert!(rule_output.status.success());
     assert!(String::from_utf8_lossy(&rule_output.stdout).contains("MK101"));
+    assert_eq!(
+        String::from_utf8_lossy(&fixable_output.stdout)
+            .lines()
+            .map(|line| line.split_whitespace().next().unwrap())
+            .collect::<Vec<_>>(),
+        ["MK001", "MK201", "MK203"]
+    );
     assert_eq!(String::from_utf8_lossy(&config_output.stdout).trim(), "88");
     assert!(String::from_utf8_lossy(&file_output.stdout).contains(".rumk.toml"));
 }
