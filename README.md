@@ -84,6 +84,8 @@ entry-targets = ["all"]
 enabled = true
 severity = "warning"
 line-length = 100
+ignore-comments = true
+ignore-recipes = true
 
 [MK102]
 enabled = true
@@ -119,9 +121,11 @@ The original Rumk `[rules]` and `[ignore]` configuration sections remain accepte
 
 `include-paths` models GNU Make's `-I` search directories and resolves relative entries from the
 configuration directory. `predefined-variables` supplies command-line-style values to safe
-evaluation and names expected by opt-in rule `MK208`. `entry-targets` overrides the roots for
-opt-in reachability rule `MK209`; without explicit entries, Rumk follows GNU Make's inferred
-default goal when it can determine that goal safely.
+evaluation and names expected by opt-in rule `MK208`. That rule intentionally ignores references
+inside recipes and deferred macro bodies, where command-line parameters and shell values are
+normal. `entry-targets` supplies the roots for opt-in reachability rule `MK209`; the rule stays
+silent without explicit roots because any Make target may be invoked directly from the command
+line.
 
 ### Rule and file selection
 
@@ -197,7 +201,7 @@ Rules marked **default** run without configuration.
 
 ### Style
 
-- `MK101` — Line exceeds the configured maximum length (**default**)
+- `MK101` — Declarative line exceeds the configured maximum length; comments and recipes are ignored by default (**default**)
 - `MK102` — Variable naming convention
 - `MK103` — Target naming convention
 
@@ -210,8 +214,8 @@ Rules marked **default** run without configuration.
 - `MK205` — Explicit target dependencies must not form cycles (**default**)
 - `MK206` — Required static includes must resolve (**default**)
 - `MK207` — Static Makefile includes must not form cycles (**default**)
-- `MK208` — Static variable references must resolve (opt-in)
-- `MK209` — Targets must be reachable from configured entries or the inferred default goal (opt-in)
+- `MK208` — Static graph-level variable references must resolve (opt-in)
+- `MK209` — Targets must be reachable from explicitly configured entries (opt-in)
 - `MK210` — Explain include expressions blocked by safe evaluation (opt-in)
 
 ## Development

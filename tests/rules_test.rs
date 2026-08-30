@@ -1,10 +1,27 @@
 use rumk::fix::apply_fixes;
 use rumk::parser::parse;
 use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony, RecursiveMake};
+use rumk::rules::style::LineLength;
 use rumk::rules::syntax::{
     ConditionalStructure, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
 };
 use rumk::rules::Rule;
+
+#[test]
+fn line_length_ignores_comments_and_recipes_by_default() {
+    let content = concat!(
+        "# generated command output that is intentionally very long\n",
+        "OUTPUT := this declarative value is still intentionally very long\n",
+        "all:\n",
+        "\techo this recipe command is intentionally very long\n",
+    );
+    let makefile = parse(content).unwrap();
+
+    let diagnostics = LineLength::new(20).check(&makefile, content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].line, 2);
+}
 
 #[test]
 fn tab_rule_accepts_inline_and_custom_prefix_recipes() {

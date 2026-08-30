@@ -420,7 +420,8 @@ fn project_configuration_drives_include_search_and_opt_in_semantics() {
             "include shared.mk\n",
             "EXTRA := $(wildcard optional/*.mk)\n",
             "include $(EXTRA)\n",
-            "all: library\n\t@echo $(FROM_CLI) $(MISSING)\n",
+            "RESULT := $(FROM_CLI) $(MISSING)\n",
+            "all: library\n\t@echo $(RECIPE_PARAMETER)\n",
             "orphan:\n",
         ),
     )

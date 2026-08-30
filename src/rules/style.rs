@@ -1,4 +1,7 @@
+use std::collections::BTreeSet;
+
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::logical::LogicalKind;
 use crate::parser::Makefile;
 use crate::rules::{Rule, RuleCategory};
 
@@ -10,11 +13,27 @@ pub enum NamingStyle {
 
 pub struct LineLength {
     max_length: usize,
+    ignore_comments: bool,
+    ignore_recipes: bool,
 }
 
 impl LineLength {
     pub fn new(max_length: usize) -> Self {
-        Self { max_length }
+        Self {
+            max_length,
+            ignore_comments: true,
+            ignore_recipes: true,
+        }
+    }
+
+    pub fn ignore_comments(mut self, ignore: bool) -> Self {
+        self.ignore_comments = ignore;
+        self
+    }
+
+    pub fn ignore_recipes(mut self, ignore: bool) -> Self {
+        self.ignore_recipes = ignore;
+        self
     }
 }
 
@@ -28,17 +47,30 @@ impl Rule for LineLength {
     }
 
     fn description(&self) -> &'static str {
-        "Lines should not exceed the configured maximum length for better readability."
+        "Declarative Makefile lines should not exceed the configured maximum length. Full-line comments and recipes are ignored by default because wrapping them is often noisy or unsafe."
     }
 
     fn category(&self) -> RuleCategory {
         RuleCategory::Style
     }
 
-    fn check(&self, _makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
+    fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
+        let ignored_lines: BTreeSet<_> = makefile
+            .logical
+            .statements()
+            .iter()
+            .filter(|statement| {
+                (self.ignore_comments && statement.kind == LogicalKind::Comment)
+                    || (self.ignore_recipes && statement.kind == LogicalKind::Recipe)
+            })
+            .flat_map(|statement| statement.start_line..=statement.end_line)
+            .collect();
 
         for (line_num, line) in content.lines().enumerate() {
+            if ignored_lines.contains(&(line_num + 1)) {
+                continue;
+            }
             let line_length = line.chars().count();
             if line_length > self.max_length {
                 diagnostics.push(Diagnostic::new(

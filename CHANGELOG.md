@@ -7,6 +7,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- `MK101` now ignores full-line comments and recipe bodies by default, with configuration switches
+  for projects that want strict line-length enforcement in those regions.
+- `MK208` now focuses on graph-level Make references and excludes recipe and deferred-macro
+  parameters, avoiding false positives for normal command-line inputs.
+- `MK209` now requires explicit `entry-targets`, because every Make target can otherwise be a
+  legitimate command-line entry point.
+
 ## [0.0.2] - 2026-08-30
 
 ### Added

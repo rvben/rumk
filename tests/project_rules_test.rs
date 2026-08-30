@@ -114,7 +114,12 @@ fn undefined_references_respect_project_builtins_and_predefined_variables() {
     let root = directory.path().join("Makefile");
     std::fs::write(
         &root,
-        "KNOWN := yes\nall:\n\t@echo $(KNOWN) $(MAKE) $(FROM_CLI) $(MISSING)\n",
+        concat!(
+            "KNOWN := yes\n",
+            "OUTPUT := $(KNOWN) $(MAKE) $(FROM_CLI) $(MISSING)\n",
+            "all:\n\t@echo $(RECIPE_PARAMETER)\n",
+            "define command\n\t@echo $(1) $(DEFERRED_PARAMETER)\nendef\n",
+        ),
     )
     .unwrap();
     let rule = UndefinedVariableReference::new([String::from("FROM_CLI")]);
@@ -126,7 +131,28 @@ fn undefined_references_respect_project_builtins_and_predefined_variables() {
 }
 
 #[test]
-fn reachability_uses_the_default_goal_and_follows_cross_file_edges() {
+fn undefined_references_ignore_recipe_and_deferred_macro_parameters() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "define ssh_to\n",
+            "ssh $(1)@$(2) -i $(3)\n",
+            "endef\n",
+            "deploy:\n",
+            "\t@test -n \"$(HOST)\"\n",
+        ),
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert!(diagnostics.is_empty());
+}
+
+#[test]
+fn reachability_requires_explicit_entries_and_follows_cross_file_edges() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
     std::fs::write(&root, "include shared.mk\nall: library\norphan:\n\t@:\n").unwrap();
@@ -138,13 +164,7 @@ fn reachability_uses_the_default_goal_and_follows_cross_file_edges() {
     let project = load(&root);
 
     let inferred = UnreachableTarget::default().check_project(&project);
-    assert_eq!(inferred.len(), 2);
-    assert!(inferred
-        .iter()
-        .any(|diagnostic| diagnostic.message.contains("all")));
-    assert!(inferred
-        .iter()
-        .any(|diagnostic| diagnostic.message.contains("orphan")));
+    assert!(inferred.is_empty());
     let diagnostics = UnreachableTarget::new(vec![String::from("all")]).check_project(&project);
 
     assert_eq!(diagnostics.len(), 1);

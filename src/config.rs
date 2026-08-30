@@ -511,6 +511,8 @@ fn default_settings() -> BTreeMap<String, RuleSettings> {
             match *rule_id {
                 "MK101" => {
                     options.insert("max".to_string(), toml::Value::Integer(120));
+                    options.insert("ignore-comments".to_string(), toml::Value::Boolean(true));
+                    options.insert("ignore-recipes".to_string(), toml::Value::Boolean(true));
                 }
                 "MK102" => {
                     options.insert(
@@ -799,6 +801,8 @@ fn render_global(output: &mut String, global: &GlobalConfig, defaults: Option<&G
 fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
     match (rule_id, key.replace('_', "-").as_str()) {
         ("MK101", "line-length" | "max") => Ok("max"),
+        ("MK101", "ignore-comments") => Ok("ignore-comments"),
+        ("MK101", "ignore-recipes") => Ok("ignore-recipes"),
         ("MK102" | "MK103", "style") => Ok("style"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
     }
@@ -815,9 +819,11 @@ fn build_rule(
         "MK003" => Box::new(rules::syntax::ConditionalStructure),
         "MK004" => Box::new(rules::project::MixedTargetSeparators),
         "MK005" => Box::new(rules::syntax::SpecialTargetPlacement),
-        "MK101" => Box::new(rules::style::LineLength::new(integer_option(
-            rule_id, settings, "max", 120,
-        )?)),
+        "MK101" => Box::new(
+            rules::style::LineLength::new(integer_option(rule_id, settings, "max", 120)?)
+                .ignore_comments(boolean_option(rule_id, settings, "ignore-comments", true)?)
+                .ignore_recipes(boolean_option(rule_id, settings, "ignore-recipes", true)?),
+        ),
         "MK102" => Box::new(rules::style::VariableNaming::new(naming_style_option(
             rule_id,
             settings,
@@ -868,6 +874,20 @@ fn integer_option(
         .ok()
         .filter(|value| *value > 0)
         .with_context(|| format!("Option '{name}' for rule {rule_id} must be positive"))
+}
+
+fn boolean_option(
+    rule_id: &str,
+    settings: &RuleSettings,
+    name: &str,
+    default: bool,
+) -> Result<bool> {
+    let Some(value) = settings.options.get(name) else {
+        return Ok(default);
+    };
+    value
+        .as_bool()
+        .with_context(|| format!("Option '{name}' for rule {rule_id} must be a boolean"))
 }
 
 fn naming_style_option(

@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, VecDeque};
 
-use crate::analysis::ReferenceKind;
+use crate::analysis::{ReferenceContext, ReferenceKind};
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::BlockedReason;
 use crate::parser::Makefile;
@@ -357,7 +357,7 @@ impl Rule for UndefinedVariableReference {
     }
 
     fn description(&self) -> &'static str {
-        "Static Make variable references should resolve to a project definition, a GNU Make built-in, or a configured predefined variable."
+        "Static Make variable references in assignments and build-graph declarations should resolve to a project definition, a GNU Make built-in, or a configured predefined variable. Recipes and deferred macro bodies are excluded because they commonly accept external parameters."
     }
 
     fn category(&self) -> RuleCategory {
@@ -378,6 +378,12 @@ impl Rule for UndefinedVariableReference {
             .references
             .iter()
             .filter(|reference| reference.kind == ReferenceKind::Variable)
+            .filter(|reference| {
+                !matches!(
+                    reference.context,
+                    ReferenceContext::Recipe | ReferenceContext::Definition
+                )
+            })
             .filter(|reference| index.is_definitely_active(reference.location))
             .filter(|reference| {
                 index.variable(&reference.name).is_none_or(|variable| {
@@ -473,7 +479,7 @@ impl Rule for UnreachableTarget {
     }
 
     fn description(&self) -> &'static str {
-        "Concrete targets should be reachable from configured entry targets, or from GNU Make's inferred default goal when no entries are configured."
+        "Concrete targets should be reachable from explicitly configured entry targets. The rule stays silent without entry-targets because Make targets are also public command-line entry points."
     }
 
     fn category(&self) -> RuleCategory {
@@ -490,16 +496,10 @@ impl Rule for UnreachableTarget {
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
         let index = project.analysis();
-        let entries = if self.entry_targets.is_empty() {
-            match project.evaluation().default_goal() {
-                crate::project::DefaultGoal::Known(goal) => vec![goal.clone()],
-                crate::project::DefaultGoal::Unset | crate::project::DefaultGoal::Unknown => {
-                    return Vec::new();
-                }
-            }
-        } else {
-            self.entry_targets.clone()
-        };
+        if self.entry_targets.is_empty() {
+            return Vec::new();
+        }
+        let entries = self.entry_targets.clone();
         let mut reachable = BTreeSet::new();
         let mut pending = VecDeque::from(entries);
         while let Some(target) = pending.pop_front() {

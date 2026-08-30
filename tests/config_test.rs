@@ -158,6 +158,34 @@ fn line_length_uses_character_columns_instead_of_utf8_bytes() {
 }
 
 #[test]
+fn line_length_can_include_comments_and_recipes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rumk.toml");
+    std::fs::write(
+        &path,
+        "[MK101]\nline-length = 10\nignore-comments = false\nignore-recipes = false\n",
+    )
+    .unwrap();
+    let config = Config::from_file(&path).unwrap();
+    let rule = config
+        .rules
+        .iter()
+        .find(|rule| rule.id() == "MK101")
+        .unwrap();
+    let content = "# a long comment\nall:\n\techo a long recipe\n";
+
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.line)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+}
+
+#[test]
 fn config_extends_merges_parent_settings_and_detects_cycles() {
     let directory = tempfile::tempdir().unwrap();
     let parent = directory.path().join("parent.toml");
