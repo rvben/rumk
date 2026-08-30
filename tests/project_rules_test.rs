@@ -2,7 +2,7 @@ use rumk::project::{Project, ProjectOptions};
 use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony};
 use rumk::rules::project::{
     IncludeCycle, MissingInclude, MixedTargetSeparators, UndefinedVariableReference,
-    UnreachableTarget,
+    UnreachableTarget, UnresolvedIncludeExpression,
 };
 use rumk::rules::Rule;
 
@@ -156,4 +156,48 @@ fn context_sensitive_rules_merge_phonies_recipes_and_dependency_edges() {
     let cycles = DependencyCycle.check_project(&project);
     assert_eq!(cycles.len(), 1);
     assert_eq!(cycles[0].rule_id, "MK205");
+}
+
+#[test]
+fn unresolved_include_explains_the_safety_boundary_and_trace() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        "FILES := $(wildcard generated/*.mk)\ninclude $(FILES)\n",
+    )
+    .unwrap();
+    let project = load(&root);
+
+    let diagnostics = UnresolvedIncludeExpression.check_project(&project);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].rule_id, "MK210");
+    assert_eq!(diagnostics[0].severity, rumk::diagnostic::Severity::Info);
+    assert!(diagnostics[0].message.contains("function 'wildcard'"));
+    assert!(diagnostics[0].message.contains("via FILES at"));
+}
+
+#[test]
+fn unresolved_include_reports_unsafe_functions_without_executing_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let sentinel = directory.path().join("forbidden");
+    std::fs::write(
+        &root,
+        format!(
+            "FILES := $(shell touch {})\ninclude $(FILES)\n",
+            sentinel.display()
+        ),
+    )
+    .unwrap();
+    let project = load(&root);
+
+    let diagnostics = UnresolvedIncludeExpression.check_project(&project);
+
+    assert!(!sentinel.exists());
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0]
+        .message
+        .contains("function 'shell' is intentionally never executed"));
 }

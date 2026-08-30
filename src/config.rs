@@ -841,6 +841,7 @@ fn build_rule(
         "MK209" => Box::new(rules::project::UnreachableTarget::new(
             global.entry_targets.clone(),
         )),
+        "MK210" => Box::new(rules::project::UnresolvedIncludeExpression),
         _ => bail!("Unknown rule: {rule_id}"),
     };
 

@@ -385,7 +385,13 @@ fn project_configuration_drives_include_search_and_opt_in_semantics() {
     std::fs::create_dir_all(directory.path().join("mk")).unwrap();
     std::fs::write(
         directory.path().join("src/Makefile"),
-        "include shared.mk\nall: library\n\t@echo $(FROM_CLI) $(MISSING)\norphan:\n",
+        concat!(
+            "include shared.mk\n",
+            "EXTRA := $(wildcard optional/*.mk)\n",
+            "include $(EXTRA)\n",
+            "all: library\n\t@echo $(FROM_CLI) $(MISSING)\n",
+            "orphan:\n",
+        ),
     )
     .unwrap();
     std::fs::write(directory.path().join("mk/shared.mk"), "library:\n").unwrap();
@@ -399,6 +405,8 @@ fn project_configuration_drives_include_search_and_opt_in_semantics() {
             "[MK208]\n",
             "enabled = true\n",
             "[MK209]\n",
+            "enabled = true\n",
+            "[MK210]\n",
             "enabled = true\n",
         ),
     )
@@ -421,6 +429,9 @@ fn project_configuration_drives_include_search_and_opt_in_semantics() {
     }));
     assert!(diagnostics.iter().any(|item| {
         item["rule"] == "MK209" && item["message"].as_str().unwrap().contains("orphan")
+    }));
+    assert!(diagnostics.iter().any(|item| {
+        item["rule"] == "MK210" && item["message"].as_str().unwrap().contains("wildcard")
     }));
 }
 

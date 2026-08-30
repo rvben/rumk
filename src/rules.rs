@@ -10,7 +10,7 @@ pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK102", "MK103", "MK201", "MK202",
-    "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209",
+    "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
 ];
 
 pub trait Rule: Send + Sync {
@@ -74,6 +74,7 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(project::IncludeCycle),
         Box::new(project::UndefinedVariableReference::default()),
         Box::new(project::UnreachableTarget::default()),
+        Box::new(project::UnresolvedIncludeExpression),
     ]
 }
 

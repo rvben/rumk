@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, VecDeque};
 
 use crate::analysis::ReferenceKind;
 use crate::diagnostic::{Diagnostic, Severity};
+use crate::eval::BlockedReason;
 use crate::parser::Makefile;
 use crate::project::{IncludeResolution, Project};
 use crate::project_analysis::ProjectTargetSymbol;
@@ -223,6 +224,113 @@ impl Rule for IncludeCycle {
                 )
             })
             .collect()
+    }
+}
+
+pub struct UnresolvedIncludeExpression;
+
+impl Rule for UnresolvedIncludeExpression {
+    fn id(&self) -> &'static str {
+        "MK210"
+    }
+
+    fn name(&self) -> &'static str {
+        "Include expression cannot be evaluated safely"
+    }
+
+    fn description(&self) -> &'static str {
+        "Reports include expressions that remain unresolved during safe project evaluation, with the blocked operation and variable-definition trace."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::BestPractices
+    }
+
+    fn project_aware(&self) -> bool {
+        true
+    }
+
+    fn check(&self, _makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        Vec::new()
+    }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        project
+            .edges()
+            .iter()
+            .filter(|edge| edge.resolution == IncludeResolution::Dynamic)
+            .filter(|edge| !edge.blocked.is_empty())
+            .map(|edge| {
+                let reasons = edge
+                    .blocked
+                    .iter()
+                    .map(blocked_reason_description)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let mut seen = BTreeSet::new();
+                let trace = edge
+                    .trace
+                    .iter()
+                    .filter_map(|step| {
+                        let description = match step.origin {
+                        Some(origin) => format!(
+                            "{} at {}:{}",
+                            step.variable,
+                            project.file(origin.source).path.display(),
+                            origin.line
+                        ),
+                        None => format!("{} from predefined variables", step.variable),
+                        };
+                        seen.insert(description.clone()).then_some(description)
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" -> ");
+                let trace = if trace.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (via {trace})")
+                };
+                Diagnostic::new(
+                    self.id(),
+                    Severity::Info,
+                    format!(
+                        "Include expression '{}' could not be resolved statically: {reasons}{trace}",
+                        edge.expression
+                    ),
+                    edge.line,
+                    1,
+                )
+                .with_source(project.file(edge.from).path.clone())
+            })
+            .collect()
+    }
+}
+
+fn blocked_reason_description(reason: &BlockedReason) -> String {
+    match reason {
+        BlockedReason::UndefinedVariable(variable) => {
+            format!("variable '{variable}' has no known value")
+        }
+        BlockedReason::DynamicVariableName(variable) => {
+            format!("variable name '{variable}' is dynamic")
+        }
+        BlockedReason::RecursiveReference(variable) => {
+            format!("variable '{variable}' recursively references itself")
+        }
+        BlockedReason::UnsafeFunction(function) => {
+            format!("function '{function}' is intentionally never executed")
+        }
+        BlockedReason::UnsupportedFunction(function) => {
+            format!("function '{function}' is not supported by safe evaluation")
+        }
+        BlockedReason::MalformedExpansion => "the expansion is malformed".to_string(),
+        BlockedReason::ExpansionLimit => "the expansion depth limit was reached".to_string(),
+        BlockedReason::IndeterminateAssignment(variable) => {
+            format!("assignment to '{variable}' is conditionally indeterminate")
+        }
+        BlockedReason::ShellAssignment(variable) => {
+            format!("shell assignment to '{variable}' is intentionally never executed")
+        }
     }
 }
 
