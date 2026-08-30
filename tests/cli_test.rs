@@ -226,7 +226,14 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
         .unwrap();
 
     assert!(rule_output.status.success());
-    assert!(String::from_utf8_lossy(&rule_output.stdout).contains("MK101"));
+    let rule_stdout = String::from_utf8_lossy(&rule_output.stdout);
+    assert!(rule_stdout.contains("MK101"));
+    assert!(rule_stdout.contains("Category: style"));
+    assert!(rule_stdout.contains("Default: enabled"));
+    assert!(rule_stdout.contains("Fixable: no"));
+    assert!(rule_stdout.contains("Scope: file"));
+    assert!(rule_stdout.contains("line-length = 120"));
+    assert!(rule_stdout.contains("docs/mk101.md"));
     assert_eq!(
         String::from_utf8_lossy(&fixable_output.stdout)
             .lines()

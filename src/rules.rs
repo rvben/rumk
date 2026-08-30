@@ -37,6 +37,23 @@ pub enum RuleCategory {
     BestPractices,
 }
 
+impl RuleCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Syntax => "syntax",
+            Self::Style => "style",
+            Self::BestPractices => "best-practices",
+        }
+    }
+}
+
+pub fn documentation_url(rule_id: &str) -> String {
+    format!(
+        "https://github.com/rvben/rumk/blob/main/docs/{}.md",
+        rule_id.to_ascii_lowercase()
+    )
+}
+
 pub fn get_rule_explanation(rule_id: &str) -> Result<String> {
     let all_rules = get_all_rules();
 

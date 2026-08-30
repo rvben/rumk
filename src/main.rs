@@ -1071,8 +1071,37 @@ fn show_rule(
             .iter()
             .find(|rule| rule.id() == canonical)
             .with_context(|| format!("Unknown rule: {rule_id}"))?;
+        let defaults = Config::default();
+        let enabled_by_default = defaults.rules.iter().any(|item| item.id() == rule.id());
         println!("{} — {}", rule.id(), rule.name());
-        println!("Category: {:?}", rule.category());
+        println!("Category: {}", rule.category().as_str());
+        println!(
+            "Default: {}",
+            if enabled_by_default {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!("Fixable: {}", if rule.fixable() { "yes" } else { "no" });
+        println!(
+            "Scope: {}",
+            if rule.project_aware() {
+                "project"
+            } else {
+                "file"
+            }
+        );
+        let options = defaults
+            .rule_options(rule.id())
+            .expect("known rule has default settings");
+        if !options.is_empty() {
+            println!("Configuration defaults:");
+            for (key, value) in options {
+                println!("  {key} = {value}");
+            }
+        }
+        println!("Documentation: {}", rules::documentation_url(rule.id()));
         println!();
         println!("{}", rule.description());
     } else {

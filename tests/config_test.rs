@@ -143,6 +143,26 @@ fn effective_configuration_output_is_valid_and_can_be_reloaded() {
 }
 
 #[test]
+fn rule_option_introspection_uses_public_names_and_defaults() {
+    let config = Config::default();
+
+    assert_eq!(
+        config.rule_options("mk101").unwrap(),
+        [
+            ("ignore-comments".to_string(), "true".to_string()),
+            ("ignore-recipes".to_string(), "true".to_string()),
+            ("line-length".to_string(), "120".to_string()),
+        ]
+    );
+    assert_eq!(
+        config.rule_options("MK201").unwrap(),
+        [("placement".to_string(), "auto".to_string())]
+    );
+    assert!(config.rule_options("MK001").unwrap().is_empty());
+    assert!(config.rule_options("MK999").is_none());
+}
+
+#[test]
 fn line_length_uses_character_columns_instead_of_utf8_bytes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("rumk.toml");

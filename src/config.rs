@@ -277,6 +277,23 @@ impl Config {
         }
     }
 
+    pub fn rule_options(&self, rule_id: &str) -> Option<Vec<(String, String)>> {
+        let rule_id = rule_id.to_ascii_uppercase();
+        let settings = self.settings.get(&rule_id)?;
+        Some(
+            settings
+                .options
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        public_option_key(&rule_id, key).to_string(),
+                        value_string(value),
+                    )
+                })
+                .collect(),
+        )
+    }
+
     pub fn render(&self, defaults_only: bool, no_defaults: bool) -> String {
         let defaults = default_settings();
         let default_global = GlobalConfig::default();
@@ -312,11 +329,7 @@ impl Config {
                 output.push_str(&format!("severity = {:?}\n", severity_name(severity)));
             }
             for (key, value) in &settings.options {
-                let public_key = if *rule_id == "MK101" && key == "max" {
-                    "line-length"
-                } else {
-                    key
-                };
+                let public_key = public_option_key(rule_id, key);
                 output.push_str(&format!("{public_key} = {}\n", value));
             }
         }
@@ -812,6 +825,14 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
         ("MK102" | "MK103", "style") => Ok("style"),
         ("MK201", "placement") => Ok("placement"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
+    }
+}
+
+fn public_option_key<'a>(rule_id: &str, key: &'a str) -> &'a str {
+    if rule_id == "MK101" && key == "max" {
+        "line-length"
+    } else {
+        key
     }
 }
 
