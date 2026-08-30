@@ -5,5 +5,6 @@ pub mod fix;
 pub mod inline_config;
 pub mod logical;
 pub mod parser;
+pub mod project;
 pub mod rules;
 pub mod syntax;
