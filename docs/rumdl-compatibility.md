@@ -23,6 +23,10 @@ semantics require a different design.
 
 - Rumdl flavors correspond to Rumk dialects: `gnu`, `posix`, and `bsd`.
 - Inline controls use Make comments such as `# rumk-disable MK202`.
+- Project diagnostics retain the same flat output shape while setting `file` to the included
+  Makefile that owns the finding.
+- Project settings live under `[global]` as `include-paths`, `predefined-variables`, and
+  `entry-targets`, following Rumdl's kebab-case configuration vocabulary.
 - Rumk's analysis context contains rules, targets, prerequisites, variables, includes, recipes,
   and source-preserving syntax instead of Markdown elements.
 - Fixes must preserve Make behavior and every source byte outside their declared edit ranges.
