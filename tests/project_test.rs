@@ -11,7 +11,7 @@ fn resolves_nested_static_includes_and_preserves_provenance() {
     std::fs::write(&root, "include mk/common.mk\nall: shared\n").unwrap();
     std::fs::write(
         fragments.join("common.mk"),
-        "include nested.mk\nshared:\n\t@:\n",
+        "include mk/nested.mk\nshared:\n\t@:\n",
     )
     .unwrap();
     std::fs::write(fragments.join("nested.mk"), "NESTED := yes\n").unwrap();
@@ -30,7 +30,7 @@ fn resolves_nested_static_includes_and_preserves_provenance() {
 }
 
 #[test]
-fn searches_configured_include_paths_after_the_including_directory() {
+fn searches_configured_include_paths_after_the_working_directory() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
     let includes = directory.path().join("includes");
@@ -38,7 +38,7 @@ fn searches_configured_include_paths_after_the_including_directory() {
     std::fs::write(&root, "include shared.mk\n").unwrap();
     std::fs::write(includes.join("shared.mk"), "SHARED := yes\n").unwrap();
     let options = ProjectOptions {
-        include_paths: vec![includes],
+        include_paths: vec![PathBuf::from("includes")],
         ..ProjectOptions::default()
     };
 
@@ -46,6 +46,25 @@ fn searches_configured_include_paths_after_the_including_directory() {
     assert!(matches!(
         project.edges()[0].resolution,
         IncludeResolution::Resolved(_)
+    ));
+}
+
+#[test]
+fn resolves_nested_directives_from_the_make_working_directory() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let fragments = directory.path().join("mk");
+    std::fs::create_dir(&fragments).unwrap();
+    std::fs::write(&root, "include mk/common.mk\n").unwrap();
+    std::fs::write(fragments.join("common.mk"), "include nested.mk\n").unwrap();
+    std::fs::write(fragments.join("nested.mk"), "WRONG := location\n").unwrap();
+
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+
+    assert_eq!(project.files().len(), 2);
+    assert!(matches!(
+        project.edges()[1].resolution,
+        IncludeResolution::Missing { .. }
     ));
 }
 
@@ -109,6 +128,7 @@ fn enforces_the_file_limit_without_panicking() {
     std::fs::write(&root, "include one.mk\n").unwrap();
     std::fs::write(directory.path().join("one.mk"), "ONE := yes\n").unwrap();
     let options = ProjectOptions {
+        working_directory: None,
         include_paths: Vec::<PathBuf>::new(),
         max_files: 1,
     };

@@ -70,7 +70,12 @@ impl Project {
         let path = canonical_or_normalized(path)?;
         let makefile = parser::parse(&content)
             .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
-        let mut loader = Loader::new(options);
+        let working_directory = options
+            .working_directory
+            .clone()
+            .or_else(|| path.parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let mut loader = Loader::new(options, working_directory);
         let root = loader.insert_file(path, content, makefile);
         loader.paths.insert(loader.files[root.0].path.clone(), root);
         loader.visit(root);
@@ -112,6 +117,9 @@ impl Project {
 
 #[derive(Debug, Clone)]
 pub struct ProjectOptions {
+    /// Directory GNU Make would run from. Relative includes and include search
+    /// paths are interpreted from here. Defaults to the root Makefile's parent.
+    pub working_directory: Option<PathBuf>,
     pub include_paths: Vec<PathBuf>,
     pub max_files: usize,
 }
@@ -119,6 +127,7 @@ pub struct ProjectOptions {
 impl Default for ProjectOptions {
     fn default() -> Self {
         Self {
+            working_directory: None,
             include_paths: Vec::new(),
             max_files: 1024,
         }
@@ -127,6 +136,7 @@ impl Default for ProjectOptions {
 
 struct Loader<'a> {
     options: &'a ProjectOptions,
+    working_directory: PathBuf,
     files: Vec<ProjectFile>,
     paths: BTreeMap<PathBuf, SourceId>,
     edges: Vec<IncludeEdge>,
@@ -136,9 +146,10 @@ struct Loader<'a> {
 }
 
 impl<'a> Loader<'a> {
-    fn new(options: &'a ProjectOptions) -> Self {
+    fn new(options: &'a ProjectOptions, working_directory: PathBuf) -> Self {
         Self {
             options,
+            working_directory,
             files: Vec::new(),
             paths: BTreeMap::new(),
             edges: Vec::new(),
@@ -164,13 +175,11 @@ impl<'a> Loader<'a> {
             return;
         }
         self.visiting.push(source);
-        let including_path = self.files[source.0].path.clone();
         let includes = self.files[source.0].makefile.includes.clone();
 
         for include in includes {
             for expression in include.paths {
-                let (resolution, discovered) =
-                    self.resolve_include(&including_path, &expression, include.line);
+                let (resolution, discovered) = self.resolve_include(&expression, include.line);
                 self.edges.push(IncludeEdge {
                     from: source,
                     expression,
@@ -189,7 +198,6 @@ impl<'a> Loader<'a> {
 
     fn resolve_include(
         &mut self,
-        including_path: &Path,
         expression: &str,
         line: usize,
     ) -> (IncludeResolution, Option<SourceId>) {
@@ -197,7 +205,7 @@ impl<'a> Loader<'a> {
             return (IncludeResolution::Dynamic, None);
         }
 
-        let candidates = include_candidates(including_path, expression, self.options);
+        let candidates = include_candidates(&self.working_directory, expression, self.options);
         let Some(path) = candidates.iter().find(|candidate| candidate.is_file()) else {
             return (
                 IncludeResolution::Missing {
@@ -278,7 +286,7 @@ impl<'a> Loader<'a> {
 }
 
 fn include_candidates(
-    including_path: &Path,
+    working_directory: &Path,
     expression: &str,
     options: &ProjectOptions,
 ) -> Vec<PathBuf> {
@@ -287,9 +295,14 @@ fn include_candidates(
         return vec![normalize_path(path)];
     }
 
-    let parent = including_path.parent().unwrap_or_else(|| Path::new("."));
-    std::iter::once(parent.to_path_buf())
-        .chain(options.include_paths.iter().cloned())
+    std::iter::once(working_directory.to_path_buf())
+        .chain(options.include_paths.iter().map(|directory| {
+            if directory.is_absolute() {
+                directory.clone()
+            } else {
+                working_directory.join(directory)
+            }
+        }))
         .map(|directory| normalize_path(&directory.join(path)))
         .collect()
 }

@@ -70,3 +70,38 @@ fn excludes_conditional_cross_file_edges_from_definite_cycles() {
 
     assert!(project.analysis().dependency_cycles().is_empty());
 }
+
+#[test]
+fn interleaves_included_statements_at_the_include_site() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(&root, "target: before\ninclude shared.mk\ntarget:: after\n").unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "target: shared\n").unwrap();
+
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+    let declarations = &project.analysis().target("target").unwrap().declarations;
+    let locations = declarations
+        .iter()
+        .map(|declaration| {
+            (
+                project
+                    .file(declaration.location.source)
+                    .path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                declaration.location.line,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        locations,
+        [
+            ("Makefile".into(), 1),
+            ("shared.mk".into(), 1),
+            ("Makefile".into(), 3)
+        ]
+    );
+}
