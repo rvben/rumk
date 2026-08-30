@@ -7,7 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2026-08-30
+## [0.0.2] - 2026-08-30
 
 ### Added
 
@@ -36,5 +36,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Release packages use an explicit source allowlist that excludes private planning documents.
 - Release artifacts are checksummed and prepared for GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/rvben/rumk/compare/v0.1.0-alpha.1...HEAD
-[0.1.0-alpha.1]: https://github.com/rvben/rumk/compare/v0.0.1...v0.1.0-alpha.1
+[Unreleased]: https://github.com/rvben/rumk/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/rvben/rumk/compare/v0.0.1...v0.0.2

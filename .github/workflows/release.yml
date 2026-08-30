@@ -52,7 +52,7 @@ jobs:
           fi
           ./scripts/validate-release.sh "${expected}"
           prerelease=false
-          if [[ "${version}" == *-* ]]; then
+          if [[ "${version}" == 0.0.* || "${version}" == *-* ]]; then
             prerelease=true
           fi
           {

@@ -19,7 +19,7 @@ No long-lived crates.io token is required.
 
 ## Preparing a release
 
-1. Choose the next SemVer version. Keep prerelease identifiers while the README says alpha.
+1. Choose the next SemVer version. Continue the `0.0.x` sequence while the README says alpha.
 2. Update `Cargo.toml`, `Cargo.lock`, and `CHANGELOG.md` to the identical version.
 3. Run `make release-check`. It verifies formatting, Clippy, tests, the corpus, the package
    allowlist, and `cargo publish --dry-run`.
