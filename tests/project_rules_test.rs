@@ -36,7 +36,7 @@ fn missing_phony_only_offers_fixes_for_the_processed_root_file() {
     std::fs::write(&root, "include shared.mk\nall clean:\n\t@:\n").unwrap();
     std::fs::write(&shared, "test:\n\t@:\n").unwrap();
 
-    let diagnostics = MissingPhony.check_project(&load(&root));
+    let diagnostics = MissingPhony::default().check_project(&load(&root));
     let root_path = root.canonicalize().unwrap();
     let shared_path = shared.canonicalize().unwrap();
 
@@ -196,7 +196,7 @@ fn context_sensitive_rules_merge_phonies_recipes_and_dependency_edges() {
     .unwrap();
     let project = load(&root);
 
-    assert!(MissingPhony.check_project(&project).is_empty());
+    assert!(MissingPhony::default().check_project(&project).is_empty());
     let duplicate = DuplicateRecipe.check_project(&project);
     assert_eq!(duplicate.len(), 1);
     assert_eq!(duplicate[0].rule_id, "MK204");

@@ -17,7 +17,28 @@ struct MissingPhonyTarget {
     column: usize,
 }
 
-pub struct MissingPhony;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhonyPlacement {
+    Auto,
+    Top,
+    Adjacent,
+}
+
+pub struct MissingPhony {
+    placement: PhonyPlacement,
+}
+
+impl MissingPhony {
+    pub fn new(placement: PhonyPlacement) -> Self {
+        Self { placement }
+    }
+}
+
+impl Default for MissingPhony {
+    fn default() -> Self {
+        Self::new(PhonyPlacement::Auto)
+    }
+}
 
 impl Rule for MissingPhony {
     fn id(&self) -> &'static str {
@@ -25,12 +46,12 @@ impl Rule for MissingPhony {
     }
 
     fn name(&self) -> &'static str {
-        "Non-file targets should be .PHONY"
+        "Conventional command targets should be .PHONY"
     }
 
     fn description(&self) -> &'static str {
-        "Targets that don't represent actual files should be declared as .PHONY to ensure \
-         they always run and to improve performance."
+        "Conventional command targets that don't represent actual files should be declared as \
+         .PHONY to ensure they always run and to improve performance."
     }
 
     fn category(&self) -> RuleCategory {
@@ -58,7 +79,7 @@ impl Rule for MissingPhony {
             first.line,
             first.column,
         )
-        .with_fix(phony_fix(makefile, &missing, content))]
+        .with_fix(phony_fix(makefile, &missing, content, self.placement))]
     }
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
@@ -106,8 +127,12 @@ impl Rule for MissingPhony {
                 .with_source(project.file(source).path.clone());
                 if source == project.root() {
                     let file = project.file(project.root());
-                    diagnostic =
-                        diagnostic.with_fix(phony_fix(&file.makefile, &missing, &file.content));
+                    diagnostic = diagnostic.with_fix(phony_fix(
+                        &file.makefile,
+                        &missing,
+                        &file.content,
+                        self.placement,
+                    ));
                 }
                 Some(diagnostic)
             })
@@ -154,34 +179,93 @@ fn phony_message(targets: &[String]) -> String {
     }
 }
 
-fn phony_fix(makefile: &Makefile, targets: &[MissingPhonyTarget], content: &str) -> Fix {
+fn phony_fix(
+    makefile: &Makefile,
+    targets: &[MissingPhonyTarget],
+    content: &str,
+    placement: PhonyPlacement,
+) -> Fix {
     let names = missing_names(targets);
     let description = format!("Declare {} as .PHONY", names.join(" "));
     let declarations = phony_declarations(makefile);
 
+    match placement {
+        PhonyPlacement::Adjacent => adjacent_phony_fix(targets, content, description),
+        PhonyPlacement::Top => top_phony_fix(makefile, &declarations, &names, content, description),
+        PhonyPlacement::Auto => {
+            auto_phony_fix(&declarations, targets, &names, content, description)
+        }
+    }
+}
+
+fn adjacent_phony_fix(targets: &[MissingPhonyTarget], content: &str, description: String) -> Fix {
+    let by_line = targets.iter().fold(BTreeMap::new(), |mut grouped, target| {
+        grouped
+            .entry(target.line)
+            .or_insert_with(Vec::new)
+            .push(target.name.clone());
+        grouped
+    });
+    by_line
+        .into_iter()
+        .fold(Fix::new(description), |fix, (line, names)| {
+            fix.add_edit(Edit::new(
+                line,
+                1,
+                line,
+                1,
+                format_phony_lines(&names, preferred_line_ending(content, line)),
+            ))
+        })
+}
+
+fn top_phony_fix(
+    makefile: &Makefile,
+    declarations: &[PhonyDeclaration],
+    names: &[String],
+    content: &str,
+    description: String,
+) -> Fix {
+    if let Some(declaration) = declarations
+        .iter()
+        .min_by_key(|declaration| declaration.start_line)
+    {
+        return extend_phony_declaration(declaration, names, content, description);
+    }
+
+    let line = makefile
+        .rules
+        .iter()
+        .map(|rule| rule.line)
+        .min()
+        .unwrap_or(1);
+    let line_ending = preferred_line_ending(content, line);
+    Fix::new(description).add_edit(Edit::new(
+        line,
+        1,
+        line,
+        1,
+        format!(
+            "{}{}",
+            format_phony_declaration(names, line_ending),
+            line_ending
+        ),
+    ))
+}
+
+fn auto_phony_fix(
+    declarations: &[PhonyDeclaration],
+    targets: &[MissingPhonyTarget],
+    names: &[String],
+    content: &str,
+    description: String,
+) -> Fix {
     if declarations.len() > 1
         && declarations
             .iter()
             .all(|declaration| declaration.names.len() <= 1)
     {
-        let by_line = targets.iter().fold(BTreeMap::new(), |mut grouped, target| {
-            grouped
-                .entry(target.line)
-                .or_insert_with(Vec::new)
-                .push(target.name.clone());
-            grouped
-        });
-        return by_line
-            .into_iter()
-            .fold(Fix::new(description), |fix, (line, names)| {
-                fix.add_edit(Edit::new(
-                    line,
-                    1,
-                    line,
-                    1,
-                    format_phony_lines(&names, preferred_line_ending(content, line)),
-                ))
-            });
+        return adjacent_phony_fix(targets, content, description);
     }
 
     if let Some(declaration) = declarations.iter().max_by_key(|declaration| {
@@ -190,45 +274,7 @@ fn phony_fix(makefile: &Makefile, targets: &[MissingPhonyTarget], content: &str)
             std::cmp::Reverse(declaration.start_line),
         )
     }) {
-        if let Some(column) = append_column(content, declaration, &names) {
-            return Fix::new(description).add_edit(Edit::new(
-                declaration.start_line,
-                column,
-                declaration.start_line,
-                column,
-                format!(" {}", names.join(" ")),
-            ));
-        }
-        if !declaration.has_comment {
-            let mut combined = declaration.names.clone();
-            for name in &names {
-                if !combined.contains(name) {
-                    combined.push(name.clone());
-                }
-            }
-            if let Some(end_column) = line_end_column(content, declaration.end_line) {
-                return Fix::new(description).add_edit(Edit::new(
-                    declaration.start_line,
-                    1,
-                    declaration.end_line,
-                    end_column,
-                    format_phony_declaration(
-                        &combined,
-                        preferred_line_ending(content, declaration.start_line),
-                    ),
-                ));
-            }
-        }
-        return Fix::new(description).add_edit(Edit::new(
-            declaration.start_line,
-            1,
-            declaration.start_line,
-            1,
-            format_phony_lines(
-                &names,
-                preferred_line_ending(content, declaration.start_line),
-            ),
-        ));
+        return extend_phony_declaration(declaration, names, content, description);
     }
 
     let line = targets.first().map_or(1, |target| target.line);
@@ -237,7 +283,54 @@ fn phony_fix(makefile: &Makefile, targets: &[MissingPhonyTarget], content: &str)
         1,
         line,
         1,
-        format_phony_lines(&names, preferred_line_ending(content, line)),
+        format_phony_lines(names, preferred_line_ending(content, line)),
+    ))
+}
+
+fn extend_phony_declaration(
+    declaration: &PhonyDeclaration,
+    names: &[String],
+    content: &str,
+    description: String,
+) -> Fix {
+    if let Some(column) = append_column(content, declaration, names) {
+        return Fix::new(description).add_edit(Edit::new(
+            declaration.start_line,
+            column,
+            declaration.start_line,
+            column,
+            format!(" {}", names.join(" ")),
+        ));
+    }
+    if !declaration.has_comment {
+        let mut combined = declaration.names.clone();
+        for name in names {
+            if !combined.contains(name) {
+                combined.push(name.clone());
+            }
+        }
+        if let Some(end_column) = line_end_column(content, declaration.end_line) {
+            return Fix::new(description).add_edit(Edit::new(
+                declaration.start_line,
+                1,
+                declaration.end_line,
+                end_column,
+                format_phony_declaration(
+                    &combined,
+                    preferred_line_ending(content, declaration.start_line),
+                ),
+            ));
+        }
+    }
+    Fix::new(description).add_edit(Edit::new(
+        declaration.start_line,
+        1,
+        declaration.start_line,
+        1,
+        format_phony_lines(
+            names,
+            preferred_line_ending(content, declaration.start_line),
+        ),
     ))
 }
 

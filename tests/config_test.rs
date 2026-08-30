@@ -1,5 +1,6 @@
 use rumk::config::Config;
 use rumk::diagnostic::Severity;
+use rumk::fix::apply_fixes;
 use rumk::parser::parse;
 
 #[test]
@@ -183,6 +184,44 @@ fn line_length_can_include_comments_and_recipes() {
             .collect::<Vec<_>>(),
         [1, 3]
     );
+}
+
+#[test]
+fn missing_phony_placement_is_configurable_and_introspectable() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rumk.toml");
+    std::fs::write(&path, "[MK201]\nplacement = \"adjacent\"\n").unwrap();
+    let config = Config::from_file(&path).unwrap();
+    let rule = config
+        .rules
+        .iter()
+        .find(|rule| rule.id() == "MK201")
+        .unwrap();
+    let content = "all:\n\t@:\nclean:\n\t@:\n";
+
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        ".PHONY: all\nall:\n\t@:\n.PHONY: clean\nclean:\n\t@:\n"
+    );
+    assert_eq!(config.get("MK201.placement").as_deref(), Some("adjacent"));
+    assert!(config
+        .render(false, false)
+        .contains("placement = \"adjacent\""));
+}
+
+#[test]
+fn missing_phony_placement_rejects_invalid_values() {
+    let directory = tempfile::tempdir().unwrap();
+    let wrong_type = directory.path().join("wrong-type.toml");
+    let unknown = directory.path().join("unknown.toml");
+    std::fs::write(&wrong_type, "[MK201]\nplacement = true\n").unwrap();
+    std::fs::write(&unknown, "[MK201]\nplacement = \"middle\"\n").unwrap();
+
+    assert!(format!("{:#}", Config::from_file(&wrong_type).err().unwrap()).contains("string"));
+    assert!(format!("{:#}", Config::from_file(&unknown).err().unwrap()).contains("middle"));
 }
 
 #[test]

@@ -1,6 +1,8 @@
 use rumk::fix::apply_fixes;
 use rumk::parser::parse;
-use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony, RecursiveMake};
+use rumk::rules::best_practices::{
+    DependencyCycle, DuplicateRecipe, MissingPhony, PhonyPlacement, RecursiveMake,
+};
 use rumk::rules::style::LineLength;
 use rumk::rules::syntax::{
     ConditionalStructure, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
@@ -48,9 +50,10 @@ fn tab_rule_still_fixes_the_complete_space_prefix() {
 fn missing_phony_rule_groups_targets_and_preserves_crlf() {
     let content = "all:\r\n\t@:\r\nclean:\r\n\t@:\r\n";
     let makefile = parse(content).unwrap();
-    let diagnostics = MissingPhony.check(&makefile, content);
+    let rule = MissingPhony::default();
+    let diagnostics = rule.check(&makefile, content);
 
-    assert!(MissingPhony.fixable());
+    assert!(rule.fixable());
     assert_eq!(diagnostics.len(), 1);
     assert!(diagnostics[0].fixable);
     assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 1);
@@ -68,7 +71,8 @@ fn missing_phony_extends_a_canonical_group_and_preserves_its_comment() {
         "all:\n\t@:\n",
         "clean:\n\t@:\n",
     );
-    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+    let rule = MissingPhony::default();
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
     let fixed = apply_fixes(content, &diagnostics);
 
     assert_eq!(diagnostics.len(), 1);
@@ -81,9 +85,7 @@ fn missing_phony_extends_a_canonical_group_and_preserves_its_comment() {
             "clean:\n\t@:\n",
         )
     );
-    assert!(MissingPhony
-        .check(&parse(&fixed).unwrap(), &fixed)
-        .is_empty());
+    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
 }
 
 #[test]
@@ -96,7 +98,7 @@ fn missing_phony_preserves_an_existing_per_section_style() {
         "clean:\n\t@:\n",
         "test:\n\t@:\n",
     );
-    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+    let diagnostics = MissingPhony::default().check(&parse(content).unwrap(), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 2);
@@ -123,7 +125,7 @@ fn missing_phony_does_not_extend_a_conditional_declaration() {
         "endif\n",
         "all:\n\t@:\n",
     );
-    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+    let diagnostics = MissingPhony::default().check(&parse(content).unwrap(), content);
 
     assert_eq!(
         apply_fixes(content, &diagnostics),
@@ -145,16 +147,76 @@ fn missing_phony_merges_and_wraps_an_overlong_canonical_group() {
         .join(" ");
     let existing = format!(".PHONY: {existing_names}\n");
     let content = format!("{existing}all:\n\t@:\n");
-    let diagnostics = MissingPhony.check(&parse(&content).unwrap(), &content);
+    let rule = MissingPhony::default();
+    let diagnostics = rule.check(&parse(&content).unwrap(), &content);
     let fixed = apply_fixes(&content, &diagnostics);
 
     assert_eq!(fixed.matches(".PHONY:").count(), 1);
     assert!(fixed.contains(" \\\n        "));
     assert!(fixed.contains("command-16 all"));
     assert!(fixed.lines().all(|line| line.chars().count() <= 120));
-    assert!(MissingPhony
-        .check(&parse(&fixed).unwrap(), &fixed)
-        .is_empty());
+    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+}
+
+#[test]
+fn missing_phony_can_place_a_group_before_the_first_rule() {
+    let content = concat!("SHELL := /bin/sh\n", "\n", "all:\n\t@:\n", "clean:\n\t@:\n",);
+    let rule = MissingPhony::new(PhonyPlacement::Top);
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let fixed = apply_fixes(content, &diagnostics);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        fixed,
+        concat!(
+            "SHELL := /bin/sh\n",
+            "\n",
+            ".PHONY: all clean\n",
+            "all:\n\t@:\n",
+            "clean:\n\t@:\n",
+        )
+    );
+    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+}
+
+#[test]
+fn missing_phony_can_extend_the_top_declaration() {
+    let content = concat!(
+        ".PHONY: lint\n",
+        "lint:\n\t@:\n",
+        ".PHONY: deploy\n",
+        "deploy:\n\t@:\n",
+        "clean:\n\t@:\n",
+        "test:\n\t@:\n",
+    );
+    let rule = MissingPhony::new(PhonyPlacement::Top);
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        concat!(
+            ".PHONY: lint clean test\n",
+            "lint:\n\t@:\n",
+            ".PHONY: deploy\n",
+            "deploy:\n\t@:\n",
+            "clean:\n\t@:\n",
+            "test:\n\t@:\n",
+        )
+    );
+}
+
+#[test]
+fn missing_phony_can_place_declarations_adjacent_to_targets() {
+    let content = "all:\n\t@:\nclean:\n\t@:\n";
+    let rule = MissingPhony::new(PhonyPlacement::Adjacent);
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let fixed = apply_fixes(content, &diagnostics);
+
+    assert_eq!(
+        fixed,
+        ".PHONY: all\nall:\n\t@:\n.PHONY: clean\nclean:\n\t@:\n"
+    );
+    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
 }
 
 #[test]

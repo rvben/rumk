@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `MK201.placement` controls where autofixes add missing `.PHONY` declarations:
+  `auto` preserves the established file style, `top` groups names in the
+  earliest declaration, and `adjacent` places declarations beside their rules.
+
 ## [0.0.4] - 2026-08-30
 
 ### Changed

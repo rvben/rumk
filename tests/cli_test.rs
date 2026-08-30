@@ -239,6 +239,52 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
 }
 
 #[test]
+fn config_get_exposes_missing_phony_placement() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK201]\nplacement = \"top\"\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["config", "get", "MK201.placement"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "top");
+}
+
+#[test]
+fn configured_missing_phony_placement_drives_fixes() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK201]\nplacement = \"adjacent\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "all:\n\t@:\nclean:\n\t@:\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--fix", "Makefile"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(directory.path().join("Makefile")).unwrap(),
+        ".PHONY: all\nall:\n\t@:\n.PHONY: clean\nclean:\n\t@:\n"
+    );
+}
+
+#[test]
 fn check_without_paths_scans_the_current_directory() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("Makefile"), "clean:\n\ttrue\n").unwrap();

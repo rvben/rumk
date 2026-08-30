@@ -92,6 +92,9 @@ ignore-recipes = true
 enabled = true
 style = "upper-case"
 
+[MK201]
+placement = "auto"
+
 [per-file-ignores]
 "vendor/**/*.mk" = ["MK202"]
 ```
@@ -208,8 +211,10 @@ Rules marked **default** run without configuration.
 
 ### Best practices
 
-- `MK201` — Common non-file targets should be `.PHONY`; fixes consolidate canonical groups,
-  preserve per-section style, and wrap long declarations (**default**, fixable)
+- [`MK201`](https://github.com/rvben/rumk/blob/main/docs/mk201.md) — Conventional
+  non-file targets should be `.PHONY`;
+  fixes consolidate canonical groups, preserve per-section style, and wrap long
+  declarations (**default**, fixable)
 - `MK202` — Avoid hardcoded absolute paths
 - `MK203` — Recursive Make invocations should use `$(MAKE)` (**default**, fixable)
 - `MK204` — Concrete targets should not declare multiple single-colon recipes (**default**)

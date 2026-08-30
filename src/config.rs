@@ -270,6 +270,9 @@ impl Config {
             "style" if matches!(rule_id.as_str(), "MK102" | "MK103") => {
                 settings.options.get("style").map(value_string)
             }
+            "placement" if rule_id == "MK201" => {
+                settings.options.get("placement").map(value_string)
+            }
             _ => None,
         }
     }
@@ -525,6 +528,9 @@ fn default_settings() -> BTreeMap<String, RuleSettings> {
                         "style".to_string(),
                         toml::Value::String("lower-case".into()),
                     );
+                }
+                "MK201" => {
+                    options.insert("placement".to_string(), toml::Value::String("auto".into()));
                 }
                 _ => {}
             }
@@ -804,6 +810,7 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
         ("MK101", "ignore-comments") => Ok("ignore-comments"),
         ("MK101", "ignore-recipes") => Ok("ignore-recipes"),
         ("MK102" | "MK103", "style") => Ok("style"),
+        ("MK201", "placement") => Ok("placement"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
     }
 }
@@ -834,7 +841,9 @@ fn build_rule(
             settings,
             rules::style::NamingStyle::Lower,
         )?)),
-        "MK201" => Box::new(rules::best_practices::MissingPhony),
+        "MK201" => Box::new(rules::best_practices::MissingPhony::new(
+            phony_placement_option(rule_id, settings)?,
+        )),
         "MK202" => Box::new(rules::best_practices::HardcodedPath),
         "MK203" => Box::new(rules::best_practices::RecursiveMake),
         "MK204" => Box::new(rules::best_practices::DuplicateRecipe),
@@ -888,6 +897,26 @@ fn boolean_option(
     value
         .as_bool()
         .with_context(|| format!("Option '{name}' for rule {rule_id} must be a boolean"))
+}
+
+fn phony_placement_option(
+    rule_id: &str,
+    settings: &RuleSettings,
+) -> Result<rules::best_practices::PhonyPlacement> {
+    let Some(value) = settings.options.get("placement") else {
+        return Ok(rules::best_practices::PhonyPlacement::Auto);
+    };
+    let Some(value) = value.as_str() else {
+        bail!("Option 'placement' for rule {rule_id} must be a string");
+    };
+    match value.to_ascii_lowercase().replace('_', "-").as_str() {
+        "auto" => Ok(rules::best_practices::PhonyPlacement::Auto),
+        "top" => Ok(rules::best_practices::PhonyPlacement::Top),
+        "adjacent" => Ok(rules::best_practices::PhonyPlacement::Adjacent),
+        _ => bail!(
+            "Unsupported placement '{value}' for rule {rule_id}; expected auto, top, or adjacent"
+        ),
+    }
 }
 
 fn naming_style_option(
