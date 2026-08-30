@@ -1,4 +1,5 @@
-.PHONY: all build test lint fmt clean install run check-examples check-gnu-fixtures help release-patch release-minor release-major
+.PHONY: all build test lint fmt clean install run check-examples check-gnu-fixtures help
+.PHONY: release-patch release-minor release-major
 
 # Configuration
 CARGO = cargo
