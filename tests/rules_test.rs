@@ -232,6 +232,7 @@ fn make_permits_punctuation_and_computed_variable_names() {
     let content = concat!(
         "package/version := 1\n",
         "feature+flags := enabled\n",
+        "two words := yes\n",
         "$(PREFIX)_SOURCES := main.c\n",
     );
     let makefile = parse(content).unwrap();
