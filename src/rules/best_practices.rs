@@ -62,7 +62,7 @@ impl Rule for MissingPhony {
                 let declaration = target
                     .declarations
                     .iter()
-                    .find(|declaration| !index.is_conditional_location(declaration.location))?;
+                    .find(|declaration| index.is_definitely_active(declaration.location))?;
                 Some(
                     Diagnostic::new(
                         self.id(),
@@ -349,7 +349,7 @@ impl Rule for DuplicateRecipe {
                 let mut recipes = target.declarations.iter().filter(|declaration| {
                     declaration.has_recipe
                         && !declaration.double_colon
-                        && !index.is_conditional_location(declaration.location)
+                        && index.is_definitely_active(declaration.location)
                 });
                 recipes.next();
                 recipes.map(|declaration| {

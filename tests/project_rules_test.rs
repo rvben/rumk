@@ -51,6 +51,19 @@ fn missing_include_allows_optional_dynamic_and_remakeable_files() {
 }
 
 #[test]
+fn missing_include_reports_the_expanded_path() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(&root, "FILE := absent.mk\ninclude $(FILE)\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("absent.mk"));
+    assert!(!diagnostics[0].message.contains("$(FILE)"));
+}
+
+#[test]
 fn reports_include_cycles_on_the_closing_directive() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
@@ -86,7 +99,7 @@ fn undefined_references_respect_project_builtins_and_predefined_variables() {
 }
 
 #[test]
-fn reachability_is_inert_without_entries_and_follows_cross_file_edges() {
+fn reachability_uses_the_default_goal_and_follows_cross_file_edges() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
     std::fs::write(&root, "include shared.mk\nall: library\norphan:\n\t@:\n").unwrap();
@@ -97,9 +110,14 @@ fn reachability_is_inert_without_entries_and_follows_cross_file_edges() {
     .unwrap();
     let project = load(&root);
 
-    assert!(UnreachableTarget::default()
-        .check_project(&project)
-        .is_empty());
+    let inferred = UnreachableTarget::default().check_project(&project);
+    assert_eq!(inferred.len(), 2);
+    assert!(inferred
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("all")));
+    assert!(inferred
+        .iter()
+        .any(|diagnostic| diagnostic.message.contains("orphan")));
     let diagnostics = UnreachableTarget::new(vec![String::from("all")]).check_project(&project);
 
     assert_eq!(diagnostics.len(), 1);

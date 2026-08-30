@@ -105,3 +105,81 @@ fn interleaves_included_statements_at_the_include_site() {
         ]
     );
 }
+
+#[test]
+fn expands_static_target_and_prerequisite_names_at_definition_time() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "TARGET := all\n",
+            "DEPS = compile test\n",
+            "$(TARGET): $(DEPS)\n",
+            "compile:\n",
+            "test:\n",
+        ),
+    )
+    .unwrap();
+
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+    let all = project.analysis().target("all").unwrap();
+
+    assert!(project.analysis().target("$(TARGET)").is_none());
+    assert_eq!(
+        all.dependencies
+            .iter()
+            .map(|dependency| dependency.prerequisite.as_str())
+            .collect::<Vec<_>>(),
+        ["compile", "test"]
+    );
+}
+
+#[test]
+fn indexes_only_the_definitely_active_conditional_branch() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "MODE := debug\n",
+            "ifeq ($(MODE),debug)\n",
+            "selected: active\n",
+            "else\n",
+            "selected: inactive\n",
+            "endif\n",
+        ),
+    )
+    .unwrap();
+
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+    let selected = project.analysis().target("selected").unwrap();
+
+    assert_eq!(selected.declarations.len(), 1);
+    assert_eq!(selected.dependencies.len(), 1);
+    assert_eq!(selected.dependencies[0].prerequisite, "active");
+}
+
+#[test]
+fn reevaluates_a_makefile_at_each_include_site() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        concat!(
+            "NAME := first\n",
+            "include shared.mk\n",
+            "NAME := second\n",
+            "include shared.mk\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "$(NAME):\n").unwrap();
+
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+
+    assert_eq!(project.files().len(), 2);
+    assert_eq!(project.edges().len(), 2);
+    assert!(project.analysis().target("first").is_some());
+    assert!(project.analysis().target("second").is_some());
+}

@@ -206,6 +206,10 @@ fn project_configuration_is_queryable_and_resolves_include_paths_from_the_config
     assert_eq!(options.working_directory.as_deref(), makefile.parent());
     assert_eq!(options.include_paths, [directory.path().join("mk")]);
     assert_eq!(
+        options.predefined_variables.get("FROM_CLI").map(String::as_str),
+        Some("yes")
+    );
+    assert_eq!(
         config.get("global.entry-targets").as_deref(),
         Some("[\"all\"]")
     );

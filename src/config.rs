@@ -141,6 +141,7 @@ impl Config {
         ProjectOptions {
             working_directory: makefile.parent().map(Path::to_path_buf),
             include_paths,
+            predefined_variables: self.global.predefined_variables.clone(),
             ..ProjectOptions::default()
         }
     }

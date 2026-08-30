@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::analysis::{dependency_cycles_for_graph, ReferenceContext, ReferenceKind};
+use crate::eval::Truth;
 use crate::parser::{AssignmentOperator, VariableScope};
 use crate::project::{IncludeResolution, Project, SourceId};
 
@@ -76,6 +77,7 @@ pub struct ProjectSemanticIndex {
     pub references: Vec<ProjectReference>,
     pub includes: Vec<ProjectIncludeReference>,
     conditional_ranges: BTreeMap<SourceId, Vec<(usize, usize)>>,
+    activity: BTreeMap<(SourceId, usize), Truth>,
     has_structural_issues: bool,
 }
 
@@ -111,52 +113,52 @@ impl ProjectSemanticIndex {
                     }));
             }
 
-            for (name, target) in &local.targets {
-                let symbol =
-                    index
-                        .targets
-                        .entry(name.clone())
-                        .or_insert_with(|| ProjectTargetSymbol {
-                            name: name.clone(),
-                            phony: false,
-                            special: target.special,
-                            declarations: Vec::new(),
-                            dependencies: Vec::new(),
+            for rule in &file.makefile.rules {
+                let location = SourceLocation {
+                    source,
+                    line: rule.line,
+                    column: rule.column,
+                };
+                for evaluated in project.evaluation().rules(source, rule.line) {
+                    for name in &evaluated.targets {
+                        let symbol = index.targets.entry(name.clone()).or_insert_with(|| {
+                            ProjectTargetSymbol {
+                                name: name.clone(),
+                                phony: false,
+                                special: name.starts_with('.'),
+                                declarations: Vec::new(),
+                                dependencies: Vec::new(),
+                            }
                         });
-                symbol.phony |= target.phony;
-                symbol.special |= target.special;
-                symbol
-                    .declarations
-                    .extend(target.declarations.iter().map(|declaration| {
-                        ProjectTargetDeclaration {
-                            location: SourceLocation {
-                                source,
-                                line: declaration.location.line,
-                                column: declaration.location.column,
-                            },
-                            end_line: declaration.end_line,
-                            double_colon: declaration.double_colon,
-                            grouped: declaration.grouped,
-                            target_pattern: declaration.target_pattern.clone(),
-                            has_recipe: declaration.has_recipe,
-                        }
-                    }));
-                symbol
-                    .dependencies
-                    .extend(
-                        target
+                        symbol.special |= name.starts_with('.');
+                        symbol.declarations.push(ProjectTargetDeclaration {
+                            location,
+                            end_line: rule.end_line,
+                            double_colon: rule.double_colon,
+                            grouped: rule.grouped,
+                            target_pattern: rule.target_pattern.clone(),
+                            has_recipe: !rule.recipes.is_empty(),
+                        });
+                        symbol
                             .dependencies
-                            .iter()
-                            .map(|dependency| ProjectDependencyEdge {
-                                prerequisite: dependency.prerequisite.clone(),
-                                order_only: dependency.order_only,
-                                location: SourceLocation {
-                                    source,
-                                    line: dependency.location.line,
-                                    column: dependency.location.column,
+                            .extend(evaluated.prerequisites.iter().map(|prerequisite| {
+                                ProjectDependencyEdge {
+                                    prerequisite: prerequisite.clone(),
+                                    order_only: false,
+                                    location,
+                                }
+                            }));
+                        symbol
+                            .dependencies
+                            .extend(evaluated.order_only_prerequisites.iter().map(
+                                |prerequisite| ProjectDependencyEdge {
+                                    prerequisite: prerequisite.clone(),
+                                    order_only: true,
+                                    location,
                                 },
-                            }),
-                    );
+                            ));
+                    }
+                }
             }
 
             index
@@ -192,6 +194,25 @@ impl ProjectSemanticIndex {
             for block in &local.conditional_blocks {
                 ranges.push((block.start_line, block.end_line));
             }
+            for statement in file.makefile.logical.statements() {
+                index.activity.insert(
+                    (source, statement.start_line),
+                    project.evaluation().activity(source, statement.start_line),
+                );
+            }
+        }
+        for phony in project.evaluation().active_phonies() {
+            index
+                .targets
+                .entry(phony.clone())
+                .or_insert_with(|| ProjectTargetSymbol {
+                    name: phony.clone(),
+                    phony: true,
+                    special: phony.starts_with('.'),
+                    declarations: Vec::new(),
+                    dependencies: Vec::new(),
+                })
+                .phony = true;
         }
         index.sort_by_evaluation_order(project);
         index
@@ -254,6 +275,17 @@ impl ProjectSemanticIndex {
             })
     }
 
+    pub fn activity_at(&self, location: SourceLocation) -> Truth {
+        self.activity
+            .get(&(location.source, location.line))
+            .copied()
+            .unwrap_or(Truth::Unknown)
+    }
+
+    pub fn is_definitely_active(&self, location: SourceLocation) -> bool {
+        self.activity_at(location) == Truth::True
+    }
+
     pub fn has_structural_issues(&self) -> bool {
         self.has_structural_issues
     }
@@ -272,7 +304,7 @@ impl ProjectSemanticIndex {
                 let dependencies = symbol
                     .dependencies
                     .iter()
-                    .filter(|edge| !self.is_conditional_location(edge.location))
+                    .filter(|edge| self.is_definitely_active(edge.location))
                     .map(|edge| &edge.prerequisite)
                     .filter(|prerequisite| {
                         is_static_name(prerequisite) && self.targets.contains_key(*prerequisite)

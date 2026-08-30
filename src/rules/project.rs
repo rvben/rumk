@@ -97,9 +97,9 @@ fn mixed_separator_declaration<'a>(
     &'a crate::project_analysis::ProjectTargetDeclaration,
 )> {
     let mut declarations = target.declarations.iter().filter(|declaration| {
-        !project
+        project
             .analysis()
-            .is_conditional_location(declaration.location)
+            .is_definitely_active(declaration.location)
     });
     let first = declarations.next()?;
     declarations
@@ -140,25 +140,26 @@ impl Rule for MissingInclude {
             .iter()
             .filter(|edge| !edge.optional)
             .filter_map(|edge| {
+                let include = edge.expanded.as_deref().unwrap_or(&edge.expression);
                 let detail = match &edge.resolution {
                     IncludeResolution::Missing { .. }
-                        if project.analysis().target(&edge.expression).is_none() =>
+                        if project.analysis().target(include).is_none() =>
                     {
-                        format!("Required include '{}' was not found", edge.expression)
+                        format!("Required include '{include}' was not found")
                     }
                     IncludeResolution::Unreadable { path, message } => format!(
                         "Required include '{}' could not be read at {}: {message}",
-                        edge.expression,
+                        include,
                         path.display()
                     ),
                     IncludeResolution::Invalid { path, message } => format!(
                         "Required include '{}' is invalid at {}: {message}",
-                        edge.expression,
+                        include,
                         path.display()
                     ),
                     IncludeResolution::LimitExceeded => format!(
                         "Required include '{}' exceeds the project file limit",
-                        edge.expression
+                        include
                     ),
                     _ => return None,
                 };
@@ -269,7 +270,15 @@ impl Rule for UndefinedVariableReference {
             .references
             .iter()
             .filter(|reference| reference.kind == ReferenceKind::Variable)
-            .filter(|reference| index.variable(&reference.name).is_none())
+            .filter(|reference| index.is_definitely_active(reference.location))
+            .filter(|reference| {
+                index.variable(&reference.name).is_none_or(|variable| {
+                    !variable
+                        .definitions
+                        .iter()
+                        .any(|definition| index.is_definitely_active(definition.location))
+                })
+            })
             .filter(|reference| !self.predefined.contains(&reference.name))
             .filter(|reference| !GNU_BUILTIN_VARIABLES.contains(&reference.name.as_str()))
             .map(|reference| {
@@ -356,7 +365,7 @@ impl Rule for UnreachableTarget {
     }
 
     fn description(&self) -> &'static str {
-        "Concrete targets should be reachable from at least one configured entry target. This rule is inert until global.entry-targets is configured."
+        "Concrete targets should be reachable from configured entry targets, or from GNU Make's inferred default goal when no entries are configured."
     }
 
     fn category(&self) -> RuleCategory {
@@ -372,12 +381,19 @@ impl Rule for UnreachableTarget {
     }
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        if self.entry_targets.is_empty() {
-            return Vec::new();
-        }
         let index = project.analysis();
+        let entries = if self.entry_targets.is_empty() {
+            match project.evaluation().default_goal() {
+                crate::project::DefaultGoal::Known(goal) => vec![goal.clone()],
+                crate::project::DefaultGoal::Unset | crate::project::DefaultGoal::Unknown => {
+                    return Vec::new();
+                }
+            }
+        } else {
+            self.entry_targets.clone()
+        };
         let mut reachable = BTreeSet::new();
-        let mut pending = VecDeque::from(self.entry_targets.clone());
+        let mut pending = VecDeque::from(entries);
         while let Some(target) = pending.pop_front() {
             if !reachable.insert(target.clone()) {
                 continue;
@@ -387,7 +403,7 @@ impl Rule for UnreachableTarget {
                     symbol
                         .dependencies
                         .iter()
-                        .filter(|edge| !index.is_conditional_location(edge.location))
+                        .filter(|edge| index.is_definitely_active(edge.location))
                         .map(|edge| edge.prerequisite.clone()),
                 );
             }
@@ -405,7 +421,7 @@ impl Rule for UnreachableTarget {
                 let declaration = target
                     .declarations
                     .iter()
-                    .find(|declaration| !index.is_conditional_location(declaration.location))?;
+                    .find(|declaration| index.is_definitely_active(declaration.location))?;
                 Some(
                     Diagnostic::new(
                         self.id(),
