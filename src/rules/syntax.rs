@@ -71,7 +71,8 @@ impl Rule for InvalidVariableSyntax {
     }
 
     fn description(&self) -> &'static str {
-        "Variable names should follow Make conventions and not contain invalid characters."
+        "Literal variable names must not contain ':', '#', '=', or whitespace. Computed variable \
+         names are left to Make's expansion semantics."
     }
 
     fn category(&self) -> RuleCategory {
@@ -102,8 +103,12 @@ fn is_valid_variable_name(name: &str) -> bool {
         return false;
     }
 
+    if name.contains('$') {
+        return true;
+    }
+
     name.chars()
-        .all(|c| c.is_alphanumeric() || matches!(c, '_' | '-' | '.'))
+        .all(|character| !character.is_whitespace() && !matches!(character, ':' | '#' | '='))
 }
 
 pub struct ConditionalStructure;

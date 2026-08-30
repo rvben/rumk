@@ -228,6 +228,18 @@ fn make_builtin_variable_names_are_valid() {
 }
 
 #[test]
+fn make_permits_punctuation_and_computed_variable_names() {
+    let content = concat!(
+        "package/version := 1\n",
+        "feature+flags := enabled\n",
+        "$(PREFIX)_SOURCES := main.c\n",
+    );
+    let makefile = parse(content).unwrap();
+
+    assert!(InvalidVariableSyntax.check(&makefile, content).is_empty());
+}
+
+#[test]
 fn conditional_structure_reports_only_malformed_blocks() {
     let valid = "ifdef A\nifeq ($(MODE),debug)\nelse\nendif\nendif\n";
     assert!(ConditionalStructure
