@@ -1,5 +1,5 @@
-.PHONY: all build test lint fmt clean install run check-examples check-gnu-fixtures help
-.PHONY: release-patch release-minor release-major
+.PHONY: all build test lint fmt fmt-check clean install run check-examples
+.PHONY: check-gnu-fixtures check-corpus release-check help
 
 # Configuration
 CARGO = cargo
@@ -12,13 +12,16 @@ build:
 	$(CARGO) build --release
 
 test:
-	$(CARGO) test
+	$(CARGO) test --all-targets --all-features
 
 lint:
-	$(CARGO) clippy -- -D warnings
+	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
 fmt:
 	$(CARGO) fmt
+
+fmt-check:
+	$(CARGO) fmt --all -- --check
 
 clean:
 	$(CARGO) clean
@@ -41,6 +44,12 @@ check-examples: build
 check-gnu-fixtures:
 	$(CARGO) test --test gnu_make_test
 
+check-corpus:
+	$(CARGO) test --test corpus_test
+
+release-check: fmt-check lint test check-gnu-fixtures check-corpus
+	ALLOW_DIRTY=1 ./scripts/validate-release.sh
+
 help:
 	@echo "Available targets:"
 	@echo "  all     - Run lint, build, and test"
@@ -48,17 +57,11 @@ help:
 	@echo "  test    - Run tests"
 	@echo "  lint    - Run clippy linter"
 	@echo "  fmt     - Format code"
+	@echo "  fmt-check - Verify Rust formatting without changing files"
 	@echo "  clean   - Clean build artifacts"
 	@echo "  install - Install binary to $(INSTALL_PREFIX)/bin"
 	@echo "  run     - Run rumk on this Makefile"
 	@echo "  check-examples - Check example Makefiles"
 	@echo "  check-gnu-fixtures - Verify parser fixtures with GNU Make"
-
-release-patch:
-	vership bump patch
-
-release-minor:
-	vership bump minor
-
-release-major:
-	vership bump major
+	@echo "  check-corpus - Verify production-style Makefile projects"
+	@echo "  release-check - Run every local release gate and package dry run"

@@ -28,8 +28,11 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 ## Installation
 
 ```bash
-cargo install rumk
+cargo install rumk --locked --version 0.1.0-alpha.1
 ```
+
+Rumk is prerelease software, so installation names the version explicitly. Release archives include
+SHA-256 checksums and GitHub build-provenance attestations.
 
 ## Quick start
 

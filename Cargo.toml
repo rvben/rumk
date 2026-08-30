@@ -1,6 +1,6 @@
 [package]
 name = "rumk"
-version = "0.0.1"
+version = "0.1.0-alpha.1"
 edition = "2021"
 rust-version = "1.82"
 authors = ["Ruben Jongejan <ruben.jongejan@gmail.com>"]
@@ -10,6 +10,16 @@ license = "MIT"
 readme = "README.md"
 keywords = ["makefile", "linter", "make", "build", "tool"]
 categories = ["development-tools", "command-line-utilities"]
+publish = ["crates-io"]
+include = [
+    "/src/**",
+    "/Cargo.toml",
+    "/Cargo.lock",
+    "/README.md",
+    "/CHANGELOG.md",
+    "/LICENSE",
+    "/tests/**",
+]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -20,7 +30,9 @@ tempfile = "3.23"
 toml = "0.9"
 anyhow = "1.0"
 colored = "2.1"
-ignore = "0.4"
+# These upper bounds preserve Rust 1.82 compatibility after both crates adopted Edition 2024.
+globset = ">=0.4, <0.4.17"
+ignore = ">=0.4, <0.4.30"
 
 [[bin]]
 name = "rumk"
