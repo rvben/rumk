@@ -442,6 +442,15 @@ impl Evaluator {
         if function_invocation && is_known_unsupported_function(head) {
             return Expansion::unknown(BlockedReason::UnsupportedFunction(head.to_string()));
         }
+        if let Some((variable, pattern, replacement)) = parse_substitution_reference(body) {
+            return self.expand_substitution_reference(
+                variable,
+                pattern,
+                replacement,
+                depth,
+                stack,
+            );
+        }
         if body.contains('$') {
             return Expansion::unknown(BlockedReason::DynamicVariableName(body.to_string()));
         }
@@ -475,6 +484,54 @@ impl Evaluator {
         result
     }
 
+    fn expand_substitution_reference(
+        &self,
+        variable: &str,
+        pattern: &str,
+        replacement: &str,
+        depth: usize,
+        stack: &mut Vec<String>,
+    ) -> Expansion {
+        let variable = variable.trim();
+        if variable.contains('$') {
+            return Expansion::unknown(BlockedReason::DynamicVariableName(variable.to_string()));
+        }
+        let source = self.expand_variable(variable, depth, stack);
+        let pattern = self.expand_inner(pattern, depth, stack);
+        let replacement = self.expand_inner(replacement, depth, stack);
+        let mut combined = Expansion::known("");
+        for expansion in [&source, &pattern, &replacement] {
+            combined.trace.extend(expansion.trace.clone());
+            combined.blocked.extend(expansion.blocked.clone());
+            if expansion.value.is_none() {
+                combined.value = None;
+            }
+        }
+        let (Some(source), Some(pattern), Some(replacement)) =
+            (source.value, pattern.value, replacement.value)
+        else {
+            return combined;
+        };
+        let suffix_form = !pattern.contains('%');
+        let pattern = if suffix_form {
+            format!("%{pattern}")
+        } else {
+            pattern
+        };
+        let replacement = if suffix_form && !replacement.contains('%') {
+            format!("%{replacement}")
+        } else {
+            replacement
+        };
+        combined.value = Some(
+            words(&source)
+                .map(|word| pattern_replace(&pattern, &replacement, word))
+                .collect::<Vec<_>>()
+                .join(" "),
+        );
+        combined
+    }
+
     fn expand_function(
         &self,
         name: &str,
@@ -482,6 +539,9 @@ impl Evaluator {
         depth: usize,
         stack: &mut Vec<String>,
     ) -> Expansion {
+        if matches!(name, "if" | "or" | "and") {
+            return self.expand_lazy_function(name, arguments, depth, stack);
+        }
         if name == "value" {
             let variable = arguments.trim();
             return match self.variables.get(variable) {
@@ -572,6 +632,49 @@ impl Evaluator {
                 .last()
                 .unwrap_or_default()
                 .to_string(),
+            "word" => {
+                let Some(index) = positive_index(argument(&expanded, 0)) else {
+                    return Expansion::unknown(BlockedReason::MalformedExpansion);
+                };
+                words(argument(&expanded, 1))
+                    .nth(index - 1)
+                    .unwrap_or_default()
+                    .to_string()
+            }
+            "wordlist" => {
+                let (Some(start), Some(end)) = (
+                    positive_index(argument(&expanded, 0)),
+                    positive_index(argument(&expanded, 1)),
+                ) else {
+                    return Expansion::unknown(BlockedReason::MalformedExpansion);
+                };
+                if end < start {
+                    String::new()
+                } else {
+                    words(argument(&expanded, 2))
+                        .skip(start - 1)
+                        .take(end - start + 1)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                }
+            }
+            "dir" => words(argument(&expanded, 0))
+                .map(directory_part)
+                .collect::<Vec<_>>()
+                .join(" "),
+            "notdir" => words(argument(&expanded, 0))
+                .map(file_part)
+                .collect::<Vec<_>>()
+                .join(" "),
+            "suffix" => words(argument(&expanded, 0))
+                .filter_map(file_suffix)
+                .collect::<Vec<_>>()
+                .join(" "),
+            "basename" => words(argument(&expanded, 0))
+                .map(file_basename)
+                .collect::<Vec<_>>()
+                .join(" "),
+            "join" => join_words(argument(&expanded, 0), argument(&expanded, 1)),
             "findstring" => {
                 if argument(&expanded, 1).contains(argument(&expanded, 0)) {
                     argument(&expanded, 0).to_string()
@@ -599,6 +702,69 @@ impl Evaluator {
         combined.value = Some(value);
         combined
     }
+
+    fn expand_lazy_function(
+        &self,
+        name: &str,
+        arguments: &str,
+        depth: usize,
+        stack: &mut Vec<String>,
+    ) -> Expansion {
+        let arguments = split_function_arguments(arguments);
+        match name {
+            "if" => {
+                let condition =
+                    self.expand_inner(arguments.first().copied().unwrap_or(""), depth, stack);
+                let Some(value) = condition.value.as_deref() else {
+                    return condition;
+                };
+                let selected = if value.trim().is_empty() {
+                    arguments.get(2).copied().unwrap_or("")
+                } else {
+                    arguments.get(1).copied().unwrap_or("")
+                };
+                let mut result = self.expand_inner(selected, depth, stack);
+                result.trace.splice(0..0, condition.trace);
+                result.blocked.extend(condition.blocked);
+                result
+            }
+            "or" => {
+                let mut combined = Expansion::known("");
+                for argument in arguments {
+                    let expansion = self.expand_inner(argument, depth, stack);
+                    combined.trace.extend(expansion.trace.clone());
+                    combined.blocked.extend(expansion.blocked.clone());
+                    let Some(value) = expansion.value else {
+                        combined.value = None;
+                        return combined;
+                    };
+                    if !value.is_empty() {
+                        combined.value = Some(value);
+                        return combined;
+                    }
+                }
+                combined
+            }
+            "and" => {
+                let mut combined = Expansion::known("");
+                for argument in arguments {
+                    let expansion = self.expand_inner(argument, depth, stack);
+                    combined.trace.extend(expansion.trace.clone());
+                    combined.blocked.extend(expansion.blocked.clone());
+                    let Some(value) = expansion.value else {
+                        combined.value = None;
+                        return combined;
+                    };
+                    combined.value = Some(value.clone());
+                    if value.is_empty() {
+                        return combined;
+                    }
+                }
+                combined
+            }
+            _ => Expansion::unknown(BlockedReason::UnsupportedFunction(name.to_string())),
+        }
+    }
 }
 
 fn append_with_space(value: &mut String, addition: &str) {
@@ -618,6 +784,48 @@ fn words(value: &str) -> impl Iterator<Item = &str> {
 
 fn collapse_whitespace(value: &str) -> String {
     words(value).collect::<Vec<_>>().join(" ")
+}
+
+fn positive_index(value: &str) -> Option<usize> {
+    value.trim().parse().ok().filter(|index| *index > 0)
+}
+
+fn directory_part(value: &str) -> &str {
+    value
+        .rfind('/')
+        .map_or("./", |separator| &value[..=separator])
+}
+
+fn file_part(value: &str) -> &str {
+    value.rsplit('/').next().unwrap_or(value)
+}
+
+fn file_suffix(value: &str) -> Option<&str> {
+    let filename_start = value.rfind('/').map_or(0, |separator| separator + 1);
+    let suffix = value[filename_start..].rfind('.')? + filename_start;
+    Some(&value[suffix..])
+}
+
+fn file_basename(value: &str) -> &str {
+    let filename_start = value.rfind('/').map_or(0, |separator| separator + 1);
+    value[filename_start..]
+        .rfind('.')
+        .map_or(value, |suffix| &value[..filename_start + suffix])
+}
+
+fn join_words(left: &str, right: &str) -> String {
+    let left = words(left).collect::<Vec<_>>();
+    let right = words(right).collect::<Vec<_>>();
+    (0..left.len().max(right.len()))
+        .map(|index| {
+            format!(
+                "{}{}",
+                left.get(index).copied().unwrap_or(""),
+                right.get(index).copied().unwrap_or("")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn pattern_replace(pattern: &str, replacement: &str, word: &str) -> String {
@@ -652,6 +860,16 @@ fn is_safe_function(name: &str) -> bool {
             | "words"
             | "firstword"
             | "lastword"
+            | "word"
+            | "wordlist"
+            | "dir"
+            | "notdir"
+            | "suffix"
+            | "basename"
+            | "join"
+            | "if"
+            | "or"
+            | "and"
             | "findstring"
             | "filter"
             | "filter-out"
@@ -671,24 +889,36 @@ fn is_unsafe_function(name: &str) -> bool {
 fn is_known_unsupported_function(name: &str) -> bool {
     matches!(
         name,
-        "word"
-            | "wordlist"
-            | "dir"
-            | "notdir"
-            | "suffix"
-            | "basename"
-            | "join"
-            | "wildcard"
-            | "realpath"
-            | "abspath"
-            | "if"
-            | "or"
-            | "and"
-            | "intcmp"
-            | "foreach"
-            | "let"
-            | "call"
+        "wildcard" | "realpath" | "abspath" | "intcmp" | "foreach" | "let" | "call"
     )
+}
+
+fn parse_substitution_reference(body: &str) -> Option<(&str, &str, &str)> {
+    let mut colon = None;
+    let mut closers = Vec::new();
+    let mut characters = body.char_indices().peekable();
+    while let Some((index, character)) = characters.next() {
+        if character == '$' {
+            if let Some((_, next)) = characters.peek().copied() {
+                if next == '$' {
+                    characters.next();
+                } else if matches!(next, '(' | '{') {
+                    closers.push(if next == '(' { ')' } else { '}' });
+                    characters.next();
+                }
+            }
+        } else if closers.last().copied() == Some(character) {
+            closers.pop();
+        } else if closers.is_empty() {
+            if character == ':' && colon.is_none() {
+                colon = Some(index);
+            } else if character == '=' {
+                let colon = colon?;
+                return Some((&body[..colon], &body[colon + 1..index], &body[index + 1..]));
+            }
+        }
+    }
+    None
 }
 
 fn matching_delimiter(text: &str, body_start: usize, initial_closing: char) -> Option<usize> {

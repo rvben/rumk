@@ -152,3 +152,90 @@ fn function_names_without_arguments_remain_ordinary_variables() {
     assert_eq!(evaluator.expand("$(strip)").as_known(), Some("preserved"));
     assert_eq!(evaluator.expand("$(shell)").as_known(), Some("harmless"));
 }
+
+#[test]
+fn expands_suffix_and_pattern_substitution_references() {
+    let mut evaluator = Evaluator::default();
+    evaluator.assign(
+        &assignment("SOURCES = src/one.c src/two.cc README\n"),
+        location(1),
+        Truth::True,
+    );
+
+    let suffix = evaluator.expand("$(SOURCES:.c=.o)");
+    let pattern = evaluator.expand("$(SOURCES:src/%.c=build/%.o)");
+
+    assert_eq!(suffix.as_known(), Some("src/one.o src/two.cc README"));
+    assert_eq!(pattern.as_known(), Some("build/one.o src/two.cc README"));
+    assert_eq!(suffix.trace[0].variable, "SOURCES");
+}
+
+#[test]
+fn expands_word_path_and_join_functions() {
+    let evaluator = Evaluator::default();
+
+    assert_eq!(
+        evaluator.expand("$(word 2,one two three)").as_known(),
+        Some("two")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(wordlist 2,3,one two three four)")
+            .as_known(),
+        Some("two three")
+    );
+    assert_eq!(
+        evaluator.expand("$(dir src/main.c README)").as_known(),
+        Some("src/ ./")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(notdir src/main.c README trailing/)")
+            .as_known(),
+        Some("main.c README ")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(suffix src/main.c archive.tar.gz README)")
+            .as_known(),
+        Some(".c .gz")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(basename src/main.c archive.tar.gz README)")
+            .as_known(),
+        Some("src/main archive.tar README")
+    );
+    assert_eq!(
+        evaluator.expand("$(join a b c,.1 .2)").as_known(),
+        Some("a.1 b.2 c")
+    );
+}
+
+#[test]
+fn lazy_functions_never_expand_unselected_unsafe_branches() {
+    let evaluator = Evaluator::default();
+
+    assert_eq!(
+        evaluator
+            .expand("$(if yes,safe,$(shell touch forbidden))")
+            .as_known(),
+        Some("safe")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(or selected,$(shell touch forbidden))")
+            .as_known(),
+        Some("selected")
+    );
+    assert_eq!(
+        evaluator
+            .expand("$(and ,$(shell touch forbidden))")
+            .as_known(),
+        Some("")
+    );
+    assert!(evaluator
+        .expand("$(if $(UNKNOWN),yes,no)")
+        .blocked
+        .contains(&BlockedReason::UndefinedVariable("UNKNOWN".into())));
+}
