@@ -145,4 +145,82 @@ target: dependency
         assert_eq!(makefile.rules[0].recipes.len(), 1);
         assert_eq!(makefile.rules[0].recipes[0].command, "true");
     }
+
+    #[test]
+    fn parses_expression_aware_continued_rules() {
+        let content = concat!(
+            "$(call target,a:b=c): $(call deps,x:y=z) \\\n  generated.o | stamp\n",
+            "\tprintf '%s\\n' one \\\n\t  two\n",
+        );
+        let makefile = parse(content).unwrap();
+        let rule = &makefile.rules[0];
+
+        assert_eq!(rule.targets, ["$(call target,a:b=c)"]);
+        assert_eq!(rule.prerequisites, ["$(call deps,x:y=z)", "generated.o"]);
+        assert_eq!(rule.order_only_prerequisites, ["stamp"]);
+        assert_eq!(rule.recipes.len(), 1);
+        assert_eq!(rule.recipes[0].line, 3);
+        assert_eq!(rule.recipes[0].end_line, 4);
+        assert!(rule.recipes[0].command.contains("\\\n\t  two"));
+    }
+
+    #[test]
+    fn models_includes_conditionals_and_definitions() {
+        let content = concat!(
+            "include base.mk \\\n  $(wildcard config/*.mk)\n",
+            "-include local.mk\n",
+            "ifdef DEBUG\n",
+            "override define banner :=\n",
+            "target: is data, not a rule\n",
+            "endef\n",
+            "endif\n",
+        );
+        let makefile = parse(content).unwrap();
+
+        assert_eq!(
+            makefile.includes[0].paths,
+            ["base.mk", "$(wildcard config/*.mk)"]
+        );
+        assert!(!makefile.includes[0].optional);
+        assert!(makefile.includes[1].optional);
+        assert_eq!(makefile.conditionals.len(), 2);
+        assert_eq!(makefile.definitions.len(), 1);
+        assert_eq!(makefile.definitions[0].name, "banner");
+        assert_eq!(makefile.definitions[0].value, "target: is data, not a rule");
+        assert!(makefile.definitions[0].modifiers.override_);
+        assert!(makefile.rules.is_empty());
+        assert_eq!(
+            makefile.variables["banner"].value,
+            makefile.definitions[0].value
+        );
+    }
+
+    #[test]
+    fn models_static_patterns_and_target_specific_variables() {
+        let content = concat!(
+            "objects: %.o: %.c | generated\n",
+            "app debug: private CFLAGS += -g\n",
+        );
+        let makefile = parse(content).unwrap();
+
+        assert_eq!(makefile.rules[0].target_pattern.as_deref(), Some("%.o"));
+        assert_eq!(makefile.rules[0].prerequisites, ["%.c"]);
+        assert_eq!(makefile.rules[0].order_only_prerequisites, ["generated"]);
+        let assignment = makefile.rules[1].target_assignment.as_ref().unwrap();
+        assert_eq!(assignment.name, "CFLAGS");
+        assert_eq!(assignment.value, "-g");
+        assert!(assignment.modifiers.private);
+        assert_eq!(
+            assignment.scope,
+            rumk::parser::VariableScope::TargetSpecific(vec!["app".into(), "debug".into()])
+        );
+    }
+
+    #[test]
+    fn recognizes_oneshell_mode() {
+        let makefile = parse(".ONESHELL:\nall:\n\tcd build\n\tprintf '%s\\n' done\n").unwrap();
+
+        assert!(makefile.oneshell);
+        assert_eq!(makefile.rules[1].recipes.len(), 2);
+    }
 }

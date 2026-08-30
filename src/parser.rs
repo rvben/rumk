@@ -1,17 +1,28 @@
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
+use crate::logical::{
+    find_top_level_assignment, find_top_level_char, find_top_level_rule_separator,
+    split_top_level_words, ConditionalKind, IncludeKind, LogicalDocument, LogicalKind,
+    LogicalStatement,
+};
 use crate::syntax::SyntaxTree;
 
 #[derive(Debug, Clone)]
 pub struct Makefile {
     /// Lossless, source-ordered syntax for tools that need exact text or spans.
     pub syntax: SyntaxTree,
+    /// Continuation-folded statements with exact source spans.
+    pub logical: LogicalDocument,
     pub rules: Vec<Rule>,
     /// All assignments in source order. `variables` remains a last-value lookup.
     pub assignments: Vec<Variable>,
     pub variables: HashMap<String, Variable>,
     pub phonies: Vec<String>,
+    pub includes: Vec<Include>,
+    pub conditionals: Vec<Conditional>,
+    pub definitions: Vec<Definition>,
+    pub oneshell: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -21,8 +32,11 @@ pub struct Rule {
     pub order_only_prerequisites: Vec<String>,
     pub double_colon: bool,
     pub grouped: bool,
+    pub target_pattern: Option<String>,
+    pub target_assignment: Option<Variable>,
     pub recipes: Vec<Recipe>,
     pub line: usize,
+    pub end_line: usize,
     pub column: usize,
 }
 
@@ -34,6 +48,7 @@ pub struct Recipe {
     pub ignore_errors: bool,
     pub recursive: bool,
     pub line: usize,
+    pub end_line: usize,
     pub column: usize,
     pub indentation: String,
 }
@@ -44,8 +59,43 @@ pub struct Variable {
     pub value: String,
     pub operator: AssignmentOperator,
     pub modifiers: VariableModifiers,
+    pub scope: VariableScope,
     pub line: usize,
+    pub end_line: usize,
     pub column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VariableScope {
+    Global,
+    TargetSpecific(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Include {
+    pub paths: Vec<String>,
+    pub optional: bool,
+    pub line: usize,
+    pub end_line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Conditional {
+    pub kind: ConditionalKind,
+    pub expression: String,
+    pub line: usize,
+    pub end_line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Definition {
+    pub name: String,
+    pub raw_body: String,
+    pub value: String,
+    pub operator: AssignmentOperator,
+    pub modifiers: VariableModifiers,
+    pub line: usize,
+    pub end_line: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,182 +132,271 @@ pub struct VariableModifiers {
 }
 
 pub fn parse(content: &str) -> Result<Makefile> {
-    let mut parser = Parser::new(content);
-    parser.parse()
+    Parser::new(content).parse()
 }
 
-struct Parser<'a> {
-    lines: Vec<&'a str>,
-    current_line: usize,
+struct Parser {
+    current_statement: usize,
     makefile: Makefile,
     recipe_prefix: char,
 }
 
-impl<'a> Parser<'a> {
-    fn new(content: &'a str) -> Self {
+impl Parser {
+    fn new(content: &str) -> Self {
+        let syntax = SyntaxTree::parse(content);
+        let logical = LogicalDocument::parse(&syntax);
         Self {
-            lines: content.lines().collect(),
-            current_line: 0,
+            current_statement: 0,
             makefile: Makefile {
-                syntax: SyntaxTree::parse(content),
+                syntax,
+                logical,
                 rules: Vec::new(),
                 assignments: Vec::new(),
                 variables: HashMap::new(),
                 phonies: Vec::new(),
+                includes: Vec::new(),
+                conditionals: Vec::new(),
+                definitions: Vec::new(),
+                oneshell: false,
             },
             recipe_prefix: '\t',
         }
     }
 
-    fn parse(&mut self) -> Result<Makefile> {
-        while self.current_line < self.lines.len() {
-            let line = self.lines[self.current_line];
-            let trimmed = line.trim_start();
-
-            if trimmed.is_empty() {
-                self.current_line += 1;
-                continue;
-            }
-
-            if trimmed.starts_with('#') {
-                self.current_line += 1;
-            } else if Self::is_phony_line(line) {
-                self.parse_phony(line)?;
-            } else if self.is_variable_assignment(line) {
-                self.parse_variable(line)?;
-            } else if self.is_rule_line(line) {
-                self.parse_rule()?;
-            } else {
-                self.current_line += 1;
+    fn parse(mut self) -> Result<Makefile> {
+        while let Some(statement) = self.statement().cloned() {
+            match statement.kind {
+                LogicalKind::Assignment => self.parse_global_variable(&statement)?,
+                LogicalKind::Rule => self.parse_rule(&statement)?,
+                LogicalKind::Include(kind) => self.parse_include(&statement, kind),
+                LogicalKind::Conditional(kind) => self.parse_conditional(&statement, kind),
+                LogicalKind::Define => self.parse_definition(&statement)?,
+                _ => self.current_statement += 1,
             }
         }
 
-        Ok(self.makefile.clone())
+        Ok(self.makefile)
     }
 
-    fn parse_phony(&mut self, line: &str) -> Result<()> {
-        let targets = line
-            .split_once(':')
-            .map(|(_, prerequisites)| prerequisites)
-            .unwrap_or_default()
-            .split_whitespace()
-            .map(|s| s.to_string())
-            .collect::<Vec<_>>();
+    fn statement(&self) -> Option<&LogicalStatement> {
+        self.makefile
+            .logical
+            .statements()
+            .get(self.current_statement)
+    }
 
-        self.makefile.phonies.extend(targets);
-        self.current_line += 1;
+    fn parse_global_variable(&mut self, statement: &LogicalStatement) -> Result<()> {
+        let variable = parse_variable(
+            statement.text(),
+            statement.start_line,
+            statement.end_line,
+            VariableScope::Global,
+        )?;
+
+        if variable.name == ".RECIPEPREFIX" {
+            self.recipe_prefix = variable.value.chars().next().unwrap_or('\t');
+        }
+        self.makefile
+            .variables
+            .insert(variable.name.clone(), variable.clone());
+        self.makefile.assignments.push(variable);
+        self.current_statement += 1;
         Ok(())
     }
 
-    fn is_phony_line(line: &str) -> bool {
-        line.split_once(':')
-            .is_some_and(|(target, _)| target.trim() == ".PHONY")
+    fn parse_include(&mut self, statement: &LogicalStatement, kind: IncludeKind) {
+        let text = statement.text().trim_start();
+        let keyword_length = text.find(char::is_whitespace).unwrap_or(text.len());
+        let paths = split_top_level_words(text[keyword_length..].trim());
+        self.makefile.includes.push(Include {
+            paths,
+            optional: kind == IncludeKind::Optional,
+            line: statement.start_line,
+            end_line: statement.end_line,
+        });
+        self.current_statement += 1;
     }
 
-    fn is_variable_assignment(&self, line: &str) -> bool {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            return false;
+    fn parse_conditional(&mut self, statement: &LogicalStatement, kind: ConditionalKind) {
+        let text = statement.text().trim_start();
+        let keyword_length = text.find(char::is_whitespace).unwrap_or(text.len());
+        self.makefile.conditionals.push(Conditional {
+            kind,
+            expression: text[keyword_length..].trim().to_string(),
+            line: statement.start_line,
+            end_line: statement.end_line,
+        });
+        self.current_statement += 1;
+    }
+
+    fn parse_definition(&mut self, statement: &LogicalStatement) -> Result<()> {
+        let (name, operator, modifiers) = parse_definition_header(statement.text())?;
+        let mut depth = 1usize;
+        let body_start = statement.span.end.offset;
+        let mut body_end = body_start;
+        let mut end_line = statement.end_line;
+        self.current_statement += 1;
+
+        while let Some(next) = self.statement() {
+            match next.kind {
+                LogicalKind::Define => depth += 1,
+                LogicalKind::Endef => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_line = next.end_line;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            body_end = next.span.end.offset;
+            self.current_statement += 1;
         }
 
-        assignment_separator(trimmed).is_some_and(|(position, _)| {
-            let name = trimmed[..position].trim();
-            !name.is_empty() && !name.contains(':')
-        })
-    }
+        if depth != 0 {
+            bail!(
+                "Unterminated define directive at line {}",
+                statement.start_line
+            );
+        }
 
-    fn parse_variable(&mut self, line: &str) -> Result<()> {
-        let column = line[..line.len() - line.trim_start().len()].chars().count() + 1;
-        let content = line.trim_start();
-        let assignment_line = self.current_line + 1;
-        let Some((separator_position, separator)) = assignment_separator(content) else {
-            bail!("Invalid variable assignment at line {assignment_line}");
-        };
-
-        let (name, modifiers) = parse_variable_name(&content[..separator_position]);
-        let mut value = content[separator_position + separator.len()..]
-            .trim()
+        let source = self.makefile.syntax.source();
+        let raw_body = source[body_start..body_end].to_string();
+        let value = raw_body
+            .strip_suffix("\r\n")
+            .or_else(|| raw_body.strip_suffix('\n'))
+            .unwrap_or(&raw_body)
             .to_string();
-
-        while self.current_line + 1 < self.lines.len()
-            && self.lines[self.current_line].ends_with('\\')
-        {
-            value.pop();
-            self.current_line += 1;
-            value.push_str(self.lines[self.current_line].trim_start());
-        }
-
+        let definition = Definition {
+            name: name.clone(),
+            raw_body,
+            value: value.clone(),
+            operator,
+            modifiers,
+            line: statement.start_line,
+            end_line,
+        };
+        self.makefile.definitions.push(definition);
         let variable = Variable {
             name: name.clone(),
-            value: value.clone(),
-            operator: AssignmentOperator::from_separator(separator),
+            value,
+            operator,
             modifiers,
-            line: assignment_line,
-            column,
+            scope: VariableScope::Global,
+            line: statement.start_line,
+            end_line,
+            column: 1,
         };
         self.makefile.assignments.push(variable.clone());
-        self.makefile.variables.insert(name.clone(), variable);
-
-        if name == ".RECIPEPREFIX" {
-            self.recipe_prefix = value.chars().next().unwrap_or('\t');
-        }
-
-        self.current_line += 1;
+        self.makefile.variables.insert(name, variable);
+        self.current_statement += 1;
         Ok(())
     }
 
-    fn is_rule_line(&self, line: &str) -> bool {
-        let trimmed = line.trim();
-        !trimmed.is_empty() && trimmed.contains(':') && !trimmed.starts_with('\t')
-    }
+    fn parse_rule(&mut self, statement: &LogicalStatement) -> Result<()> {
+        let line = statement.text();
+        let leading = line.len() - line.trim_start().len();
+        let content = &line[leading..];
+        let column = line[..leading].chars().count() + 1;
+        let separator = find_top_level_rule_separator(content)
+            .ok_or_else(|| anyhow::anyhow!("Invalid rule at line {}", statement.start_line))?;
+        let targets = split_top_level_words(content[..separator.position].trim());
+        let rule_body = &content[separator.position + separator.length..];
 
-    fn parse_rule(&mut self) -> Result<()> {
-        let line = self.lines[self.current_line];
-        let rule_line = self.current_line + 1;
-        let column = line[..line.len() - line.trim_start().len()].chars().count() + 1;
+        if targets.iter().any(|target| target == ".ONESHELL") {
+            self.makefile.oneshell = true;
+        }
 
-        let colon_pos = line.find(':').unwrap();
-        let before_colon = line[..colon_pos].trim_end();
-        let grouped = before_colon.ends_with('&');
-        let targets_str = before_colon
-            .strip_suffix('&')
-            .unwrap_or(before_colon)
-            .trim();
-        let double_colon = line[colon_pos + 1..].starts_with(':');
-        let separator_end = colon_pos + if double_colon { 2 } else { 1 };
+        if targets == [".PHONY"] {
+            let prerequisites = strip_top_level_comment(rule_body);
+            self.makefile
+                .phonies
+                .extend(split_top_level_words(prerequisites));
+            self.current_statement += 1;
+            return Ok(());
+        }
 
-        let targets = split_make_words(targets_str);
+        let inline_separator = find_top_level_char(rule_body, ';');
+        let (prerequisite_text, inline_command) = split_once_top_level(rule_body, ';');
+        let prerequisite_text = strip_top_level_comment(prerequisite_text);
 
-        let rule_body = &line[separator_end..];
-        let inline_separator = find_unescaped(rule_body, ';');
-        let (prerequisite_text, inline_command) = split_once_unescaped(rule_body, ';');
-        let prerequisite_text = strip_unescaped_comment(prerequisite_text);
-        let (normal_prerequisites, order_only_prerequisites) =
-            split_once_unescaped(prerequisite_text, '|');
-        let prerequisites = split_make_words(normal_prerequisites);
+        let mut target_pattern = None;
+        let mut target_assignment = None;
+        let assignment = find_top_level_assignment(prerequisite_text);
+        let static_pattern = find_top_level_rule_separator(prerequisite_text);
+        let (normal_prerequisites, order_only_prerequisites) = if let Some((position, _)) =
+            assignment.filter(|(position, _)| {
+                static_pattern.is_none_or(|rule| *position <= rule.position)
+            }) {
+            let _ = position;
+            let assignment_text = prerequisite_text.trim();
+            let variable = parse_variable(
+                assignment_text,
+                statement.start_line,
+                statement.end_line,
+                VariableScope::TargetSpecific(targets.clone()),
+            )?;
+            self.makefile.assignments.push(variable.clone());
+            target_assignment = Some(variable);
+            ("", None)
+        } else {
+            let prerequisites = if let Some(pattern_separator) = static_pattern {
+                target_pattern = Some(
+                    prerequisite_text[..pattern_separator.position]
+                        .trim()
+                        .to_string(),
+                );
+                &prerequisite_text[pattern_separator.position + pattern_separator.length..]
+            } else {
+                prerequisite_text
+            };
+            split_once_top_level(prerequisites, '|')
+        };
+        let prerequisites = split_top_level_words(normal_prerequisites);
         let order_only_prerequisites = order_only_prerequisites
-            .map(split_make_words)
+            .map(split_top_level_words)
             .unwrap_or_default();
 
         let mut recipes = Vec::new();
         if let Some(command) = inline_command {
             if !command.trim().is_empty() {
-                let command_column = line[..separator_end].chars().count()
+                let command_column = line[..leading].chars().count()
+                    + content[..separator.position + separator.length]
+                        .chars()
+                        .count()
                     + rule_body[..=inline_separator.expect("inline command has a separator")]
                         .chars()
                         .count()
                     + 1;
-                recipes.push(parse_recipe(command, rule_line, command_column, "", true));
+                recipes.push(parse_recipe(
+                    command,
+                    statement.start_line,
+                    statement.end_line,
+                    command_column,
+                    "",
+                    true,
+                ));
             }
         }
-        self.current_line += 1;
+        self.current_statement += 1;
 
-        while self.current_line < self.lines.len() {
-            let recipe_line = self.lines[self.current_line];
+        while let Some(recipe_statement) = self.statement().cloned() {
+            if matches!(
+                recipe_statement.kind,
+                LogicalKind::Blank | LogicalKind::Comment
+            ) {
+                self.current_statement += 1;
+                continue;
+            }
 
-            if recipe_line.trim_start().starts_with('#') {
-                self.current_line += 1;
-            } else if recipe_line.starts_with(self.recipe_prefix) || recipe_line.starts_with(' ') {
+            let recipe_line = recipe_statement.text();
+            let is_recipe = recipe_statement.kind == LogicalKind::Recipe
+                || (recipe_line.starts_with(' ')
+                    && !matches!(
+                        recipe_statement.kind,
+                        LogicalKind::Assignment | LogicalKind::Rule
+                    ));
+            if is_recipe {
                 let indentation_length = if recipe_line.starts_with(self.recipe_prefix) {
                     self.recipe_prefix.len_utf8()
                 } else {
@@ -268,28 +407,30 @@ impl<'a> Parser<'a> {
 
                 recipes.push(parse_recipe(
                     command,
-                    self.current_line + 1,
+                    recipe_statement.start_line,
+                    recipe_statement.end_line,
                     indentation.chars().count() + 1,
                     indentation,
                     false,
                 ));
-
-                self.current_line += 1;
-            } else if recipe_line.trim().is_empty() {
-                self.current_line += 1;
+                self.current_statement += 1;
             } else {
                 break;
             }
         }
 
+        let end_line = recipes_end_line(&recipes, statement.end_line);
         self.makefile.rules.push(Rule {
             targets,
             prerequisites,
             order_only_prerequisites,
-            double_colon,
-            grouped,
+            double_colon: separator.double_colon,
+            grouped: separator.grouped,
+            target_pattern,
+            target_assignment,
             recipes,
-            line: rule_line,
+            line: statement.start_line,
+            end_line,
             column,
         });
 
@@ -345,9 +486,91 @@ fn parse_variable_name(left_hand_side: &str) -> (String, VariableModifiers) {
     (words.collect::<Vec<_>>().join(" "), modifiers)
 }
 
+fn parse_variable(
+    source: &str,
+    line: usize,
+    end_line: usize,
+    scope: VariableScope,
+) -> Result<Variable> {
+    let leading = source.len() - source.trim_start().len();
+    let content = &source[leading..];
+    let Some((separator_position, separator)) = find_top_level_assignment(content) else {
+        bail!("Invalid variable assignment at line {line}");
+    };
+    let (name, modifiers) = parse_variable_name(&content[..separator_position]);
+    if name.is_empty() {
+        bail!("Variable assignment has no name at line {line}");
+    }
+    let raw_value = content[separator_position + separator.len()..].trim();
+    let value = strip_top_level_comment(raw_value).trim_end().to_string();
+
+    Ok(Variable {
+        name,
+        value,
+        operator: AssignmentOperator::from_separator(separator),
+        modifiers,
+        scope,
+        line,
+        end_line,
+        column: source[..leading].chars().count() + 1,
+    })
+}
+
+fn parse_definition_header(
+    source: &str,
+) -> Result<(String, AssignmentOperator, VariableModifiers)> {
+    let mut remaining = source.trim_start();
+    let mut modifiers = VariableModifiers::default();
+
+    loop {
+        if let Some(rest) = strip_word(remaining, "export") {
+            modifiers.export = true;
+            remaining = rest;
+        } else if let Some(rest) = strip_word(remaining, "unexport") {
+            modifiers.unexport = true;
+            remaining = rest;
+        } else if let Some(rest) = strip_word(remaining, "override") {
+            modifiers.override_ = true;
+            remaining = rest;
+        } else if let Some(rest) = strip_word(remaining, "private") {
+            modifiers.private = true;
+            remaining = rest;
+        } else {
+            break;
+        }
+    }
+
+    remaining = strip_word(remaining, "define")
+        .ok_or_else(|| anyhow::anyhow!("Invalid define directive"))?;
+    let (name, operator) = if let Some((position, separator)) = find_top_level_assignment(remaining)
+    {
+        (
+            remaining[..position].trim(),
+            AssignmentOperator::from_separator(separator),
+        )
+    } else {
+        (remaining.trim(), AssignmentOperator::Recursive)
+    };
+    if name.is_empty() {
+        bail!("Define directive has no variable name");
+    }
+
+    Ok((name.to_string(), operator, modifiers))
+}
+
+fn strip_word<'a>(source: &'a str, word: &str) -> Option<&'a str> {
+    let rest = source.strip_prefix(word)?;
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(rest.trim_start())
+    } else {
+        None
+    }
+}
+
 fn parse_recipe(
     source: &str,
     line: usize,
+    end_line: usize,
     column: usize,
     indentation: &str,
     inline: bool,
@@ -376,78 +599,25 @@ fn parse_recipe(
         ignore_errors,
         recursive,
         line,
+        end_line,
         column: command_column,
         indentation: indentation.to_string(),
     }
 }
 
-fn strip_unescaped_comment(line: &str) -> &str {
-    split_once_unescaped(line, '#').0
+fn recipes_end_line(recipes: &[Recipe], fallback: usize) -> usize {
+    recipes.last().map_or(fallback, |recipe| recipe.end_line)
 }
 
-fn split_once_unescaped(line: &str, separator: char) -> (&str, Option<&str>) {
-    if let Some(index) = find_unescaped(line, separator) {
+fn strip_top_level_comment(line: &str) -> &str {
+    split_once_top_level(line, '#').0
+}
+
+fn split_once_top_level(line: &str, separator: char) -> (&str, Option<&str>) {
+    if let Some(index) = find_top_level_char(line, separator) {
         let after = index + separator.len_utf8();
         (&line[..index], Some(&line[after..]))
     } else {
         (line, None)
     }
-}
-
-fn find_unescaped(line: &str, separator: char) -> Option<usize> {
-    let mut escaped = false;
-    for (index, character) in line.char_indices() {
-        if character == separator && !escaped {
-            return Some(index);
-        }
-        escaped = character == '\\' && !escaped;
-        if character != '\\' {
-            escaped = false;
-        }
-    }
-    None
-}
-
-fn split_make_words(input: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    let mut escaped = false;
-
-    for character in input.chars() {
-        if escaped {
-            current.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
-        } else if character.is_whitespace() {
-            if !current.is_empty() {
-                words.push(std::mem::take(&mut current));
-            }
-        } else {
-            current.push(character);
-        }
-    }
-    if escaped {
-        current.push('\\');
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-
-    words
-}
-
-fn assignment_separator(line: &str) -> Option<(usize, &'static str)> {
-    const SEPARATORS: [&str; 7] = [":::=", "::=", ":=", "?=", "+=", "!=", "="];
-
-    SEPARATORS
-        .iter()
-        .filter_map(|separator| line.find(separator).map(|position| (position, *separator)))
-        .min_by(
-            |(left_position, left_separator), (right_position, right_separator)| {
-                left_position
-                    .cmp(right_position)
-                    .then_with(|| right_separator.len().cmp(&left_separator.len()))
-            },
-        )
 }

@@ -1,4 +1,4 @@
-.PHONY: all build test lint fmt clean install run check-examples help release-patch release-minor release-major
+.PHONY: all build test lint fmt clean install run check-examples check-gnu-fixtures help release-patch release-minor release-major
 
 # Configuration
 CARGO = cargo
@@ -37,6 +37,9 @@ check-examples: build
 		echo "Confirmed examples/bad.mk contains detectable violations"; \
 	fi
 
+check-gnu-fixtures:
+	$(CARGO) test --test gnu_make_test
+
 help:
 	@echo "Available targets:"
 	@echo "  all     - Run lint, build, and test"
@@ -48,6 +51,7 @@ help:
 	@echo "  install - Install binary to $(INSTALL_PREFIX)/bin"
 	@echo "  run     - Run rumk on this Makefile"
 	@echo "  check-examples - Check example Makefiles"
+	@echo "  check-gnu-fixtures - Verify parser fixtures with GNU Make"
 
 release-patch:
 	vership bump patch
