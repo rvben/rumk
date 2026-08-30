@@ -170,7 +170,7 @@ impl SemanticIndex {
                 (name.clone(), dependencies)
             })
             .collect();
-        Tarjan::new(&graph).cycles()
+        dependency_cycles_for_graph(&graph)
     }
 
     pub fn is_conditional_line(&self, line: usize) -> bool {
@@ -370,6 +370,12 @@ impl SemanticIndex {
 
 fn is_static_name(name: &str) -> bool {
     !name.contains('$') && !name.contains('%')
+}
+
+pub(crate) fn dependency_cycles_for_graph(
+    graph: &BTreeMap<String, Vec<String>>,
+) -> Vec<Vec<String>> {
+    Tarjan::new(graph).cycles()
 }
 
 struct Tarjan<'a> {

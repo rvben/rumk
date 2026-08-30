@@ -1,0 +1,256 @@
+//! Deterministic semantic indexes spanning a Makefile include graph.
+
+use std::collections::BTreeMap;
+
+use crate::analysis::{dependency_cycles_for_graph, ReferenceContext, ReferenceKind};
+use crate::parser::{AssignmentOperator, VariableScope};
+use crate::project::{Project, SourceId};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SourceLocation {
+    pub source: SourceId,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectVariableDefinition {
+    pub operator: AssignmentOperator,
+    pub scope: VariableScope,
+    pub location: SourceLocation,
+    pub end_line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectVariableSymbol {
+    pub name: String,
+    pub definitions: Vec<ProjectVariableDefinition>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTargetDeclaration {
+    pub location: SourceLocation,
+    pub end_line: usize,
+    pub double_colon: bool,
+    pub grouped: bool,
+    pub target_pattern: Option<String>,
+    pub has_recipe: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectDependencyEdge {
+    pub prerequisite: String,
+    pub order_only: bool,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectTargetSymbol {
+    pub name: String,
+    pub phony: bool,
+    pub special: bool,
+    pub declarations: Vec<ProjectTargetDeclaration>,
+    pub dependencies: Vec<ProjectDependencyEdge>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectReference {
+    pub name: String,
+    pub kind: ReferenceKind,
+    pub context: ReferenceContext,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectIncludeReference {
+    pub path: String,
+    pub optional: bool,
+    pub dynamic: bool,
+    pub location: SourceLocation,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectSemanticIndex {
+    pub variables: BTreeMap<String, ProjectVariableSymbol>,
+    pub targets: BTreeMap<String, ProjectTargetSymbol>,
+    pub references: Vec<ProjectReference>,
+    pub includes: Vec<ProjectIncludeReference>,
+    conditional_ranges: BTreeMap<SourceId, Vec<(usize, usize)>>,
+    has_structural_issues: bool,
+}
+
+impl ProjectSemanticIndex {
+    pub fn build(project: &Project) -> Self {
+        let mut index = Self::default();
+        for file in project.files() {
+            let source = file.id;
+            let local = file.makefile.analysis();
+
+            for (name, variable) in &local.variables {
+                let symbol =
+                    index
+                        .variables
+                        .entry(name.clone())
+                        .or_insert_with(|| ProjectVariableSymbol {
+                            name: name.clone(),
+                            definitions: Vec::new(),
+                        });
+                symbol
+                    .definitions
+                    .extend(variable.definitions.iter().map(|definition| {
+                        ProjectVariableDefinition {
+                            operator: definition.operator,
+                            scope: definition.scope.clone(),
+                            location: SourceLocation {
+                                source,
+                                line: definition.location.line,
+                                column: definition.location.column,
+                            },
+                            end_line: definition.end_line,
+                        }
+                    }));
+            }
+
+            for (name, target) in &local.targets {
+                let symbol =
+                    index
+                        .targets
+                        .entry(name.clone())
+                        .or_insert_with(|| ProjectTargetSymbol {
+                            name: name.clone(),
+                            phony: false,
+                            special: target.special,
+                            declarations: Vec::new(),
+                            dependencies: Vec::new(),
+                        });
+                symbol.phony |= target.phony;
+                symbol.special |= target.special;
+                symbol
+                    .declarations
+                    .extend(target.declarations.iter().map(|declaration| {
+                        ProjectTargetDeclaration {
+                            location: SourceLocation {
+                                source,
+                                line: declaration.location.line,
+                                column: declaration.location.column,
+                            },
+                            end_line: declaration.end_line,
+                            double_colon: declaration.double_colon,
+                            grouped: declaration.grouped,
+                            target_pattern: declaration.target_pattern.clone(),
+                            has_recipe: declaration.has_recipe,
+                        }
+                    }));
+                symbol
+                    .dependencies
+                    .extend(
+                        target
+                            .dependencies
+                            .iter()
+                            .map(|dependency| ProjectDependencyEdge {
+                                prerequisite: dependency.prerequisite.clone(),
+                                order_only: dependency.order_only,
+                                location: SourceLocation {
+                                    source,
+                                    line: dependency.location.line,
+                                    column: dependency.location.column,
+                                },
+                            }),
+                    );
+            }
+
+            index
+                .references
+                .extend(local.references.iter().map(|reference| ProjectReference {
+                    name: reference.name.clone(),
+                    kind: reference.kind,
+                    context: reference.context,
+                    location: SourceLocation {
+                        source,
+                        line: reference.location.line,
+                        column: reference.location.column,
+                    },
+                }));
+            index.includes.extend(
+                local
+                    .includes
+                    .iter()
+                    .map(|include| ProjectIncludeReference {
+                        path: include.path.clone(),
+                        optional: include.optional,
+                        dynamic: include.dynamic,
+                        location: SourceLocation {
+                            source,
+                            line: include.location.line,
+                            column: include.location.column,
+                        },
+                    }),
+            );
+
+            index.has_structural_issues |= !local.structural_issues.is_empty();
+            let ranges = index.conditional_ranges.entry(source).or_default();
+            for block in &local.conditional_blocks {
+                ranges.push((block.start_line, block.end_line));
+            }
+        }
+        index
+    }
+
+    pub fn variable(&self, name: &str) -> Option<&ProjectVariableSymbol> {
+        self.variables.get(name)
+    }
+
+    pub fn target(&self, name: &str) -> Option<&ProjectTargetSymbol> {
+        self.targets.get(name)
+    }
+
+    pub fn references_to<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a ProjectReference> {
+        self.references
+            .iter()
+            .filter(move |reference| reference.name == name)
+    }
+
+    pub fn is_conditional_location(&self, location: SourceLocation) -> bool {
+        self.conditional_ranges
+            .get(&location.source)
+            .is_some_and(|ranges| {
+                ranges
+                    .iter()
+                    .any(|(start, end)| *start < location.line && location.line < *end)
+            })
+    }
+
+    /// Returns strongly connected components in the concrete, unconditional
+    /// target graph assembled from every statically included file.
+    pub fn dependency_cycles(&self) -> Vec<Vec<String>> {
+        if self.has_structural_issues {
+            return Vec::new();
+        }
+        let graph: BTreeMap<String, Vec<String>> = self
+            .targets
+            .iter()
+            .filter(|(name, _)| is_static_name(name))
+            .map(|(name, symbol)| {
+                let dependencies = symbol
+                    .dependencies
+                    .iter()
+                    .filter(|edge| !self.is_conditional_location(edge.location))
+                    .map(|edge| &edge.prerequisite)
+                    .filter(|prerequisite| {
+                        is_static_name(prerequisite) && self.targets.contains_key(*prerequisite)
+                    })
+                    .cloned()
+                    .collect();
+                (name.clone(), dependencies)
+            })
+            .collect();
+        dependency_cycles_for_graph(&graph)
+    }
+}
+
+fn is_static_name(name: &str) -> bool {
+    !name.contains('$') && !name.contains('%')
+}

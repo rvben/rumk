@@ -2,10 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
 use crate::parser::{self, Makefile};
+use crate::project_analysis::ProjectSemanticIndex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceId(pub usize);
@@ -50,6 +52,7 @@ pub struct Project {
     files: Vec<ProjectFile>,
     edges: Vec<IncludeEdge>,
     cycles: Vec<IncludeCycle>,
+    analysis: OnceLock<ProjectSemanticIndex>,
 }
 
 impl Project {
@@ -76,6 +79,7 @@ impl Project {
             files: loader.files,
             edges: loader.edges,
             cycles: loader.cycles,
+            analysis: OnceLock::new(),
         })
     }
 
@@ -97,6 +101,12 @@ impl Project {
 
     pub fn cycles(&self) -> &[IncludeCycle] {
         &self.cycles
+    }
+
+    /// Returns the cross-file semantic index, building it once on first use.
+    pub fn analysis(&self) -> &ProjectSemanticIndex {
+        self.analysis
+            .get_or_init(|| ProjectSemanticIndex::build(self))
     }
 }
 

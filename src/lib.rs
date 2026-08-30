@@ -6,5 +6,6 @@ pub mod inline_config;
 pub mod logical;
 pub mod parser;
 pub mod project;
+pub mod project_analysis;
 pub mod rules;
 pub mod syntax;
