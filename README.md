@@ -16,6 +16,7 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 - Builds semantic indexes for variables, references, targets, dependencies, and includes
 - Safely evaluates statically knowable variables and conditionals without running recipes,
   shell commands, or side-effecting Make functions
+- Supports GNU substitution references plus common word, path, list, and lazy logical functions
 - Resolves expanded include graphs and reports cross-file findings at their real source paths
 - Preserves LF/CRLF line endings and final newlines during fixes
 - Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
@@ -208,6 +209,7 @@ Rules marked **default** run without configuration.
 - `MK207` — Static Makefile includes must not form cycles (**default**)
 - `MK208` — Static variable references must resolve (opt-in)
 - `MK209` — Targets must be reachable from configured entries or the inferred default goal (opt-in)
+- `MK210` — Explain include expressions blocked by safe evaluation (opt-in)
 
 ## Development
 

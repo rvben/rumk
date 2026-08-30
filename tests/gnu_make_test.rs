@@ -130,6 +130,26 @@ fn safe_evaluator_matches_gnu_make_on_a_controlled_project() {
         project.evaluation().expand("$(FILES)").as_known(),
         Some("mk/one.mk mk/two.mk")
     );
+    assert_eq!(
+        project.evaluation().expand("$(OBJECTS)").as_known(),
+        Some("src/one.o src/two.cc README")
+    );
+    assert_eq!(
+        project.evaluation().expand("$(WINDOW)").as_known(),
+        Some("two three")
+    );
+    assert_eq!(
+        project.evaluation().expand("$(PATHS)").as_known(),
+        Some("src/ ./")
+    );
+    assert_eq!(
+        project.evaluation().expand("$(BASENAMES)").as_known(),
+        Some("main.c README ")
+    );
+    assert_eq!(
+        project.evaluation().expand("$(LOGICAL)").as_known(),
+        Some("selected")
+    );
     let all = project.analysis().target("all").unwrap();
     assert_eq!(
         all.dependencies
