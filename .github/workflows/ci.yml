@@ -35,6 +35,10 @@ jobs:
         
       - name: Run tests
         run: cargo test --all-features
+
+      - name: Verify GNU Make compatibility fixtures
+        run: make --version && cargo test --test gnu_make_test
+        if: matrix.os != 'windows-latest'
         
       - name: Build
         run: cargo build --release
