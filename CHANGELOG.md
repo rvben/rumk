@@ -7,6 +7,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- `MK201` now emits one coordinated fix per source file, extends existing canonical `.PHONY`
+  groups, preserves established per-section declarations, wraps long groups safely, retains inline
+  comments and line endings, and avoids conditional declarations.
+
 ## [0.0.3] - 2026-08-30
 
 ### Changed

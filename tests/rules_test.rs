@@ -46,7 +46,7 @@ fn tab_rule_still_fixes_the_complete_space_prefix() {
 
 #[test]
 fn missing_phony_rule_groups_targets_and_preserves_crlf() {
-    let content = "all clean:\r\n\t@:\r\n";
+    let content = "all:\r\n\t@:\r\nclean:\r\n\t@:\r\n";
     let makefile = parse(content).unwrap();
     let diagnostics = MissingPhony.check(&makefile, content);
 
@@ -56,8 +56,105 @@ fn missing_phony_rule_groups_targets_and_preserves_crlf() {
     assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 1);
     assert_eq!(
         apply_fixes(content, &diagnostics),
-        ".PHONY: all clean\r\nall clean:\r\n\t@:\r\n"
+        ".PHONY: all clean\r\nall:\r\n\t@:\r\nclean:\r\n\t@:\r\n"
     );
+}
+
+#[test]
+fn missing_phony_extends_a_canonical_group_and_preserves_its_comment() {
+    let content = concat!(
+        ".PHONY: lint # public commands\n",
+        "lint:\n\t@:\n",
+        "all:\n\t@:\n",
+        "clean:\n\t@:\n",
+    );
+    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+    let fixed = apply_fixes(content, &diagnostics);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        fixed,
+        concat!(
+            ".PHONY: lint all clean # public commands\n",
+            "lint:\n\t@:\n",
+            "all:\n\t@:\n",
+            "clean:\n\t@:\n",
+        )
+    );
+    assert!(MissingPhony
+        .check(&parse(&fixed).unwrap(), &fixed)
+        .is_empty());
+}
+
+#[test]
+fn missing_phony_preserves_an_existing_per_section_style() {
+    let content = concat!(
+        ".PHONY: lint\n",
+        "lint:\n\t@:\n",
+        ".PHONY: deploy\n",
+        "deploy:\n\t@:\n",
+        "clean:\n\t@:\n",
+        "test:\n\t@:\n",
+    );
+    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 2);
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        concat!(
+            ".PHONY: lint\n",
+            "lint:\n\t@:\n",
+            ".PHONY: deploy\n",
+            "deploy:\n\t@:\n",
+            ".PHONY: clean\n",
+            "clean:\n\t@:\n",
+            ".PHONY: test\n",
+            "test:\n\t@:\n",
+        )
+    );
+}
+
+#[test]
+fn missing_phony_does_not_extend_a_conditional_declaration() {
+    let content = concat!(
+        "ifeq ($(MODE),lint)\n",
+        ".PHONY: lint\n",
+        "endif\n",
+        "all:\n\t@:\n",
+    );
+    let diagnostics = MissingPhony.check(&parse(content).unwrap(), content);
+
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        concat!(
+            "ifeq ($(MODE),lint)\n",
+            ".PHONY: lint\n",
+            "endif\n",
+            ".PHONY: all\n",
+            "all:\n\t@:\n",
+        )
+    );
+}
+
+#[test]
+fn missing_phony_merges_and_wraps_an_overlong_canonical_group() {
+    let existing_names = (1..=16)
+        .map(|index| format!("command-{index:02}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let existing = format!(".PHONY: {existing_names}\n");
+    let content = format!("{existing}all:\n\t@:\n");
+    let diagnostics = MissingPhony.check(&parse(&content).unwrap(), &content);
+    let fixed = apply_fixes(&content, &diagnostics);
+
+    assert_eq!(fixed.matches(".PHONY:").count(), 1);
+    assert!(fixed.contains(" \\\n        "));
+    assert!(fixed.contains("command-16 all"));
+    assert!(fixed.lines().all(|line| line.chars().count() <= 120));
+    assert!(MissingPhony
+        .check(&parse(&fixed).unwrap(), &fixed)
+        .is_empty());
 }
 
 #[test]

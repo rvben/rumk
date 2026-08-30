@@ -1,8 +1,21 @@
 use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
+use crate::logical::{
+    find_top_level_char, find_top_level_rule_separator, split_top_level_words, LogicalKind,
+};
 use crate::parser::Makefile;
 use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+
+const COMMON_PHONY_TARGETS: &[&str] =
+    &["all", "clean", "test", "check", "install", "build", "help"];
+
+#[derive(Debug, Clone)]
+struct MissingPhonyTarget {
+    name: String,
+    line: usize,
+    column: usize,
+}
 
 pub struct MissingPhony;
 
@@ -33,83 +46,97 @@ impl Rule for MissingPhony {
     }
 
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
-        let mut diagnostics = Vec::new();
-        let common_phony_targets = ["all", "clean", "test", "check", "install", "build", "help"];
-
-        for rule in &makefile.rules {
-            let missing = rule
-                .targets
-                .iter()
-                .filter(|target| {
-                    common_phony_targets.contains(&target.as_str())
-                        && !makefile.phonies.contains(target)
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            if !missing.is_empty() {
-                diagnostics.push(
-                    Diagnostic::new(
-                        self.id(),
-                        Severity::Warning,
-                        phony_message(&missing),
-                        rule.line,
-                        rule.column,
-                    )
-                    .with_fix(phony_fix(&missing, rule.line, content)),
-                );
-            }
-        }
-
-        diagnostics
+        let missing = missing_phony_targets(makefile);
+        let Some(first) = missing.first() else {
+            return Vec::new();
+        };
+        let names = missing_names(&missing);
+        vec![Diagnostic::new(
+            self.id(),
+            Severity::Warning,
+            phony_message(&names),
+            first.line,
+            first.column,
+        )
+        .with_fix(phony_fix(makefile, &missing, content))]
     }
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        let common = ["all", "clean", "test", "check", "install", "build", "help"];
         let index = project.analysis();
-        let mut missing_by_declaration = BTreeMap::new();
+        let mut missing_by_source = BTreeMap::new();
         for target in index
             .targets
             .values()
-            .filter(|target| common.contains(&target.name.as_str()) && !target.phony)
+            .filter(|target| COMMON_PHONY_TARGETS.contains(&target.name.as_str()) && !target.phony)
         {
             if let Some(declaration) = target
                 .declarations
                 .iter()
                 .find(|declaration| index.is_definitely_active(declaration.location))
             {
-                missing_by_declaration
-                    .entry((
-                        declaration.location.source,
-                        declaration.location.line,
-                        declaration.location.column,
-                    ))
+                missing_by_source
+                    .entry(declaration.location.source)
                     .or_insert_with(Vec::new)
-                    .push(target.name.clone());
+                    .push(MissingPhonyTarget {
+                        name: target.name.clone(),
+                        line: declaration.location.line,
+                        column: declaration.location.column,
+                    });
             }
         }
 
-        missing_by_declaration
+        for missing in missing_by_source.values_mut() {
+            missing.sort_by(|left, right| {
+                (left.line, left.column, &left.name).cmp(&(right.line, right.column, &right.name))
+            });
+        }
+
+        missing_by_source
             .into_iter()
-            .map(|((source, line, column), targets)| {
+            .filter_map(|(source, missing)| {
+                let first = missing.first()?;
+                let names = missing_names(&missing);
                 let mut diagnostic = Diagnostic::new(
                     self.id(),
                     Severity::Warning,
-                    phony_message(&targets),
-                    line,
-                    column,
+                    phony_message(&names),
+                    first.line,
+                    first.column,
                 )
                 .with_source(project.file(source).path.clone());
                 if source == project.root() {
-                    diagnostic = diagnostic.with_fix(phony_fix(
-                        &targets,
-                        line,
-                        &project.file(project.root()).content,
-                    ));
+                    let file = project.file(project.root());
+                    diagnostic =
+                        diagnostic.with_fix(phony_fix(&file.makefile, &missing, &file.content));
                 }
-                diagnostic
+                Some(diagnostic)
             })
             .collect()
     }
+}
+
+fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
+    let mut seen = BTreeSet::new();
+    let mut missing = Vec::new();
+    for rule in &makefile.rules {
+        for target in &rule.targets {
+            if COMMON_PHONY_TARGETS.contains(&target.as_str())
+                && !makefile.phonies.contains(target)
+                && seen.insert(target.clone())
+            {
+                missing.push(MissingPhonyTarget {
+                    name: target.clone(),
+                    line: rule.line,
+                    column: rule.column,
+                });
+            }
+        }
+    }
+    missing
+}
+
+fn missing_names(targets: &[MissingPhonyTarget]) -> Vec<String> {
+    targets.iter().map(|target| target.name.clone()).collect()
 }
 
 fn phony_message(targets: &[String]) -> String {
@@ -127,16 +154,184 @@ fn phony_message(targets: &[String]) -> String {
     }
 }
 
-fn phony_fix(targets: &[String], line: usize, content: &str) -> Fix {
-    let line_ending = preferred_line_ending(content, line);
-    let names = targets.join(" ");
-    Fix::new(format!("Declare {names} as .PHONY")).add_edit(Edit::new(
+fn phony_fix(makefile: &Makefile, targets: &[MissingPhonyTarget], content: &str) -> Fix {
+    let names = missing_names(targets);
+    let description = format!("Declare {} as .PHONY", names.join(" "));
+    let declarations = phony_declarations(makefile);
+
+    if declarations.len() > 1
+        && declarations
+            .iter()
+            .all(|declaration| declaration.names.len() <= 1)
+    {
+        let by_line = targets.iter().fold(BTreeMap::new(), |mut grouped, target| {
+            grouped
+                .entry(target.line)
+                .or_insert_with(Vec::new)
+                .push(target.name.clone());
+            grouped
+        });
+        return by_line
+            .into_iter()
+            .fold(Fix::new(description), |fix, (line, names)| {
+                fix.add_edit(Edit::new(
+                    line,
+                    1,
+                    line,
+                    1,
+                    format_phony_lines(&names, preferred_line_ending(content, line)),
+                ))
+            });
+    }
+
+    if let Some(declaration) = declarations.iter().max_by_key(|declaration| {
+        (
+            declaration.names.len(),
+            std::cmp::Reverse(declaration.start_line),
+        )
+    }) {
+        if let Some(column) = append_column(content, declaration, &names) {
+            return Fix::new(description).add_edit(Edit::new(
+                declaration.start_line,
+                column,
+                declaration.start_line,
+                column,
+                format!(" {}", names.join(" ")),
+            ));
+        }
+        if !declaration.has_comment {
+            let mut combined = declaration.names.clone();
+            for name in &names {
+                if !combined.contains(name) {
+                    combined.push(name.clone());
+                }
+            }
+            if let Some(end_column) = line_end_column(content, declaration.end_line) {
+                return Fix::new(description).add_edit(Edit::new(
+                    declaration.start_line,
+                    1,
+                    declaration.end_line,
+                    end_column,
+                    format_phony_declaration(
+                        &combined,
+                        preferred_line_ending(content, declaration.start_line),
+                    ),
+                ));
+            }
+        }
+        return Fix::new(description).add_edit(Edit::new(
+            declaration.start_line,
+            1,
+            declaration.start_line,
+            1,
+            format_phony_lines(
+                &names,
+                preferred_line_ending(content, declaration.start_line),
+            ),
+        ));
+    }
+
+    let line = targets.first().map_or(1, |target| target.line);
+    Fix::new(description).add_edit(Edit::new(
         line,
         1,
         line,
         1,
-        format!(".PHONY: {names}{line_ending}"),
+        format_phony_lines(&names, preferred_line_ending(content, line)),
     ))
+}
+
+#[derive(Debug)]
+struct PhonyDeclaration {
+    start_line: usize,
+    end_line: usize,
+    names: Vec<String>,
+    has_comment: bool,
+}
+
+fn phony_declarations(makefile: &Makefile) -> Vec<PhonyDeclaration> {
+    makefile
+        .logical
+        .statements()
+        .iter()
+        .filter(|statement| statement.kind == LogicalKind::Rule)
+        .filter(|statement| {
+            !makefile
+                .analysis()
+                .is_conditional_line(statement.start_line)
+        })
+        .filter_map(|statement| {
+            let text = statement.text();
+            let separator = find_top_level_rule_separator(text)?;
+            (text[..separator.position].trim() == ".PHONY").then(|| {
+                let body = &text[separator.position + separator.length..];
+                let comment = find_top_level_char(body, '#');
+                let names = split_top_level_words(comment.map_or(body, |index| &body[..index]));
+                PhonyDeclaration {
+                    start_line: statement.start_line,
+                    end_line: statement.end_line,
+                    names,
+                    has_comment: comment.is_some(),
+                }
+            })
+        })
+        .collect()
+}
+
+fn append_column(content: &str, declaration: &PhonyDeclaration, names: &[String]) -> Option<usize> {
+    if declaration.start_line != declaration.end_line {
+        return None;
+    }
+    let source_line = content
+        .lines()
+        .nth(declaration.start_line.checked_sub(1)?)?;
+    let comment = find_top_level_char(source_line, '#').unwrap_or(source_line.len());
+    let insertion = source_line[..comment].trim_end().len();
+    let added = names.iter().map(|name| name.chars().count()).sum::<usize>() + names.len();
+    (source_line.chars().count() + added <= 120)
+        .then(|| source_line[..insertion].chars().count() + 1)
+}
+
+fn line_end_column(content: &str, line: usize) -> Option<usize> {
+    content
+        .lines()
+        .nth(line.checked_sub(1)?)
+        .map(|source_line| source_line.chars().count() + 1)
+}
+
+fn format_phony_declaration(names: &[String], line_ending: &str) -> String {
+    let mut lines = Vec::new();
+    let mut line = String::from(".PHONY:");
+    for name in names {
+        if line != ".PHONY:" && line.chars().count() + 1 + name.chars().count() + 2 > 120 {
+            line.push_str(" \\");
+            lines.push(line);
+            line = String::from("        ");
+        }
+        if !line.ends_with(' ') {
+            line.push(' ');
+        }
+        line.push_str(name);
+    }
+    lines.push(line);
+    lines.join(line_ending)
+}
+
+fn format_phony_lines(names: &[String], line_ending: &str) -> String {
+    let mut output = String::new();
+    let mut line = String::from(".PHONY:");
+    for name in names {
+        if line.chars().count() + 1 + name.chars().count() > 120 && line != ".PHONY:" {
+            output.push_str(&line);
+            output.push_str(line_ending);
+            line = String::from(".PHONY:");
+        }
+        line.push(' ');
+        line.push_str(name);
+    }
+    output.push_str(&line);
+    output.push_str(line_ending);
+    output
 }
 
 fn preferred_line_ending(content: &str, line: usize) -> &'static str {
