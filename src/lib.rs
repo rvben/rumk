@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod config;
 pub mod diagnostic;
+pub mod eval;
 pub mod fix;
 pub mod inline_config;
 pub mod logical;
