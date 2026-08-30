@@ -261,14 +261,10 @@ jobs:
             gh release create "${args[@]}"
           fi
 
-      - name: Obtain short-lived crates.io credential
-        id: crates-auth
-        uses: rust-lang/crates-io-auth-action@63a7064947ceca9989005e118db3a5fecdc9259f # v1.0.0
-
       - name: Publish crate when absent
         shell: bash
         env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_TOKEN }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           endpoint="https://crates.io/api/v1/crates/rumk/${VERSION}"
