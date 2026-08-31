@@ -1,5 +1,10 @@
 # rumk
 
+> [!WARNING]
+> **Alpha software under active development.** Rumk is useful today, but its rules, CLI,
+> configuration, diagnostics, and autofixes may change between `0.0.x` releases. Pin the version
+> in automation and review autofix diffs before committing them.
+
 A fast Makefile linter written in Rust, built as the Makefile sibling of
 [Rumdl](https://github.com/rvben/rumdl).
 
