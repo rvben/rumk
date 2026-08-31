@@ -17,6 +17,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Scheduled dependency maintenance now uses upd's pinned reusable workflow for Rust and GitHub
   Actions updates in one validated rolling pull request, replacing Dependabot and the custom
   updater job.
+- Dependency proposals must pass Rumk's Rust 1.82 compatibility gate before publication, and the
+  Clap requirement remains on its compatible 4.5 minor line until the MSRV is raised.
 
 ## [0.0.6] - 2026-08-31
 

@@ -22,8 +22,11 @@ jobs:
       lock: true
       min-age: 7d
       max-bump: minor
-      prepare-command: rustup toolchain install stable --profile minimal --component clippy && rustup default stable
-      validation-command: make all
+      prepare-command: >-
+        rustup toolchain install stable --profile minimal --component clippy --component rustfmt &&
+        rustup toolchain install 1.82.0 --profile minimal &&
+        rustup default stable
+      validation-command: make dependency-check
       validate-actions: true
       fail-on-blocked: false
       branch: deps/upd

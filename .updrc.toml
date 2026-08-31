@@ -1,4 +1,6 @@
-# These dependencies cannot be updated safely as ordinary Action pins:
+# These Action dependencies cannot be updated safely as ordinary pins:
 # - upd's workflow, binary, and checksum are a coupled supply-chain pin maintained together.
 # - rust-toolchain publishes only a moving v1 tag; its stable toolchain input is intentional.
-ignore = ["rvben/upd", "dtolnay/rust-toolchain"]
+# clap 4.6 resolves to a clap_lex release whose Edition 2024 metadata Cargo 1.82 cannot parse.
+# Keep the compatible minor line explicit until Rumk raises its MSRV.
+ignore = ["rvben/upd", "dtolnay/rust-toolchain", "clap"]
