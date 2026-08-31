@@ -767,11 +767,15 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 }
 
 fn display_path(path: &Path) -> String {
-    let current_dir = std::env::current_dir().ok();
+    let current_dir = std::env::current_dir()
+        .ok()
+        .and_then(|path| dunce::canonicalize(path).ok());
+    let canonical_path = dunce::canonicalize(path).ok();
+    let comparable_path = canonical_path.as_deref().unwrap_or(path);
     let relative = current_dir
         .as_deref()
-        .and_then(|current_dir| path.strip_prefix(current_dir).ok())
-        .unwrap_or(path);
+        .and_then(|current_dir| comparable_path.strip_prefix(current_dir).ok())
+        .unwrap_or(comparable_path);
     relative
         .strip_prefix(".")
         .unwrap_or(relative)

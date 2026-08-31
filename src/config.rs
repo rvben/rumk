@@ -433,8 +433,16 @@ impl Config {
         let config_root = self.project_root();
         let current_dir = std::env::current_dir().ok();
         let root = config_root.or(current_dir.as_deref());
+        let canonical_path = dunce::canonicalize(path).ok();
+        let canonical_root = root.and_then(|root| dunce::canonicalize(root).ok());
         let relative = root
             .and_then(|root| path.strip_prefix(root).ok())
+            .or_else(|| {
+                canonical_path
+                    .as_deref()?
+                    .strip_prefix(canonical_root.as_deref()?)
+                    .ok()
+            })
             .unwrap_or(path);
         normalize_path(relative)
     }
