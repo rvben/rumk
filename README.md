@@ -1,15 +1,33 @@
-# rumk
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/rvben/rumk/main/assets/rumk-logo-dark.svg">
+    <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/rvben/rumk/main/assets/rumk-logo-light.svg">
+    <img src="https://raw.githubusercontent.com/rvben/rumk/main/assets/rumk-logo-light.svg" width="520" alt="rumk">
+  </picture>
+</p>
+
+<p align="center"><strong>Makefiles, built right.</strong></p>
+
+<p align="center">
+  Fast, trustworthy linting and formatting for Makefiles.
+</p>
+
+<p align="center">
+  <a href="https://github.com/rvben/rumk/actions/workflows/ci.yml"><img src="https://github.com/rvben/rumk/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://crates.io/crates/rumk"><img src="https://img.shields.io/crates/v/rumk.svg" alt="crates.io"></a>
+  <a href="https://pypi.org/project/rumk/"><img src="https://img.shields.io/pypi/v/rumk.svg" alt="PyPI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/crates/l/rumk.svg" alt="License"></a>
+</p>
 
 > [!WARNING]
 > **Alpha software under active development.** Rumk is useful today, but its rules, CLI,
 > configuration, diagnostics, and autofixes may change between `0.0.x` releases. Pin the version
 > in automation and review autofix diffs before committing them.
 
-A fast Makefile linter written in Rust, built as the Makefile sibling of
-[Rumdl](https://github.com/rvben/rumdl).
+Rumk is the Makefile sibling of [Rumdl](https://github.com/rvben/rumdl).
 
-Rumk is currently alpha software. Its CLI, configuration model, diagnostics, fixing behavior,
-and exit codes intentionally follow Rumdl so existing Rumdl users can reuse their workflow.
+Its CLI, configuration model, diagnostics, fixing behavior, and exit codes intentionally follow
+Rumdl so existing users can reuse their workflow.
 
 ## Features
 
