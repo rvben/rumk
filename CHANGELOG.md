@@ -98,7 +98,3 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 [Unreleased]: https://github.com/rvben/rumk/commits/main
 [0.0.6]: https://github.com/rvben/rumk/releases/tag/v0.0.6
-[0.0.5]: https://github.com/rvben/rumk/compare/v0.0.4...v0.0.5
-[0.0.4]: https://github.com/rvben/rumk/compare/v0.0.3...v0.0.4
-[0.0.3]: https://github.com/rvben/rumk/compare/v0.0.2...v0.0.3
-[0.0.2]: https://github.com/rvben/rumk/compare/v0.0.1...v0.0.2
