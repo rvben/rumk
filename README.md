@@ -52,15 +52,15 @@ Rumdl so existing users can reuse their workflow.
 ## Installation
 
 ```bash
-cargo install rumk --locked --version 0.0.6
+cargo install rumk --locked --version 0.0.7
 ```
 
 Or install the native executable from PyPI with a Python tool manager:
 
 ```bash
-uv tool install rumk==0.0.6
+uv tool install rumk==0.0.7
 # or
-pipx install rumk==0.0.6
+pipx install rumk==0.0.7
 ```
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
@@ -75,9 +75,9 @@ runs it, and leaves `rumk` on `PATH` for later steps:
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: rvben/rumk@v0.0.6
+  - uses: rvben/rumk@v0.0.7
     with:
-      version: 0.0.6
+      version: 0.0.7
       path: .
       report-type: annotations
 ```

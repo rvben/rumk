@@ -10,7 +10,7 @@ inputs:
   version:
     description: "Exact Rumk version to install"
     required: false
-    default: "0.0.6"
+    default: "0.0.7"
   command:
     description: |
       Which Rumk command to run.
