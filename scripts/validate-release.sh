@@ -31,6 +31,10 @@ if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
 fi
 
 package_files="$(cargo package --list "${package_args[@]}")"
+if ! grep -Fxq "rumk.schema.json" <<<"${package_files}"; then
+    echo "configuration schema is missing from the crate package" >&2
+    exit 1
+fi
 for private_path in PRD.md .github docs examples; do
     if grep -Eq "^${private_path}(/|$)" <<<"${package_files}"; then
         echo "private or development-only path entered the crate package: ${private_path}" >&2

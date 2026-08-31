@@ -1,0 +1,276 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/rvben/rumk/main/rumk.schema.json",
+  "title": "Rumk configuration",
+  "description": "Configuration for Rumk Makefile linting and formatting.",
+  "type": "object",
+  "properties": {
+    "extends": {
+      "description": "Path to a base configuration. Relative paths resolve from this file.",
+      "type": "string"
+    },
+    "global": {
+      "$ref": "#/$defs/GlobalConfig"
+    },
+    "per-file-ignores": {
+      "description": "Maps file globs to rule IDs suppressed for matching files.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/RuleIdList"
+      },
+      "default": {}
+    },
+    "rules": {
+      "description": "Legacy rule configuration accepted for migration. Prefer top-level MK### sections.",
+      "$ref": "#/$defs/LegacyRules",
+      "deprecated": true
+    },
+    "ignore": {
+      "description": "Legacy ignore configuration accepted for migration. Prefer global.exclude and global.disable.",
+      "$ref": "#/$defs/LegacyIgnore",
+      "deprecated": true
+    },
+    "MK001": { "$ref": "#/$defs/RuleConfig" },
+    "MK002": { "$ref": "#/$defs/RuleConfig" },
+    "MK003": { "$ref": "#/$defs/RuleConfig" },
+    "MK004": { "$ref": "#/$defs/RuleConfig" },
+    "MK005": { "$ref": "#/$defs/RuleConfig" },
+    "MK101": { "$ref": "#/$defs/MK101Config" },
+    "MK102": { "$ref": "#/$defs/NamingConfig" },
+    "MK103": { "$ref": "#/$defs/NamingConfig" },
+    "MK201": { "$ref": "#/$defs/MK201Config" },
+    "MK202": { "$ref": "#/$defs/RuleConfig" },
+    "MK203": { "$ref": "#/$defs/RuleConfig" },
+    "MK204": { "$ref": "#/$defs/RuleConfig" },
+    "MK205": { "$ref": "#/$defs/RuleConfig" },
+    "MK206": { "$ref": "#/$defs/RuleConfig" },
+    "MK207": { "$ref": "#/$defs/RuleConfig" },
+    "MK208": { "$ref": "#/$defs/RuleConfig" },
+    "MK209": { "$ref": "#/$defs/RuleConfig" },
+    "MK210": { "$ref": "#/$defs/RuleConfig" }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "RuleId": {
+      "description": "A Rumk rule identifier. Matching is case-insensitive.",
+      "type": "string",
+      "pattern": "^[Mm][Kk](001|002|003|004|005|101|102|103|201|202|203|204|205|206|207|208|209|210)$"
+    },
+    "RuleIdList": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/RuleId" },
+      "uniqueItems": true
+    },
+    "StringList": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "Severity": {
+      "description": "Diagnostic severity. `warn` is accepted as an alias for `warning`.",
+      "type": "string",
+      "enum": ["error", "warning", "warn", "info"]
+    },
+    "GlobalConfig": {
+      "description": "Project-wide discovery, selection, and analysis settings.",
+      "type": "object",
+      "properties": {
+        "dialect": {
+          "description": "Make dialect. GNU Make is the fully modeled dialect.",
+          "type": "string",
+          "enum": ["gnu", "posix", "bsd"],
+          "default": "gnu"
+        },
+        "respect-gitignore": {
+          "description": "Honor Git ignore files while discovering Makefiles.",
+          "type": "boolean",
+          "default": true
+        },
+        "enable": {
+          "description": "Replace the default rule set with these rules.",
+          "$ref": "#/$defs/RuleIdList"
+        },
+        "disable": {
+          "description": "Disable these rules.",
+          "$ref": "#/$defs/RuleIdList",
+          "default": []
+        },
+        "extend-enable": {
+          "description": "Enable these rules in addition to the selected rule set.",
+          "$ref": "#/$defs/RuleIdList",
+          "default": []
+        },
+        "extend-disable": {
+          "description": "Disable these rules after applying other selection settings.",
+          "$ref": "#/$defs/RuleIdList",
+          "default": []
+        },
+        "fixable": {
+          "description": "Allow autofixes only for these rules. An empty list allows every fixable rule.",
+          "$ref": "#/$defs/RuleIdList",
+          "default": []
+        },
+        "unfixable": {
+          "description": "Never apply autofixes for these rules.",
+          "$ref": "#/$defs/RuleIdList",
+          "default": []
+        },
+        "exclude": {
+          "description": "File globs excluded from discovery.",
+          "$ref": "#/$defs/StringList",
+          "default": []
+        },
+        "include": {
+          "description": "File globs included during discovery.",
+          "$ref": "#/$defs/StringList",
+          "default": []
+        },
+        "include-paths": {
+          "description": "Additional GNU Make include search directories, resolved from the configuration directory.",
+          "$ref": "#/$defs/StringList",
+          "default": []
+        },
+        "predefined-variables": {
+          "description": "Statically known command-line-style variable values.",
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
+        },
+        "entry-targets": {
+          "description": "Root targets used by reachability rule MK209.",
+          "$ref": "#/$defs/StringList",
+          "default": []
+        }
+      },
+      "additionalProperties": false
+    },
+    "RuleBase": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Enable or disable this rule.",
+          "type": "boolean"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        }
+      }
+    },
+    "RuleConfig": {
+      "allOf": [
+        { "$ref": "#/$defs/RuleBase" }
+      ],
+      "unevaluatedProperties": false
+    },
+    "MK101Config": {
+      "allOf": [
+        { "$ref": "#/$defs/RuleBase" },
+        {
+          "type": "object",
+          "properties": {
+            "line-length": {
+              "description": "Maximum declarative line length.",
+              "type": "integer",
+              "minimum": 1,
+              "default": 120
+            },
+            "max": {
+              "description": "Legacy alias for line-length.",
+              "type": "integer",
+              "minimum": 1,
+              "deprecated": true
+            },
+            "ignore-comments": {
+              "description": "Ignore full-line comments.",
+              "type": "boolean",
+              "default": true
+            },
+            "ignore-recipes": {
+              "description": "Ignore recipe bodies.",
+              "type": "boolean",
+              "default": true
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "NamingConfig": {
+      "allOf": [
+        { "$ref": "#/$defs/RuleBase" },
+        {
+          "type": "object",
+          "properties": {
+            "style": {
+              "description": "Required naming style.",
+              "type": "string",
+              "enum": ["upper", "upper-case", "upper_case", "lower", "lower-case", "lower_case"]
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "MK201Config": {
+      "allOf": [
+        { "$ref": "#/$defs/RuleBase" },
+        {
+          "type": "object",
+          "properties": {
+            "placement": {
+              "description": "Where autofixes place missing .PHONY declarations.",
+              "type": "string",
+              "enum": ["auto", "top", "adjacent"],
+              "default": "auto"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "LegacyRuleConfig": {
+      "description": "Legacy [rules.MK###] configuration.",
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "severity": { "$ref": "#/$defs/Severity" },
+        "options": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "LegacyRules": {
+      "type": "object",
+      "properties": {
+        "MK001": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK002": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK003": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK004": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK005": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK101": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK102": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK103": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK201": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK202": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK203": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK204": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK205": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK206": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK207": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK208": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK209": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK210": { "$ref": "#/$defs/LegacyRuleConfig" }
+      },
+      "additionalProperties": false
+    },
+    "LegacyIgnore": {
+      "type": "object",
+      "properties": {
+        "paths": { "$ref": "#/$defs/StringList" },
+        "rules": { "$ref": "#/$defs/RuleIdList" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

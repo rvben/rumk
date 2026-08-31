@@ -14,6 +14,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - A first-party composite GitHub Action installs checksum-verified native releases, supports
   checks and formatting, emits annotations, exposes the installed binary, and runs on Linux,
   macOS, and Windows.
+- `rumk.schema.json` provides editor completion and validation for canonical and legacy
+  configuration, including every rule-specific option.
 
 ### Changed
 

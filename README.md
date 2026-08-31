@@ -151,6 +151,15 @@ placement = "auto"
 "vendor/**/*.mk" = ["MK202"]
 ```
 
+For configuration completion and validation in editors that support inline TOML schemas, put this
+comment at the top of the file:
+
+```toml
+#:schema https://raw.githubusercontent.com/rvben/rumk/main/rumk.schema.json
+```
+
+The versioned schema is also included in Cargo packages and native release archives.
+
 Configuration discovery checks `.rumk.toml`, `rumk.toml`, and `.config/rumk.toml` while walking
 upward, stopping at a Git project boundary. Use `--config <PATH>` for an explicit file or
 `--no-config`/`--isolated` for built-in defaults.

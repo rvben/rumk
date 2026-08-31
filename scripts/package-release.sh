@@ -24,7 +24,7 @@ package="rumk-${version}-${target}"
 staging="$(mktemp -d)"
 trap 'rm -rf "${staging}"' EXIT
 mkdir -p "${staging}/${package}" dist
-cp "${binary}" README.md CHANGELOG.md LICENSE "${staging}/${package}/"
+cp "${binary}" README.md CHANGELOG.md LICENSE rumk.schema.json "${staging}/${package}/"
 
 case "${format}" in
     tar.gz)

@@ -1,0 +1,38 @@
+[global]
+dialect = "gnu"
+respect-gitignore = true
+disable = ["MK101"]
+extend-enable = ["MK102", "MK208"]
+fixable = ["MK001", "MK201"]
+unfixable = ["MK203"]
+exclude = ["vendor/**"]
+include = ["**/Makefile", "**/*.mk"]
+include-paths = ["mk"]
+predefined-variables = { CI = "true" }
+entry-targets = ["all"]
+
+[MK001]
+severity = "error"
+
+[MK101]
+enabled = true
+severity = "warning"
+line-length = 100
+ignore-comments = true
+ignore-recipes = true
+
+[MK102]
+style = "upper-case"
+
+[MK103]
+style = "lower-case"
+
+[MK201]
+placement = "adjacent"
+
+[MK208]
+enabled = true
+severity = "info"
+
+[per-file-ignores]
+"vendor/**/*.mk" = ["MK202", "MK208"]
