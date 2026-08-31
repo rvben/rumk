@@ -7,15 +7,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
-### Changed
-
-- Release jobs use Node.js 24 artifact actions and avoid caching transient Cargo package trees,
-  eliminating deprecation and missing-directory annotations.
-
 ## [0.0.6] - 2026-08-31
 
 ### Changed
 
+- Release jobs use Node.js 24 artifact actions and avoid caching transient Cargo package trees,
+  eliminating deprecation and missing-directory annotations.
+- Release reruns preserve the assets of an existing public GitHub release while safely skipping
+  versions already present on Cargo and PyPI.
 - Release automation now publishes native wheels and the source distribution to PyPI through
   short-lived Trusted Publishing credentials.
 - The README now gives alpha-stage stability and autofix guidance before the project overview.

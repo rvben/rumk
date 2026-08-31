@@ -242,12 +242,12 @@ jobs:
           fi
 
           if state="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq .isDraft 2>/dev/null)"; then
-            if [[ "${state}" != "true" ]]; then
-              echo "release ${GITHUB_REF_NAME} is already public; refusing to replace its assets" >&2
-              exit 1
+            if [[ "${state}" == "true" ]]; then
+              gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+              gh release edit "${GITHUB_REF_NAME}" --title "Rumk ${GITHUB_REF_NAME}" --notes-file release-notes.md
+            else
+              echo "release ${GITHUB_REF_NAME} is already public; preserving its assets"
             fi
-            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
-            gh release edit "${GITHUB_REF_NAME}" --title "Rumk ${GITHUB_REF_NAME}" --notes-file release-notes.md
           else
             args=("${GITHUB_REF_NAME}" dist/* --draft --verify-tag --title "Rumk ${GITHUB_REF_NAME}" --notes-file release-notes.md)
             if [[ "${PRERELEASE}" == "true" ]]; then
