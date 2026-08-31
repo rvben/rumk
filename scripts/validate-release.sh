@@ -16,6 +16,15 @@ if ! grep -Fq "## [${version}]" CHANGELOG.md; then
     exit 1
 fi
 
+action_version="$(awk '
+    $1 == "version:" { in_version = 1; next }
+    in_version && $1 == "default:" { gsub(/[\"'\'']/, "", $2); print $2; exit }
+' action.yml)"
+if [[ "${action_version}" != "${version}" ]]; then
+    echo "release version mismatch: action.yml=${action_version} Cargo.toml=${version}" >&2
+    exit 1
+fi
+
 package_args=(--locked)
 if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
     package_args+=(--allow-dirty)

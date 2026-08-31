@@ -1,0 +1,75 @@
+name: "Rumk"
+description: "Lint and format Makefiles with Rumk"
+author: "rvben"
+
+branding:
+  icon: "check-circle"
+  color: "orange"
+
+inputs:
+  version:
+    description: "Exact Rumk version to install"
+    required: false
+    default: "0.0.6"
+  command:
+    description: |
+      Which Rumk command to run.
+      Possible values: check (default), fmt-check, fmt.
+      `fmt-check` reports formatting changes without writing them;
+      `fmt` rewrites files in the workspace.
+    required: false
+    default: "check"
+  path:
+    description: "Files or directories to inspect, space-separated"
+    required: false
+    default: "."
+  config:
+    description: "Path to a Rumk configuration file"
+    required: false
+    default: ""
+  report-type:
+    description: "Result presentation: logs (default) or annotations"
+    required: false
+    default: "logs"
+  fail-on-error:
+    description: "Fail when lint violations are found"
+    required: false
+    default: "true"
+  output-file:
+    description: "Also write the command output to this path"
+    required: false
+    default: ""
+  args:
+    description: "Additional space-separated arguments for the selected command"
+    required: false
+    default: ""
+  install-only:
+    description: "Install Rumk and add it to PATH without inspecting files"
+    required: false
+    default: "false"
+
+outputs:
+  rumk-version:
+    description: "Installed Rumk version"
+    value: ${{ steps.rumk.outputs.rumk-version }}
+  rumk-path:
+    description: "Absolute path to the installed Rumk executable"
+    value: ${{ steps.rumk.outputs.rumk-path }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rumk and inspect Makefiles
+      id: rumk
+      shell: bash
+      run: $GITHUB_ACTION_PATH/scripts/rumk-action.sh
+      env:
+        GHA_RUMK_VERSION: ${{ inputs.version }}
+        GHA_RUMK_COMMAND: ${{ inputs.command }}
+        GHA_RUMK_PATH: ${{ inputs.path }}
+        GHA_RUMK_CONFIG: ${{ inputs.config }}
+        GHA_RUMK_REPORT_TYPE: ${{ inputs.report-type }}
+        GHA_RUMK_FAIL_ON_ERROR: ${{ inputs.fail-on-error }}
+        GHA_RUMK_OUTPUT_FILE: ${{ inputs.output-file }}
+        GHA_RUMK_ARGS: ${{ inputs.args }}
+        GHA_RUMK_INSTALL_ONLY: ${{ inputs.install-only }}

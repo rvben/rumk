@@ -53,6 +53,24 @@ jobs:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Dogfood the Rumk Action
+        id: rumk-action
+        uses: ./
+        with:
+          version: 0.0.6
+          path: Makefile
+          report-type: annotations
+
+      - name: Verify Action installation
+        shell: bash
+        env:
+          RUMK_PATH: ${{ steps.rumk-action.outputs.rumk-path }}
+          RUMK_VERSION: ${{ steps.rumk-action.outputs.rumk-version }}
+        run: |
+          test "${RUMK_VERSION}" = "0.0.6"
+          "${RUMK_PATH}" version
+          rumk version
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:

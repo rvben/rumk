@@ -11,6 +11,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `MK101` safely wraps long static `.PHONY` declarations at the configured line length while
   preserving target order, inline comments, line endings, and fix idempotence.
+- A first-party composite GitHub Action installs checksum-verified native releases, supports
+  checks and formatting, emits annotations, exposes the installed binary, and runs on Linux,
+  macOS, and Windows.
 
 ### Changed
 

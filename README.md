@@ -67,6 +67,26 @@ Rumk is alpha-stage `0.0.x` software, so installation names the version explicit
 archives and Python wheels cover Linux, macOS, and Windows. GitHub release assets include SHA-256
 checksums.
 
+### GitHub Actions
+
+The repository is also a composite Action that installs a checksum-verified native Rumk release,
+runs it, and leaves `rumk` on `PATH` for later steps:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: rvben/rumk@v0.0.6
+    with:
+      version: 0.0.6
+      path: .
+      report-type: annotations
+```
+
+Pin both the Action ref and `version` while Rumk is alpha. The moving `v0` Action tag is available
+for users who prefer automatic `0.x` Action updates. Supported commands are `check`, `fmt-check`,
+and `fmt`; `install-only: true` only installs Rumk. The Action also accepts `config`, `args`,
+`fail-on-error`, and `output-file`, and exposes `rumk-version` and `rumk-path` outputs.
+
 ## Quick start
 
 ```bash
