@@ -13,6 +13,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   short-lived Trusted Publishing credentials.
 - The README now gives alpha-stage stability and autofix guidance before the project overview.
 - GitHub artifact attestations run only where the repository visibility supports them.
+- GitHub Actions now uses the Node.js 24-based checkout action with an immutable revision pin.
 
 ### Fixed
 
