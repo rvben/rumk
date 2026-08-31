@@ -780,7 +780,7 @@ fn display_path(path: &Path) -> String {
 }
 
 fn path_identity(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn is_makefile(path: &Path) -> bool {

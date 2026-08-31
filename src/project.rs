@@ -684,8 +684,7 @@ fn phony_prerequisites(text: &str) -> Option<&str> {
 
 fn canonical_or_normalized(path: &Path) -> Result<PathBuf> {
     if path.exists() {
-        return path
-            .canonicalize()
+        return dunce::canonicalize(path)
             .with_context(|| format!("Failed to resolve path: {}", path.display()));
     }
     let absolute = if path.is_absolute() {

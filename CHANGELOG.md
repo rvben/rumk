@@ -14,6 +14,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - The README now gives alpha-stage stability and autofix guidance before the project overview.
 - GitHub artifact attestations run only where the repository visibility supports them.
 
+### Fixed
+
+- Windows diagnostics now normalize canonical paths without the verbatim `\\?\` prefix, keeping
+  project-relative JSON paths and per-file ignores consistent across platforms.
+
 ## [0.0.5] - 2026-08-30
 
 ### Added

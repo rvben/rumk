@@ -454,7 +454,7 @@ impl Config {
 }
 
 fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<toml::Value> {
-    let identity = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if stack.contains(&identity) {
         let cycle = stack
             .iter()

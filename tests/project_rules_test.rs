@@ -24,7 +24,7 @@ fn reports_mixed_separators_across_files_at_the_conflicting_source() {
     assert_eq!(diagnostics[0].rule_id, "MK004");
     assert_eq!(
         diagnostics[0].source.as_deref(),
-        Some(root.canonicalize().unwrap().as_path())
+        Some(dunce::canonicalize(&root).unwrap().as_path())
     );
 }
 
@@ -37,8 +37,8 @@ fn missing_phony_only_offers_fixes_for_the_processed_root_file() {
     std::fs::write(&shared, "test:\n\t@:\n").unwrap();
 
     let diagnostics = MissingPhony::default().check_project(&load(&root));
-    let root_path = root.canonicalize().unwrap();
-    let shared_path = shared.canonicalize().unwrap();
+    let root_path = dunce::canonicalize(&root).unwrap();
+    let shared_path = dunce::canonicalize(&shared).unwrap();
 
     assert_eq!(diagnostics.len(), 2);
     let root_diagnostic = diagnostics
@@ -117,7 +117,7 @@ fn reports_include_cycles_on_the_closing_directive() {
     assert_eq!(diagnostics[0].line, 2);
     assert_eq!(
         diagnostics[0].source.as_deref(),
-        Some(shared.canonicalize().unwrap().as_path())
+        Some(dunce::canonicalize(&shared).unwrap().as_path())
     );
 }
 
