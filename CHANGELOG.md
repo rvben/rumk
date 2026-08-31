@@ -7,6 +7,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- Release automation now publishes native wheels and the source distribution to PyPI through
+  short-lived Trusted Publishing credentials.
+- The README now gives alpha-stage stability and autofix guidance before the project overview.
+- GitHub artifact attestations run only where the repository visibility supports them.
+
 ## [0.0.5] - 2026-08-30
 
 ### Added
@@ -76,7 +83,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Release packages use an explicit source allowlist that excludes private planning documents.
 - Release artifacts are checksummed and prepared for GitHub build-provenance attestations.
 
-[Unreleased]: https://github.com/rvben/rumk/compare/v0.0.5...HEAD
+[Unreleased]: https://github.com/rvben/rumk/commits/main
 [0.0.5]: https://github.com/rvben/rumk/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/rvben/rumk/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/rvben/rumk/compare/v0.0.2...v0.0.3

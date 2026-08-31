@@ -206,7 +206,7 @@ jobs:
           retention-days: 7
 
   publish:
-    name: Publish crate and GitHub release
+    name: Publish registries and GitHub release
     if: needs.validate.outputs.publish == 'true'
     needs: [validate, assemble]
     runs-on: ubuntu-24.04
@@ -277,6 +277,20 @@ jobs:
           else
             cargo publish --locked
           fi
+
+      - name: Prepare Python distributions
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          mkdir pypi-dist
+          cp dist/*.whl "dist/rumk-${VERSION}.tar.gz" pypi-dist/
+
+      - name: Publish Python distributions
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
+        with:
+          packages-dir: pypi-dist
+          skip-existing: true
 
       - name: Attest release archives
         if: github.event.repository.visibility == 'public'
