@@ -14,8 +14,8 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 ## Features
 
 - Lints individual Makefiles or entire directory trees
-- Safely fixes recipe indentation, style-aware `.PHONY` declarations, and recursive Make
-  invocations
+- Safely fixes recipe indentation, long static and style-aware missing `.PHONY` declarations,
+  and recursive Make invocations
 - Parses continued logical statements and nested `$(...)`/`${...}` expressions
 - Models GNU Make assignment flavors, static patterns, target-specific variables, includes,
   conditionals, `define` blocks, custom recipe prefixes, and `.ONESHELL`
@@ -227,7 +227,8 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 ### Style
 
 - [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) — Declarative line exceeds
-  the configured maximum length; comments and recipes are ignored by default (**default**)
+  the configured maximum length; comments and recipes are ignored by default, and static
+  `.PHONY` declarations can be wrapped safely (**default**, partially fixable)
 - [`MK102`](https://github.com/rvben/rumk/blob/main/docs/mk102.md) — Variable naming convention
 - [`MK103`](https://github.com/rvben/rumk/blob/main/docs/mk103.md) — Target naming convention
 

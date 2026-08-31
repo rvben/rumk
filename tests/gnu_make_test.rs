@@ -1,8 +1,11 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+use rumk::fix::apply_fixes;
 use rumk::parser::{parse, VariableScope};
 use rumk::project::{Project, ProjectOptions};
+use rumk::rules::style::LineLength;
+use rumk::rules::Rule;
 
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -30,6 +33,41 @@ fn advanced_fixture_is_accepted_by_gnu_make() {
         path.display(),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[test]
+fn wrapped_phony_fix_is_accepted_by_gnu_make() {
+    let content = concat!(
+        ".PHONY: build test lint clean release\n",
+        "build test lint clean release:\n",
+        "\t@:\n",
+    );
+    let diagnostics = LineLength::new(32).check(&parse(content).unwrap(), content);
+    let fixed = apply_fixes(content, &diagnostics);
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, &fixed).unwrap();
+
+    let output = match Command::new("make")
+        .args(["--no-builtin-rules", "--dry-run", "-f"])
+        .arg(&path)
+        .arg("build")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => panic!("failed to launch GNU Make: {error}"),
+    };
+
+    assert!(
+        output.status.success(),
+        "GNU Make rejected the wrapped .PHONY declaration:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let makefile = parse(&fixed).unwrap();
+    assert!(["build", "test", "lint", "clean", "release"]
+        .iter()
+        .all(|target| makefile.phonies.iter().any(|phony| phony == target)));
 }
 
 #[test]

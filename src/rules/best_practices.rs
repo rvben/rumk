@@ -7,8 +7,10 @@ use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
 use std::collections::{BTreeMap, BTreeSet};
 
-const COMMON_PHONY_TARGETS: &[&str] =
-    &["all", "clean", "test", "check", "install", "build", "help"];
+use super::phony::{
+    format_continued_declaration, preferred_line_ending, COMMON_PHONY_TARGETS,
+    DEFAULT_PHONY_LINE_LENGTH,
+};
 
 #[derive(Debug, Clone)]
 struct MissingPhonyTarget {
@@ -247,7 +249,7 @@ fn top_phony_fix(
         1,
         format!(
             "{}{}",
-            format_phony_declaration(names, line_ending),
+            format_continued_declaration(names, "", line_ending, DEFAULT_PHONY_LINE_LENGTH),
             line_ending
         ),
     ))
@@ -315,9 +317,11 @@ fn extend_phony_declaration(
                 1,
                 declaration.end_line,
                 end_column,
-                format_phony_declaration(
+                format_continued_declaration(
                     &combined,
+                    "",
                     preferred_line_ending(content, declaration.start_line),
+                    DEFAULT_PHONY_LINE_LENGTH,
                 ),
             ));
         }
@@ -381,7 +385,7 @@ fn append_column(content: &str, declaration: &PhonyDeclaration, names: &[String]
     let comment = find_top_level_char(source_line, '#').unwrap_or(source_line.len());
     let insertion = source_line[..comment].trim_end().len();
     let added = names.iter().map(|name| name.chars().count()).sum::<usize>() + names.len();
-    (source_line.chars().count() + added <= 120)
+    (source_line.chars().count() + added <= DEFAULT_PHONY_LINE_LENGTH)
         .then(|| source_line[..insertion].chars().count() + 1)
 }
 
@@ -392,29 +396,13 @@ fn line_end_column(content: &str, line: usize) -> Option<usize> {
         .map(|source_line| source_line.chars().count() + 1)
 }
 
-fn format_phony_declaration(names: &[String], line_ending: &str) -> String {
-    let mut lines = Vec::new();
-    let mut line = String::from(".PHONY:");
-    for name in names {
-        if line != ".PHONY:" && line.chars().count() + 1 + name.chars().count() + 2 > 120 {
-            line.push_str(" \\");
-            lines.push(line);
-            line = String::from("        ");
-        }
-        if !line.ends_with(' ') {
-            line.push(' ');
-        }
-        line.push_str(name);
-    }
-    lines.push(line);
-    lines.join(line_ending)
-}
-
 fn format_phony_lines(names: &[String], line_ending: &str) -> String {
     let mut output = String::new();
     let mut line = String::from(".PHONY:");
     for name in names {
-        if line.chars().count() + 1 + name.chars().count() > 120 && line != ".PHONY:" {
+        if line.chars().count() + 1 + name.chars().count() > DEFAULT_PHONY_LINE_LENGTH
+            && line != ".PHONY:"
+        {
             output.push_str(&line);
             output.push_str(line_ending);
             line = String::from(".PHONY:");
@@ -425,15 +413,6 @@ fn format_phony_lines(names: &[String], line_ending: &str) -> String {
     output.push_str(&line);
     output.push_str(line_ending);
     output
-}
-
-fn preferred_line_ending(content: &str, line: usize) -> &'static str {
-    match content.split_inclusive('\n').nth(line.saturating_sub(1)) {
-        Some(source_line) if source_line.ends_with("\r\n") => "\r\n",
-        Some(source_line) if source_line.ends_with('\n') => "\n",
-        _ if content.contains("\r\n") => "\r\n",
-        _ => "\n",
-    }
 }
 
 pub struct HardcodedPath;

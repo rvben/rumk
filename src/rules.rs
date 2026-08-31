@@ -4,6 +4,7 @@ use crate::project::Project;
 use anyhow::{bail, Result};
 
 pub mod best_practices;
+mod phony;
 pub mod project;
 pub mod style;
 pub mod syntax;

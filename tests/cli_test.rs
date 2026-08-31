@@ -117,6 +117,33 @@ fn check_fix_applies_all_safe_makefile_repairs() {
 }
 
 #[test]
+fn check_fix_wraps_long_static_phony_declarations_at_the_configured_limit() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, ".PHONY: build test lint clean release\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        ".PHONY: build test lint clean \\\n        release\n"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("[MK101]"));
+    assert!(stdout.contains("Fixed 1 issue"));
+}
+
+#[test]
 fn directory_checks_enforce_ignored_paths() {
     let directory = tempfile::tempdir().unwrap();
     let ignored = directory.path().join("vendor");
@@ -230,7 +257,7 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
     assert!(rule_stdout.contains("MK101"));
     assert!(rule_stdout.contains("Category: style"));
     assert!(rule_stdout.contains("Default: enabled"));
-    assert!(rule_stdout.contains("Fixable: no"));
+    assert!(rule_stdout.contains("Fixable: yes"));
     assert!(rule_stdout.contains("Scope: file"));
     assert!(rule_stdout.contains("line-length = 120"));
     assert!(rule_stdout.contains("docs/mk101.md"));
@@ -239,7 +266,7 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
             .lines()
             .map(|line| line.split_whitespace().next().unwrap())
             .collect::<Vec<_>>(),
-        ["MK001", "MK201", "MK203"]
+        ["MK001", "MK101", "MK201", "MK203"]
     );
     assert_eq!(String::from_utf8_lossy(&config_output.stdout).trim(), "88");
     assert!(String::from_utf8_lossy(&file_output.stdout).contains(".rumk.toml"));

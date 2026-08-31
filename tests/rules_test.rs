@@ -26,6 +26,70 @@ fn line_length_ignores_comments_and_recipes_by_default() {
 }
 
 #[test]
+fn line_length_wraps_a_static_phony_declaration_idempotently() {
+    let content = ".PHONY: build test lint clean release\n";
+    let rule = LineLength::new(32);
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+
+    assert!(rule.fixable());
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].fixable);
+
+    let fixed = apply_fixes(content, &diagnostics);
+    assert_eq!(fixed, ".PHONY: build test lint clean \\\n        release\n");
+    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+}
+
+#[test]
+fn line_length_phony_fix_preserves_an_inline_comment_and_crlf() {
+    let content = ".PHONY: build test lint clean # public commands\r\n";
+    let rule = LineLength::new(36);
+    let diagnostics = rule.check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        apply_fixes(content, &diagnostics),
+        ".PHONY: build test lint \\\r\n        clean # public commands\r\n"
+    );
+}
+
+#[test]
+fn line_length_phony_fix_preserves_a_missing_final_newline() {
+    let content = ".PHONY: build test lint clean release";
+    let diagnostics = LineLength::new(32).check(&parse(content).unwrap(), content);
+
+    let fixed = apply_fixes(content, &diagnostics);
+    assert_eq!(fixed, ".PHONY: build test lint clean \\\n        release");
+    assert!(!fixed.ends_with('\n'));
+}
+
+#[test]
+fn line_length_does_not_fix_dynamic_conditional_or_unwrappable_phonies() {
+    let cases = [
+        ".PHONY: $(COMMANDS) another-command\n",
+        "ifeq ($(MODE),ci)\n.PHONY: build test lint clean\nendif\n",
+        ".PHONY: command-name-that-cannot-fit\n",
+        ".PHONY: build test \\\n        lint clean release\n",
+        " .PHONY: build test lint clean\n",
+    ];
+
+    for content in cases {
+        let diagnostics = LineLength::new(20).check(&parse(content).unwrap(), content);
+        assert_eq!(diagnostics.len(), 1, "{content:?}");
+        assert!(!diagnostics[0].fixable, "{content:?}");
+    }
+}
+
+#[test]
+fn line_length_defers_phony_wrapping_when_mk201_must_edit_the_file() {
+    let content = ".PHONY: lint command-one command-two\nall:\n\t@:\n";
+    let diagnostics = LineLength::new(24).check(&parse(content).unwrap(), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert!(!diagnostics[0].fixable);
+}
+
+#[test]
 fn tab_rule_accepts_inline_and_custom_prefix_recipes() {
     let content = ".RECIPEPREFIX := >\nall: ; @echo inline\n>@echo prefixed\n";
     let makefile = parse(content).unwrap();

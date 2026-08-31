@@ -7,6 +7,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `MK101` safely wraps long static `.PHONY` declarations at the configured line length while
+  preserving target order, inline comments, line endings, and fix idempotence.
+
 ## [0.0.6] - 2026-08-31
 
 ### Changed
