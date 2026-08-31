@@ -42,7 +42,7 @@ pipx install rumk==0.0.5
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
 archives and Python wheels cover Linux, macOS, and Windows. GitHub release assets include SHA-256
-checksums and build-provenance attestations.
+checksums.
 
 ## Quick start
 
