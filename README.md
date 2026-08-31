@@ -34,15 +34,15 @@ and exit codes intentionally follow Rumdl so existing Rumdl users can reuse thei
 ## Installation
 
 ```bash
-cargo install rumk --locked --version 0.0.5
+cargo install rumk --locked --version 0.0.6
 ```
 
 Or install the native executable from PyPI with a Python tool manager:
 
 ```bash
-uv tool install rumk==0.0.5
+uv tool install rumk==0.0.6
 # or
-pipx install rumk==0.0.5
+pipx install rumk==0.0.6
 ```
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
