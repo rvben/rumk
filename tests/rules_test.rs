@@ -5,7 +5,7 @@ use rumk::rules::best_practices::{
 };
 use rumk::rules::style::LineLength;
 use rumk::rules::syntax::{
-    ConditionalStructure, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
+    ConditionalStructure, InvalidSyntax, InvalidVariableSyntax, SpecialTargetPlacement, TabInRecipe,
 };
 use rumk::rules::Rule;
 
@@ -108,6 +108,105 @@ fn tab_rule_still_fixes_the_complete_space_prefix() {
     assert_eq!(edit.start_column, 1);
     assert_eq!(edit.end_column, 5);
     assert_eq!(edit.replacement, "\t");
+    assert_eq!(
+        diagnostics[0].message,
+        "Recipe must be indented with tab, not spaces"
+    );
+}
+
+#[test]
+fn tab_rule_fixes_with_the_active_recipe_prefix() {
+    let content = ".RECIPEPREFIX := >\nall:\n    echo wrong\n";
+    let diagnostics = TabInRecipe.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "Recipe must be indented with the recipe prefix '>', not spaces"
+    );
+    let fix = diagnostics[0].fix.as_ref().unwrap();
+    assert_eq!(fix.description, "Replace spaces with the recipe prefix '>'");
+    assert_eq!(fix.edits[0].start_column, 1);
+    assert_eq!(fix.edits[0].end_column, 5);
+    assert_eq!(fix.edits[0].replacement, ">");
+
+    let fixed = apply_fixes(content, &diagnostics);
+    assert_eq!(fixed, ".RECIPEPREFIX := >\nall:\n>echo wrong\n");
+    let makefile = parse(&fixed);
+    assert!(TabInRecipe.check(&makefile, &fixed).is_empty());
+    assert!(InvalidSyntax.check(&makefile, &fixed).is_empty());
+}
+
+#[test]
+fn tab_rule_tracks_the_recipe_prefix_in_source_order() {
+    let cases = [
+        ("all:\n    echo\n.RECIPEPREFIX := >\n", vec!["\t"]),
+        (".RECIPEPREFIX = >\nall:\n    echo\n", vec![">"]),
+        (
+            ".RECIPEPREFIX := >\n.RECIPEPREFIX =\nall:\n    echo\n",
+            vec!["\t"],
+        ),
+        (
+            ".RECIPEPREFIX := >\nall:\n    echo\n.RECIPEPREFIX := |\nother:\n    echo\n",
+            vec![">", "|"],
+        ),
+    ];
+
+    for (content, prefixes) in cases {
+        let replacements: Vec<String> = TabInRecipe
+            .check(&parse(content), content)
+            .iter()
+            .map(|diagnostic| {
+                diagnostic.fix.as_ref().unwrap().edits[0]
+                    .replacement
+                    .clone()
+            })
+            .collect();
+        assert_eq!(replacements, prefixes, "{content:?}");
+    }
+}
+
+#[test]
+fn tab_rule_says_nothing_when_the_prefix_can_be_the_space_it_reads() {
+    // GNU Make reads recipes with a space where `.RECIPEPREFIX` expands to one,
+    // so a leading space is the prefix rather than a defect.
+    let cases = [
+        "P := >\n.RECIPEPREFIX := $(P)\nall:\n    echo\n",
+        ".RECIPEPREFIX != printf %s '>'\nall:\n    echo\n",
+        "define .RECIPEPREFIX\n>\nendef\nall:\n    echo\n",
+        "e :=\nspace := $(e) $(e)\n.RECIPEPREFIX := $(space)\nall:\n echo\n",
+    ];
+
+    for content in cases {
+        let diagnostics = TabInRecipe.check(&parse(content), content);
+        assert!(diagnostics.is_empty(), "{content:?}");
+    }
+}
+
+#[test]
+fn tab_rule_reports_without_a_fix_when_the_prefix_is_undecided() {
+    // Every branch here reads recipes with a tab or with '>', so the spaces are
+    // wrong whichever one Make takes, while the character to write is open.
+    let cases = [
+        "ifdef X\n.RECIPEPREFIX = >\nendif\nall:\n    echo\n",
+        // An included file can assign the prefix Make reads from here on.
+        "include config.mk\nall:\n    echo\n",
+        "-include config.mk\n.RECIPEPREFIX := >\nall:\n    echo\n",
+    ];
+
+    for content in cases {
+        let diagnostics = TabInRecipe.check(&parse(content), content);
+
+        assert_eq!(diagnostics.len(), 1, "{content:?}");
+        assert!(diagnostics[0].fix.is_none(), "{content:?}");
+        assert!(!diagnostics[0].fixable, "{content:?}");
+        assert_eq!(
+            diagnostics[0].message,
+            "Recipe must be indented with the active recipe prefix, not spaces",
+            "{content:?}"
+        );
+        assert_eq!(apply_fixes(content, &diagnostics), content, "{content:?}");
+    }
 }
 
 #[test]

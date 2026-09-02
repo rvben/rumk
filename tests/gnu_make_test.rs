@@ -5,7 +5,7 @@ use rumk::fix::apply_fixes;
 use rumk::parser::{parse, VariableScope};
 use rumk::project::{Project, ProjectOptions};
 use rumk::rules::style::LineLength;
-use rumk::rules::syntax::InvalidSyntax;
+use rumk::rules::syntax::{InvalidSyntax, TabInRecipe};
 use rumk::rules::Rule;
 
 fn fixture(name: &str) -> PathBuf {
@@ -69,6 +69,40 @@ fn wrapped_phony_fix_is_accepted_by_gnu_make() {
     assert!(["build", "test", "lint", "clean", "release"]
         .iter()
         .all(|target| makefile.phonies.iter().any(|phony| phony == target)));
+}
+
+#[test]
+fn recipe_prefix_fix_is_accepted_by_gnu_make() {
+    // GNU Make 3.82 introduced .RECIPEPREFIX.
+    if !matches!(installed_make_version(), Some(version) if version >= (3, 82)) {
+        return;
+    }
+    let content = ".RECIPEPREFIX := >\nall:\n    @echo prefixed\n";
+    let diagnostics = TabInRecipe.check(&parse(content), content);
+    let fixed = apply_fixes(content, &diagnostics);
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("broken.mk"), content).unwrap();
+    std::fs::write(directory.path().join("fixed.mk"), &fixed).unwrap();
+    let run = |name: &str| {
+        Command::new("make")
+            .current_dir(directory.path())
+            .args(["--no-builtin-rules", "-f", name, "all"])
+            .output()
+            .unwrap_or_else(|error| panic!("failed to launch GNU Make: {error}"))
+    };
+
+    let broken = run("broken.mk");
+    assert!(
+        !broken.status.success(),
+        "GNU Make accepted the space-indented recipe under a custom prefix"
+    );
+    let output = run("fixed.mk");
+    assert!(
+        output.status.success(),
+        "GNU Make rejected the fixed recipe:\n{fixed}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "prefixed");
 }
 
 #[test]

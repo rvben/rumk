@@ -16,8 +16,8 @@ impl Rule for TabInRecipe {
     }
 
     fn description(&self) -> &'static str {
-        "Makefile recipes (commands) must be indented with a tab character, not spaces. \
-         This is a requirement of the Make syntax."
+        "Makefile recipes (commands) must be indented with a tab character, or with the \
+         prefix set by .RECIPEPREFIX, not spaces. This is a requirement of the Make syntax."
     }
 
     fn category(&self) -> RuleCategory {
@@ -33,31 +33,70 @@ impl Rule for TabInRecipe {
 
         for rule in &makefile.rules {
             for recipe in &rule.recipes {
-                if !recipe.inline && recipe.indentation.starts_with(' ') {
-                    let fix = Fix::new("Replace spaces with tab").add_edit(Edit::new(
+                if recipe.inline || !recipe.indentation.starts_with(' ') {
+                    continue;
+                }
+                // The replacement is the prefix Make expects at this line, which
+                // an earlier .RECIPEPREFIX assignment can have changed from a tab.
+                let prefix = makefile.syntax.recipe_prefix_at(recipe.line);
+                if prefix.unevaluated {
+                    // A value Rumk could not evaluate can be the space this
+                    // line starts with, so Make may read the line as a recipe.
+                    continue;
+                }
+                if !prefix.known || an_include_precedes(makefile, recipe.line) {
+                    // The line is indented with a character Make does not read
+                    // recipes with, whichever prefix it ends up using, but
+                    // writing one Rumk had to guess would break a file Make
+                    // accepts, so the line is reported without a fix.
+                    diagnostics.push(Diagnostic::new(
+                        self.id(),
+                        Severity::Error,
+                        "Recipe must be indented with the active recipe prefix, not spaces",
                         recipe.line,
                         1,
-                        recipe.line,
-                        recipe.indentation.len() + 1,
-                        "\t".to_string(),
                     ));
-
-                    diagnostics.push(
-                        Diagnostic::new(
-                            self.id(),
-                            Severity::Error,
-                            "Recipe must be indented with tab, not spaces",
-                            recipe.line,
-                            1,
-                        )
-                        .with_fix(fix),
-                    );
+                    continue;
                 }
+                let character = prefix.character;
+                let (message, description) = if character == '\t' {
+                    (
+                        "Recipe must be indented with tab, not spaces".to_string(),
+                        "Replace spaces with tab".to_string(),
+                    )
+                } else {
+                    (
+                        format!(
+                            "Recipe must be indented with the recipe prefix '{character}', not \
+                             spaces"
+                        ),
+                        format!("Replace spaces with the recipe prefix '{character}'"),
+                    )
+                };
+                let fix = Fix::new(description).add_edit(Edit::new(
+                    recipe.line,
+                    1,
+                    recipe.line,
+                    recipe.indentation.len() + 1,
+                    character.to_string(),
+                ));
+
+                diagnostics.push(
+                    Diagnostic::new(self.id(), Severity::Error, message, recipe.line, 1)
+                        .with_fix(fix),
+                );
             }
         }
 
         diagnostics
     }
+}
+
+/// Whether a file included before `line` could have set the recipe prefix Make
+/// reads there. Make keeps reading the including file with the prefix an
+/// included file assigned, which Rumk does not follow across files.
+fn an_include_precedes(makefile: &Makefile, line: usize) -> bool {
+    makefile.includes.iter().any(|include| include.line < line)
 }
 
 pub struct InvalidVariableSyntax;

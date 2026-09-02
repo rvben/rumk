@@ -90,6 +90,11 @@ pub struct RecipePrefix {
     /// value Rumk cannot evaluate, and one assigned in a branch Make decides
     /// at run time, leave it unknown.
     pub known: bool,
+    /// Whether a value Rumk could not evaluate stands behind the prefix, which
+    /// leaves every character possible, a space included. A prefix Rumk read
+    /// from the source is never a space, because Make drops the whitespace
+    /// between the assignment operator and the value.
+    pub unevaluated: bool,
 }
 
 impl SyntaxNode {
@@ -311,6 +316,10 @@ struct PrefixTracker {
     /// `+=` appends its text or the text it expands to. Make defines
     /// `.RECIPEPREFIX` simply expanded and empty.
     expanded: bool,
+    /// Whether the value Make holds is one Rumk could not evaluate, which
+    /// leaves the character it starts with open rather than merely undecided
+    /// between the values Rumk did read.
+    unevaluated: bool,
 }
 
 impl Default for PrefixTracker {
@@ -319,6 +328,7 @@ impl Default for PrefixTracker {
             assigned: None,
             known: true,
             expanded: true,
+            unevaluated: false,
         }
     }
 }
@@ -328,6 +338,7 @@ impl PrefixTracker {
         RecipePrefix {
             character: self.assigned.unwrap_or('\t'),
             known: self.known,
+            unevaluated: self.unevaluated,
         }
     }
 
@@ -338,14 +349,19 @@ impl PrefixTracker {
                 self.assigned = first;
                 self.known = true;
                 self.expanded = expanded;
+                self.unevaluated = false;
             }
-            PrefixEffect::SetUnknown => self.known = false,
+            PrefixEffect::SetUnknown => {
+                self.known = false;
+                self.unevaluated = true;
+            }
             PrefixEffect::Append(first) => {
                 if self.known && self.assigned.is_none() {
                     // A simply expanded value expands what it appends, so a
                     // reference stands for text Rumk cannot read here.
                     if self.expanded && first == Some('$') {
                         self.known = false;
+                        self.unevaluated = true;
                     } else {
                         self.assigned = first;
                     }
@@ -364,6 +380,9 @@ impl PrefixTracker {
             // as expanded is the outcome that never claims a character an
             // expansion could replace.
             self.expanded |= before.expanded;
+            // A branch that was not taken leaves the value it found, so a value
+            // Rumk could not evaluate is still one of the outcomes.
+            self.unevaluated |= before.unevaluated;
         }
     }
 }
