@@ -1077,7 +1077,7 @@ fn show_rule(
             .with_context(|| format!("Unknown rule: {rule_id}"))?;
         let defaults = Config::default();
         let enabled_by_default = defaults.rules.iter().any(|item| item.id() == rule.id());
-        println!("{} — {}", rule.id(), rule.name());
+        println!("{} - {}", rule.id(), rule.name());
         println!("Category: {}", rule.category().as_str());
         println!(
             "Default: {}",
