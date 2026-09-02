@@ -8,8 +8,8 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_RULES: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK201", "MK203", "MK204", "MK205",
-    "MK206", "MK207",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK201", "MK203", "MK204",
+    "MK205", "MK206", "MK207",
 ];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
@@ -855,6 +855,7 @@ fn build_rule(
         "MK003" => Box::new(rules::syntax::ConditionalStructure),
         "MK004" => Box::new(rules::project::MixedTargetSeparators),
         "MK005" => Box::new(rules::syntax::SpecialTargetPlacement),
+        "MK006" => Box::new(rules::syntax::InvalidSyntax),
         "MK101" => Box::new(
             rules::style::LineLength::new(integer_option(rule_id, settings, "max", 120)?)
                 .ignore_comments(boolean_option(rule_id, settings, "ignore-comments", true)?)

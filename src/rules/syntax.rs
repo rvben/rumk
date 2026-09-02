@@ -1,6 +1,7 @@
 use crate::analysis::StructuralIssueKind;
+use crate::binding::Expansions;
 use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
-use crate::parser::Makefile;
+use crate::parser::{Makefile, SyntaxErrorKind};
 use crate::rules::{Rule, RuleCategory};
 
 pub struct TabInRecipe;
@@ -71,8 +72,8 @@ impl Rule for InvalidVariableSyntax {
     }
 
     fn description(&self) -> &'static str {
-        "Literal variable names must not contain ':', '#', or '='. Internal whitespace and \
-         computed variable names are accepted by GNU Make."
+        "Literal variable names must not contain ':', '#', or '='. Computed variable names \
+         are accepted by GNU Make."
     }
 
     fn category(&self) -> RuleCategory {
@@ -154,6 +155,57 @@ impl Rule for ConditionalStructure {
                     message,
                     issue.location.line,
                     issue.location.column,
+                )
+            })
+            .collect()
+    }
+}
+
+pub struct InvalidSyntax;
+
+impl Rule for InvalidSyntax {
+    fn id(&self) -> &'static str {
+        "MK006"
+    }
+
+    fn name(&self) -> &'static str {
+        "Statement is not valid GNU Make syntax"
+    }
+
+    fn description(&self) -> &'static str {
+        "GNU Make stops reading a Makefile at a line it cannot parse: a missing separator, \
+         a recipe before the first target, an unterminated variable or function reference, \
+         an empty variable name, or an unbalanced define or conditional."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Syntax
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        let mut expansions = None;
+        makefile
+            .syntax_errors
+            .iter()
+            .filter(|error| match &error.kind {
+                // A broken value in a recursively expanded variable only
+                // fails once something expands the variable while it still
+                // holds that value.
+                SyntaxErrorKind::UnterminatedReference {
+                    deferred_in: Some(name),
+                    ..
+                } => expansions
+                    .get_or_insert_with(|| Expansions::build(makefile))
+                    .expands_value(name, error.line),
+                _ => true,
+            })
+            .map(|error| {
+                Diagnostic::new(
+                    self.id(),
+                    Severity::Error,
+                    error.kind.to_string(),
+                    error.line,
+                    error.column,
                 )
             })
             .collect()

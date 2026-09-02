@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::expansion::is_make_function;
 use crate::logical::{find_top_level_char, ConditionalKind, LogicalKind};
 use crate::parser::{AssignmentOperator, Makefile, VariableScope};
 
@@ -472,7 +473,10 @@ fn extract_references(makefile: &Makefile) -> Vec<Reference> {
         let context = reference_context(statement.kind);
         if matches!(
             statement.kind,
-            LogicalKind::Blank | LogicalKind::Comment | LogicalKind::Endef
+            LogicalKind::Blank
+                | LogicalKind::Comment
+                | LogicalKind::Endef
+                | LogicalKind::OrphanRecipe
         ) {
             continue;
         }
@@ -639,51 +643,6 @@ fn is_automatic_reference(name: &str) -> bool {
         && characters
             .next()
             .is_none_or(|suffix| matches!(suffix, 'D' | 'F') && characters.next().is_none())
-}
-
-fn is_make_function(name: &str) -> bool {
-    matches!(
-        name,
-        "subst"
-            | "patsubst"
-            | "strip"
-            | "findstring"
-            | "filter"
-            | "filter-out"
-            | "sort"
-            | "word"
-            | "wordlist"
-            | "words"
-            | "firstword"
-            | "lastword"
-            | "dir"
-            | "notdir"
-            | "suffix"
-            | "basename"
-            | "addsuffix"
-            | "addprefix"
-            | "join"
-            | "wildcard"
-            | "realpath"
-            | "abspath"
-            | "if"
-            | "or"
-            | "and"
-            | "intcmp"
-            | "foreach"
-            | "let"
-            | "file"
-            | "call"
-            | "value"
-            | "eval"
-            | "origin"
-            | "flavor"
-            | "shell"
-            | "error"
-            | "warning"
-            | "info"
-            | "guile"
-    )
 }
 
 struct LineIndex<'a> {

@@ -17,7 +17,7 @@ fn line_length_ignores_comments_and_recipes_by_default() {
         "all:\n",
         "\techo this recipe command is intentionally very long\n",
     );
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
 
     let diagnostics = LineLength::new(20).check(&makefile, content);
 
@@ -29,7 +29,7 @@ fn line_length_ignores_comments_and_recipes_by_default() {
 fn line_length_wraps_a_static_phony_declaration_idempotently() {
     let content = ".PHONY: build test lint clean release\n";
     let rule = LineLength::new(32);
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
 
     assert!(rule.fixable());
     assert_eq!(diagnostics.len(), 1);
@@ -37,14 +37,14 @@ fn line_length_wraps_a_static_phony_declaration_idempotently() {
 
     let fixed = apply_fixes(content, &diagnostics);
     assert_eq!(fixed, ".PHONY: build test lint clean \\\n        release\n");
-    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
 }
 
 #[test]
 fn line_length_phony_fix_preserves_an_inline_comment_and_crlf() {
     let content = ".PHONY: build test lint clean # public commands\r\n";
     let rule = LineLength::new(36);
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
@@ -56,7 +56,7 @@ fn line_length_phony_fix_preserves_an_inline_comment_and_crlf() {
 #[test]
 fn line_length_phony_fix_preserves_a_missing_final_newline() {
     let content = ".PHONY: build test lint clean release";
-    let diagnostics = LineLength::new(32).check(&parse(content).unwrap(), content);
+    let diagnostics = LineLength::new(32).check(&parse(content), content);
 
     let fixed = apply_fixes(content, &diagnostics);
     assert_eq!(fixed, ".PHONY: build test lint clean \\\n        release");
@@ -74,7 +74,7 @@ fn line_length_does_not_fix_dynamic_conditional_or_unwrappable_phonies() {
     ];
 
     for content in cases {
-        let diagnostics = LineLength::new(20).check(&parse(content).unwrap(), content);
+        let diagnostics = LineLength::new(20).check(&parse(content), content);
         assert_eq!(diagnostics.len(), 1, "{content:?}");
         assert!(!diagnostics[0].fixable, "{content:?}");
     }
@@ -83,7 +83,7 @@ fn line_length_does_not_fix_dynamic_conditional_or_unwrappable_phonies() {
 #[test]
 fn line_length_defers_phony_wrapping_when_mk201_must_edit_the_file() {
     let content = ".PHONY: lint command-one command-two\nall:\n\t@:\n";
-    let diagnostics = LineLength::new(24).check(&parse(content).unwrap(), content);
+    let diagnostics = LineLength::new(24).check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert!(!diagnostics[0].fixable);
@@ -92,7 +92,7 @@ fn line_length_defers_phony_wrapping_when_mk201_must_edit_the_file() {
 #[test]
 fn tab_rule_accepts_inline_and_custom_prefix_recipes() {
     let content = ".RECIPEPREFIX := >\nall: ; @echo inline\n>@echo prefixed\n";
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
 
     assert!(TabInRecipe.check(&makefile, content).is_empty());
 }
@@ -100,7 +100,7 @@ fn tab_rule_accepts_inline_and_custom_prefix_recipes() {
 #[test]
 fn tab_rule_still_fixes_the_complete_space_prefix() {
     let content = "all:\n    echo wrong\n";
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
     let diagnostics = TabInRecipe.check(&makefile, content);
 
     assert_eq!(diagnostics.len(), 1);
@@ -113,7 +113,7 @@ fn tab_rule_still_fixes_the_complete_space_prefix() {
 #[test]
 fn missing_phony_rule_groups_targets_and_preserves_crlf() {
     let content = "all:\r\n\t@:\r\nclean:\r\n\t@:\r\n";
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
     let rule = MissingPhony::default();
     let diagnostics = rule.check(&makefile, content);
 
@@ -136,7 +136,7 @@ fn missing_phony_extends_a_canonical_group_and_preserves_its_comment() {
         "clean:\n\t@:\n",
     );
     let rule = MissingPhony::default();
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
     let fixed = apply_fixes(content, &diagnostics);
 
     assert_eq!(diagnostics.len(), 1);
@@ -149,7 +149,7 @@ fn missing_phony_extends_a_canonical_group_and_preserves_its_comment() {
             "clean:\n\t@:\n",
         )
     );
-    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
 }
 
 #[test]
@@ -162,7 +162,7 @@ fn missing_phony_preserves_an_existing_per_section_style() {
         "clean:\n\t@:\n",
         "test:\n\t@:\n",
     );
-    let diagnostics = MissingPhony::default().check(&parse(content).unwrap(), content);
+    let diagnostics = MissingPhony::default().check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 2);
@@ -189,7 +189,7 @@ fn missing_phony_does_not_extend_a_conditional_declaration() {
         "endif\n",
         "all:\n\t@:\n",
     );
-    let diagnostics = MissingPhony::default().check(&parse(content).unwrap(), content);
+    let diagnostics = MissingPhony::default().check(&parse(content), content);
 
     assert_eq!(
         apply_fixes(content, &diagnostics),
@@ -212,21 +212,21 @@ fn missing_phony_merges_and_wraps_an_overlong_canonical_group() {
     let existing = format!(".PHONY: {existing_names}\n");
     let content = format!("{existing}all:\n\t@:\n");
     let rule = MissingPhony::default();
-    let diagnostics = rule.check(&parse(&content).unwrap(), &content);
+    let diagnostics = rule.check(&parse(&content), &content);
     let fixed = apply_fixes(&content, &diagnostics);
 
     assert_eq!(fixed.matches(".PHONY:").count(), 1);
     assert!(fixed.contains(" \\\n        "));
     assert!(fixed.contains("command-16 all"));
     assert!(fixed.lines().all(|line| line.chars().count() <= 120));
-    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
 }
 
 #[test]
 fn missing_phony_can_place_a_group_before_the_first_rule() {
     let content = concat!("SHELL := /bin/sh\n", "\n", "all:\n\t@:\n", "clean:\n\t@:\n",);
     let rule = MissingPhony::new(PhonyPlacement::Top);
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
     let fixed = apply_fixes(content, &diagnostics);
 
     assert_eq!(diagnostics.len(), 1);
@@ -240,7 +240,7 @@ fn missing_phony_can_place_a_group_before_the_first_rule() {
             "clean:\n\t@:\n",
         )
     );
-    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
 }
 
 #[test]
@@ -254,7 +254,7 @@ fn missing_phony_can_extend_the_top_declaration() {
         "test:\n\t@:\n",
     );
     let rule = MissingPhony::new(PhonyPlacement::Top);
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
 
     assert_eq!(
         apply_fixes(content, &diagnostics),
@@ -273,20 +273,20 @@ fn missing_phony_can_extend_the_top_declaration() {
 fn missing_phony_can_place_declarations_adjacent_to_targets() {
     let content = "all:\n\t@:\nclean:\n\t@:\n";
     let rule = MissingPhony::new(PhonyPlacement::Adjacent);
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
     let fixed = apply_fixes(content, &diagnostics);
 
     assert_eq!(
         fixed,
         ".PHONY: all\nall:\n\t@:\n.PHONY: clean\nclean:\n\t@:\n"
     );
-    assert!(rule.check(&parse(&fixed).unwrap(), &fixed).is_empty());
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
 }
 
 #[test]
 fn make_builtin_variable_names_are_valid() {
     let content = ".RECIPEPREFIX := >\n.VARIABLES := value\n";
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
 
     assert!(InvalidVariableSyntax.check(&makefile, content).is_empty());
 }
@@ -296,10 +296,10 @@ fn make_permits_punctuation_and_computed_variable_names() {
     let content = concat!(
         "package/version := 1\n",
         "feature+flags := enabled\n",
-        "two words := yes\n",
         "$(PREFIX)_SOURCES := main.c\n",
+        "$(two words) := yes\n",
     );
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
 
     assert!(InvalidVariableSyntax.check(&makefile, content).is_empty());
 }
@@ -307,12 +307,10 @@ fn make_permits_punctuation_and_computed_variable_names() {
 #[test]
 fn conditional_structure_reports_only_malformed_blocks() {
     let valid = "ifdef A\nifeq ($(MODE),debug)\nelse\nendif\nendif\n";
-    assert!(ConditionalStructure
-        .check(&parse(valid).unwrap(), valid)
-        .is_empty());
+    assert!(ConditionalStructure.check(&parse(valid), valid).is_empty());
 
     let invalid = "else\nendif\nifndef OPEN\n";
-    let diagnostics = ConditionalStructure.check(&parse(invalid).unwrap(), invalid);
+    let diagnostics = ConditionalStructure.check(&parse(invalid), invalid);
     assert_eq!(
         diagnostics
             .iter()
@@ -338,7 +336,7 @@ fn recursive_make_rule_distinguishes_commands_from_arguments() {
         "\t+$(MAKE) -C good\n",
         "\t@echo $$MAKE\n",
     );
-    let diagnostics = RecursiveMake.check(&parse(content).unwrap(), content);
+    let diagnostics = RecursiveMake.check(&parse(content), content);
 
     assert_eq!(
         diagnostics
@@ -370,7 +368,7 @@ fn recursive_make_rule_distinguishes_commands_from_arguments() {
 #[test]
 fn recursive_make_fix_replaces_every_command_position_on_a_line() {
     let content = ".PHONY: all\nall: ; make first && env MODE=debug gmake second\n";
-    let diagnostics = RecursiveMake.check(&parse(content).unwrap(), content);
+    let diagnostics = RecursiveMake.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].fix.as_ref().unwrap().edits.len(), 2);
@@ -383,7 +381,7 @@ fn recursive_make_fix_replaces_every_command_position_on_a_line() {
 #[test]
 fn recursive_make_reports_but_does_not_rewrite_continued_recipes() {
     let content = ".PHONY: all\nall:\n\tmake \\\n\t  -C sub\n";
-    let diagnostics = RecursiveMake.check(&parse(content).unwrap(), content);
+    let diagnostics = RecursiveMake.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert!(!diagnostics[0].fixable);
@@ -404,7 +402,7 @@ fn duplicate_recipe_rule_allows_merged_and_double_colon_rules() {
         "event::\n",
         "\t@echo second\n",
     );
-    let diagnostics = DuplicateRecipe.check(&parse(content).unwrap(), content);
+    let diagnostics = DuplicateRecipe.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].rule_id, "MK204");
@@ -424,7 +422,7 @@ fn graph_rules_do_not_cross_conditional_branches() {
         "second: choice\n",
         "endif\n",
     );
-    let makefile = parse(content).unwrap();
+    let makefile = parse(content);
 
     assert!(DuplicateRecipe.check(&makefile, content).is_empty());
     assert!(DependencyCycle.check(&makefile, content).is_empty());
@@ -438,7 +436,7 @@ fn dependency_cycle_rule_reports_components_once() {
         "self: self\n",
         "leaf: external\n",
     );
-    let diagnostics = DependencyCycle.check(&parse(content).unwrap(), content);
+    let diagnostics = DependencyCycle.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 2);
     assert_eq!(
@@ -459,9 +457,9 @@ fn special_targets_must_not_share_the_left_hand_side() {
     let invalid = ".PHONY all:\n\t@:\n";
 
     assert!(SpecialTargetPlacement
-        .check(&parse(valid).unwrap(), valid)
+        .check(&parse(valid), valid)
         .is_empty());
-    let diagnostics = SpecialTargetPlacement.check(&parse(invalid).unwrap(), invalid);
+    let diagnostics = SpecialTargetPlacement.check(&parse(invalid), invalid);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].rule_id, "MK005");

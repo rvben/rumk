@@ -82,6 +82,35 @@ fn classifies_source_order_without_discarding_unknown_syntax() {
 }
 
 #[test]
+fn a_define_keyword_before_an_operator_names_a_variable() {
+    let tree = SyntaxTree::parse("define = 1\noverride define := 2\nX := 3\n");
+    let kinds: Vec<_> = tree.nodes().iter().map(|node| node.kind).collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            SyntaxKind::Assignment,
+            SyntaxKind::Assignment,
+            SyntaxKind::Assignment,
+        ]
+    );
+
+    let tree = SyntaxTree::parse("define X =\nbody\nendef\ndefine\nendef\n");
+    let kinds: Vec<_> = tree.nodes().iter().map(|node| node.kind).collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            SyntaxKind::Define,
+            SyntaxKind::DefineBody,
+            SyntaxKind::Endef,
+            SyntaxKind::Define,
+            SyntaxKind::Endef,
+        ]
+    );
+}
+
+#[test]
 fn treats_define_contents_as_opaque_source() {
     let source = concat!(
         "override define PROGRAM\n",
@@ -140,9 +169,101 @@ fn classifies_custom_recipe_prefixes_contextually() {
 }
 
 #[test]
+fn reports_the_recipe_prefix_and_whether_it_is_known() {
+    let prefixes = |source: &str| {
+        let tree = SyntaxTree::parse(source);
+        (1..=tree.nodes().len())
+            .map(|line| {
+                let prefix = tree.recipe_prefix_at(line);
+                (prefix.character, prefix.known)
+            })
+            .collect::<Vec<_>>()
+    };
+
+    // A file without an assignment is read with a tab throughout, and a line
+    // past the end reports the prefix Make starts with.
+    assert_eq!(prefixes("all:\n\t@echo ok\n"), [('\t', true), ('\t', true)]);
+    assert_eq!(
+        SyntaxTree::parse("all:\n").recipe_prefix_at(9).character,
+        '\t'
+    );
+    // An assignment takes effect on the following line.
+    assert_eq!(
+        prefixes(".RECIPEPREFIX := >\nall:\n>@echo ok\n"),
+        [('\t', true), ('>', true), ('>', true)]
+    );
+    // A value Rumk cannot evaluate leaves the prefix unknown.
+    assert_eq!(
+        prefixes("P := >\n.RECIPEPREFIX := $(P)\nall:\n"),
+        [('\t', true), ('\t', true), ('\t', false)]
+    );
+    // A conditional assignment gives the character the author indented for,
+    // without claiming Make reads the file with it.
+    assert_eq!(
+        prefixes("ifdef X\n.RECIPEPREFIX = >\nendif\nall:\n"),
+        [('\t', true), ('\t', true), ('>', false), ('>', false)]
+    );
+}
+
+#[test]
+fn reads_the_recipe_prefix_the_way_make_stores_the_value() {
+    let prefix = |source: &str| {
+        let tree = SyntaxTree::parse(source);
+        let prefix = tree.recipe_prefix_at(tree.nodes().len());
+        (prefix.character, prefix.known)
+    };
+
+    // Make strips the comment, so the value is empty and the prefix is a tab.
+    assert_eq!(prefix(".RECIPEPREFIX := # reset\nall:\n"), ('\t', true));
+    assert_eq!(prefix(".RECIPEPREFIX = > # keep\nall:\n"), ('>', true));
+    // An escaped hash is the value Make stores, not a comment.
+    assert_eq!(prefix(".RECIPEPREFIX = \\#\nall:\n"), ('#', true));
+    // A hash inside a reference is part of the value.
+    assert_eq!(prefix(".RECIPEPREFIX = $(x)#c\nall:\n"), ('$', true));
+
+    // `+=` on the simply expanded value Make starts with expands what it
+    // appends, so a reference leaves a character Rumk cannot read, while the
+    // recursive value a `=` leaves behind keeps the reference as text.
+    assert_eq!(
+        prefix("P = >\n.RECIPEPREFIX += $(P)\nall:\n"),
+        ('\t', false)
+    );
+    assert_eq!(
+        prefix("P = >\n.RECIPEPREFIX :=\n.RECIPEPREFIX += $(P)\nall:\n"),
+        ('\t', false)
+    );
+    assert_eq!(
+        prefix("P = >\n.RECIPEPREFIX =\n.RECIPEPREFIX += $(P)\nall:\n"),
+        ('$', true)
+    );
+    assert_eq!(prefix(".RECIPEPREFIX += >\nall:\n"), ('>', true));
+
+    // A conditional statement that cannot change the character it would have
+    // read anyway leaves the prefix as certain as it was.
+    assert_eq!(
+        prefix(".RECIPEPREFIX = >\nifdef X\n.RECIPEPREFIX += !\nendif\nall:\n"),
+        ('>', true)
+    );
+    assert_eq!(
+        prefix(".RECIPEPREFIX = >\nifdef X\n.RECIPEPREFIX = >\nendif\nall:\n"),
+        ('>', true)
+    );
+    assert_eq!(
+        prefix(".RECIPEPREFIX = >\nifdef X\n.RECIPEPREFIX = !\nendif\nall:\n"),
+        ('!', false)
+    );
+    // An undecided branch that may have made the value simply expanded leaves
+    // a later append undecided too.
+    assert_eq!(
+        prefix("P = >\n.RECIPEPREFIX =\nifdef X\n.RECIPEPREFIX :=\nendif\n.RECIPEPREFIX += $(P)\nall:\n"),
+        ('\t', false)
+    );
+}
+
+#[test]
 fn semantic_parser_exposes_the_lossless_tree() {
     let source = "name := naïve\nall:\n\t@echo $(name)\n";
-    let makefile = parser::parse(source).unwrap();
+    let makefile = parser::parse(source);
 
     assert_eq!(makefile.syntax.source(), source);
     assert_eq!(makefile.syntax.render(), source);

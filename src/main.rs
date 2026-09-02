@@ -647,7 +647,7 @@ fn lint(
     contextual: bool,
     covered_files: &BTreeSet<PathBuf>,
 ) -> Result<Vec<Diagnostic>> {
-    let makefile = parser::parse(content)?;
+    let makefile = parser::parse(content);
     let mut diagnostics = config
         .rules
         .iter()

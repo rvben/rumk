@@ -29,7 +29,6 @@ pub enum IncludeResolution {
     Dynamic,
     Inactive,
     Unreadable { path: PathBuf, message: String },
-    Invalid { path: PathBuf, message: String },
     LimitExceeded,
 }
 
@@ -126,8 +125,7 @@ impl Project {
         options: &ProjectOptions,
     ) -> Result<Self> {
         let path = canonical_or_normalized(path)?;
-        let makefile = parser::parse(&content)
-            .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+        let makefile = parser::parse(&content);
         let working_directory = options
             .working_directory
             .clone()
@@ -305,6 +303,7 @@ impl<'a> Loader<'a> {
                             operator: definition.operator,
                             modifiers: definition.modifiers,
                             scope: VariableScope::Global,
+                            reach: definition.reach,
                             line: definition.line,
                             end_line: definition.end_line,
                             column: 1,
@@ -586,18 +585,7 @@ impl<'a> Loader<'a> {
                 );
             }
         };
-        let makefile = match parser::parse(&content) {
-            Ok(makefile) => makefile,
-            Err(error) => {
-                return (
-                    IncludeResolution::Invalid {
-                        path,
-                        message: error.to_string(),
-                    },
-                    None,
-                );
-            }
-        };
+        let makefile = parser::parse(&content);
         let id = self.insert_file(path.clone(), content, makefile);
         self.paths.insert(path, id);
         (IncludeResolution::Resolved(id), Some(id))

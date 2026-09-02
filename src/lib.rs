@@ -1,7 +1,10 @@
 pub mod analysis;
+mod binding;
+mod builtins;
 pub mod config;
 pub mod diagnostic;
 pub mod eval;
+pub mod expansion;
 pub mod fix;
 pub mod inline_config;
 pub mod logical;

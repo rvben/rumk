@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::expansion::reference_length;
 use crate::logical::ConditionalKind;
 use crate::parser::{AssignmentOperator, Variable};
 use crate::project::SourceId;
@@ -948,38 +949,49 @@ fn matching_delimiter(text: &str, body_start: usize, initial_closing: char) -> O
     None
 }
 
+/// Splits function arguments at the commas outside references. A comma
+/// inside an unterminated reference separates nothing.
 fn split_function_arguments(arguments: &str) -> Vec<&str> {
     let mut result = Vec::new();
     let mut start = 0;
-    let mut closers = Vec::new();
-    let mut characters = arguments.char_indices().peekable();
-    while let Some((index, character)) = characters.next() {
-        if character == '$' {
-            if let Some((_, next)) = characters.peek().copied() {
-                if matches!(next, '(' | '{') {
-                    closers.push(if next == '(' { ')' } else { '}' });
-                    characters.next();
-                }
+    let mut skip_to = 0;
+    for (index, character) in arguments.char_indices() {
+        if index < skip_to {
+            continue;
+        }
+        match character {
+            '$' => match reference_length(arguments, index) {
+                Some(length) => skip_to = index + length,
+                None => break,
+            },
+            ',' => {
+                result.push(&arguments[start..index]);
+                start = index + 1;
             }
-        } else if closers.last().copied() == Some(character) {
-            closers.pop();
-        } else if character == ',' && closers.is_empty() {
-            result.push(&arguments[start..index]);
-            start = index + 1;
+            _ => {}
         }
     }
     result.push(&arguments[start..]);
     result
 }
 
-fn parse_comparison(expression: &str) -> Option<(&str, &str)> {
+/// Splits an `ifeq`/`ifneq` expression into its two operands, accepting the
+/// parenthesized and the quoted forms. In the parenthesized form Make keeps
+/// the blanks after the opening parenthesis and before the closing one, and
+/// drops the blanks around the comma.
+pub(crate) fn parse_comparison(expression: &str) -> Option<(&str, &str)> {
     let expression = expression.trim();
     if let Some(inner) = expression
         .strip_prefix('(')
         .and_then(|value| value.strip_suffix(')'))
     {
         let arguments = split_function_arguments(inner);
-        return (arguments.len() == 2).then(|| (arguments[0].trim(), arguments[1].trim()));
+        return (arguments.len() == 2).then(|| {
+            (
+                arguments[0].trim_end_matches([' ', '\t']),
+                arguments[1].trim_start_matches([' ', '\t']),
+            )
+        });
     }
     let (left, rest) = parse_quoted(expression)?;
     let (right, trailing) = parse_quoted(rest.trim_start())?;

@@ -7,6 +7,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- `MK006` reports statements GNU Make refuses to read: missing separators (with the same hints
+  GNU Make prints for eight-space indentation and `ifeq(` without whitespace), recipes before
+  the first target, unterminated variable and function references, empty variable names, and
+  unbalanced `define` blocks. Unterminated references in recursively expanded variables are
+  reported only when GNU Make expands the variable while it holds that value.
+
+### Changed
+
+- `rumk::parser::parse` no longer fails on a Makefile GNU Make would reject. It returns the
+  parsed file with the problems collected in `Makefile::syntax_errors`, so every other rule
+  still runs on it.
+- An included file GNU Make would reject is loaded and linted like any other file. Its syntax
+  errors are reported by `MK006` when that file is checked, no longer by `MK206` at the
+  include site.
+- Statements are read the way GNU Make 4.3 and later read them: an assignment is looked for
+  before any keyword, so `ifdef = 1` defines a variable named `ifdef`, and a variable name ends
+  at the first whitespace outside a reference, so `two words = 1` is a missing separator and
+  `all: a b = 1` lists prerequisites instead of defining a target-specific variable. `MK002`
+  no longer describes such names as valid.
+
+### Fixed
+
+- A `;` inside a trailing comment on a rule line is no longer parsed as an inline recipe.
+- Recipe-prefixed lines that GNU Make reads as ordinary statements when no rule is open, such as
+  an indented assignment, are parsed as those statements instead of being dropped.
+
 ## [0.0.7] - 2026-08-31
 
 ### Added

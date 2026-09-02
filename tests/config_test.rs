@@ -15,8 +15,8 @@ fn an_empty_config_keeps_the_builtin_default_rule_set() {
     assert_eq!(
         ids,
         [
-            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK201", "MK203", "MK204",
-            "MK205", "MK206", "MK207"
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK201", "MK203",
+            "MK204", "MK205", "MK206", "MK207"
         ]
     );
 }
@@ -45,14 +45,14 @@ rules = ["MK202"]
     assert_eq!(
         ids,
         [
-            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK203", "MK204", "MK205",
-            "MK206", "MK207"
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK203", "MK204",
+            "MK205", "MK206", "MK207"
         ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/lib/Makefile")));
     assert!(!config.is_path_ignored(std::path::Path::new("src/Makefile")));
 
-    let makefile = parse("1234\n").unwrap();
+    let makefile = parse("1234\n");
     let line_length = config
         .rules
         .iter()
@@ -92,8 +92,8 @@ enabled = true
     assert_eq!(
         ids,
         [
-            "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK202", "MK203", "MK204",
-            "MK205", "MK206", "MK207"
+            "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK202", "MK203",
+            "MK204", "MK205", "MK206", "MK207"
         ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/a.mk")));
@@ -107,7 +107,7 @@ enabled = true
         .iter()
         .find(|rule| rule.id() == "MK101")
         .unwrap()
-        .check(&parse("1234\n").unwrap(), "1234\n");
+        .check(&parse("1234\n"), "1234\n");
     assert_eq!(diagnostics[0].severity, Severity::Error);
 }
 
@@ -174,8 +174,8 @@ fn line_length_uses_character_columns_instead_of_utf8_bytes() {
         .find(|rule| rule.id() == "MK101")
         .unwrap();
 
-    assert!(rule.check(&parse("ééé\n").unwrap(), "ééé\n").is_empty());
-    assert_eq!(rule.check(&parse("éééé\n").unwrap(), "éééé\n")[0].column, 4);
+    assert!(rule.check(&parse("ééé\n"), "ééé\n").is_empty());
+    assert_eq!(rule.check(&parse("éééé\n"), "éééé\n")[0].column, 4);
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn line_length_can_include_comments_and_recipes() {
         .unwrap();
     let content = "# a long comment\nall:\n\techo a long recipe\n";
 
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
 
     assert_eq!(
         diagnostics
@@ -219,7 +219,7 @@ fn missing_phony_placement_is_configurable_and_introspectable() {
         .unwrap();
     let content = "all:\n\t@:\nclean:\n\t@:\n";
 
-    let diagnostics = rule.check(&parse(content).unwrap(), content);
+    let diagnostics = rule.check(&parse(content), content);
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(

@@ -7,7 +7,6 @@ use rumk::project::SourceId;
 
 fn assignment(source: &str) -> rumk::parser::Variable {
     parse(source)
-        .unwrap()
         .assignments
         .into_iter()
         .find(|variable| variable.scope == VariableScope::Global)
@@ -136,7 +135,7 @@ fn indeterminate_assignments_poison_previous_values() {
 
 #[test]
 fn function_names_without_arguments_remain_ordinary_variables() {
-    let makefile = parse("strip := preserved\nshell := harmless\n").unwrap();
+    let makefile = parse("strip := preserved\nshell := harmless\n");
     let mut evaluator = Evaluator::default();
     for variable in &makefile.assignments {
         evaluator.assign(

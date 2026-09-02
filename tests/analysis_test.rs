@@ -3,7 +3,7 @@ use rumk::parser::{parse, VariableScope};
 
 #[test]
 fn makefile_caches_its_semantic_index() {
-    let makefile = parse("all: dependency\n").unwrap();
+    let makefile = parse("all: dependency\n");
 
     assert!(std::ptr::eq(makefile.analysis(), makefile.analysis()));
     assert!(makefile.analysis().target("all").is_some());
@@ -19,7 +19,7 @@ fn indexes_variables_targets_and_dependency_edges_deterministically() {
         "all: docs\n",
         "app: private CFLAGS += -g\n",
     );
-    let makefile = parse(source).unwrap();
+    let makefile = parse(source);
     let index = SemanticIndex::build(&makefile);
 
     let cc = index.variable("CC").unwrap();
@@ -58,7 +58,7 @@ fn extracts_make_references_with_context_and_exact_locations() {
         "all: $(OBJECTS)\n",
         "\t@echo $@ $(@D) $(FLAGS) $$HOME\n",
     );
-    let makefile = parse(source).unwrap();
+    let makefile = parse(source);
     let index = SemanticIndex::build(&makefile);
 
     let patsubst = index
@@ -99,7 +99,7 @@ fn extracts_make_references_with_context_and_exact_locations() {
 
 #[test]
 fn indexes_static_and_dynamic_includes() {
-    let makefile = parse("include base.mk $(wildcard config/*.mk)\n-include local.mk\n").unwrap();
+    let makefile = parse("include base.mk $(wildcard config/*.mk)\n-include local.mk\n");
     let index = SemanticIndex::build(&makefile);
 
     assert_eq!(index.includes.len(), 3);
@@ -121,7 +121,7 @@ fn builds_nested_conditional_blocks_and_reports_malformed_structure() {
         "endif\n",
         "ifndef OPEN\n",
     );
-    let makefile = parse(source).unwrap();
+    let makefile = parse(source);
     let index = SemanticIndex::build(&makefile);
 
     assert_eq!(index.conditional_blocks.len(), 2);
@@ -152,7 +152,7 @@ fn accepts_else_if_chains_with_a_final_else() {
         "else\n",
         "endif\n",
     );
-    let index = SemanticIndex::build(&parse(source).unwrap());
+    let index = SemanticIndex::build(&parse(source));
 
     assert!(index.structural_issues.is_empty());
     assert_eq!(index.conditional_blocks.len(), 1);
@@ -171,7 +171,7 @@ fn finds_only_concrete_dependency_cycles() {
         "pattern-%: pattern-%\n",
         "dynamic: $(LATER)\n",
     );
-    let index = SemanticIndex::build(&parse(source).unwrap());
+    let index = SemanticIndex::build(&parse(source));
 
     assert_eq!(
         index.dependency_cycles(),

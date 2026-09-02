@@ -270,6 +270,9 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
   single- and double-colon declarations (**default**)
 - [`MK005`](https://github.com/rvben/rumk/blob/main/docs/mk005.md) - GNU Make special targets
   must stand alone (**default**)
+- [`MK006`](https://github.com/rvben/rumk/blob/main/docs/mk006.md) - Statement is not valid GNU
+  Make syntax: missing separators, recipes before the first target, unterminated references,
+  empty variable names, and unbalanced `define` blocks (**default**)
 
 ### Style
 

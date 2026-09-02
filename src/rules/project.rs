@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::analysis::{ReferenceContext, ReferenceKind};
+use crate::builtins::is_defined_by_make;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::BlockedReason;
 use crate::parser::Makefile;
@@ -150,11 +151,6 @@ impl Rule for MissingInclude {
                     }
                     IncludeResolution::Unreadable { path, message } => format!(
                         "Required include '{}' could not be read at {}: {message}",
-                        include,
-                        path.display()
-                    ),
-                    IncludeResolution::Invalid { path, message } => format!(
-                        "Required include '{}' is invalid at {}: {message}",
                         include,
                         path.display()
                     ),
@@ -394,7 +390,7 @@ impl Rule for UndefinedVariableReference {
                 })
             })
             .filter(|reference| !self.predefined.contains(&reference.name))
-            .filter(|reference| !GNU_BUILTIN_VARIABLES.contains(&reference.name.as_str()))
+            .filter(|reference| !is_defined_by_make(&reference.name))
             .map(|reference| {
                 Diagnostic::new(
                     self.id(),
@@ -411,52 +407,6 @@ impl Rule for UndefinedVariableReference {
             .collect()
     }
 }
-
-const GNU_BUILTIN_VARIABLES: &[&str] = &[
-    ".DEFAULT_GOAL",
-    ".FEATURES",
-    ".INCLUDE_DIRS",
-    ".RECIPEPREFIX",
-    ".SHELLFLAGS",
-    ".VARIABLES",
-    "AR",
-    "ARFLAGS",
-    "AS",
-    "CC",
-    "CO",
-    "COMPILE.c",
-    "COMPILE.cpp",
-    "COMPILE.p",
-    "CPP",
-    "CXX",
-    "CURDIR",
-    "FC",
-    "GET",
-    "LD",
-    "LEX",
-    "LINK.c",
-    "LINK.cpp",
-    "LINK.o",
-    "MAKE",
-    "MAKECMDGOALS",
-    "MAKEFILE_LIST",
-    "MAKEFLAGS",
-    "MAKELEVEL",
-    "MAKE_RESTARTS",
-    "MAKE_TERMERR",
-    "MAKE_TERMOUT",
-    "MAKE_VERSION",
-    "MFLAGS",
-    "OUTPUT_OPTION",
-    "PC",
-    "PREPROCESS.S",
-    "RM",
-    "SHELL",
-    "SUFFIXES",
-    "VPATH",
-    "WEAVE",
-    "YACC",
-];
 
 #[derive(Default)]
 pub struct UnreachableTarget {

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use rumk::logical::ConditionalKind;
-    use rumk::parser::{parse, AssignmentOperator};
+    use rumk::parser::{parse, AssignmentOperator, VariableModifiers};
 
     #[test]
     fn test_parse_simple_rule() {
@@ -9,7 +9,7 @@ mod tests {
 target: dependency
 	command
 "#;
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         assert_eq!(makefile.rules.len(), 1);
         assert_eq!(makefile.rules[0].targets, vec!["target"]);
         assert_eq!(makefile.rules[0].recipes.len(), 1);
@@ -19,7 +19,7 @@ target: dependency
     #[test]
     fn test_parse_variable() {
         let content = "FOO = bar";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         assert_eq!(makefile.variables.len(), 1);
         assert!(makefile.variables.contains_key("FOO"));
         assert_eq!(makefile.variables["FOO"].value, "bar");
@@ -28,7 +28,7 @@ target: dependency
     #[test]
     fn test_parse_phony() {
         let content = ".PHONY: clean test";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         assert_eq!(makefile.phonies.len(), 2);
         assert!(makefile.phonies.contains(&"clean".to_string()));
         assert!(makefile.phonies.contains(&"test".to_string()));
@@ -37,7 +37,7 @@ target: dependency
     #[test]
     fn parses_immediate_variable_assignments_as_variables() {
         let content = "FOO := /usr/local/bin\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert!(makefile.rules.is_empty());
         assert_eq!(makefile.variables["FOO"].value, "/usr/local/bin");
@@ -47,7 +47,7 @@ target: dependency
     #[test]
     fn preserves_the_start_line_for_rules_and_multiline_variables() {
         let content = "FOO = one \\\n  two\nclean:\n\ttrue\n\nnext:\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.variables["FOO"].line, 1);
         assert_eq!(makefile.rules[0].line, 3);
@@ -57,7 +57,7 @@ target: dependency
     #[test]
     fn parses_dot_prefixed_rules_and_their_recipes() {
         let content = ".DEFAULT:\n    /usr/bin/true\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.rules.len(), 1);
         assert_eq!(makefile.rules[0].targets, vec![".DEFAULT"]);
@@ -74,7 +74,7 @@ target: dependency
             "POSIX ::= expanded\n",
             "IMMEDIATE :::= value\n",
         );
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.assignments.len(), 5);
         assert_eq!(makefile.assignments[0].name, "CC");
@@ -99,9 +99,72 @@ target: dependency
     }
 
     #[test]
+    fn a_modifier_keyword_without_a_name_is_the_variable_name() {
+        let content = concat!(
+            "export = 1\n",
+            "override := 2\n",
+            "export override = 3\n",
+            "private unexport += 4\n",
+        );
+        let makefile = parse(content);
+        let named: Vec<_> = makefile
+            .assignments
+            .iter()
+            .map(|variable| (variable.name.as_str(), variable.modifiers))
+            .collect();
+
+        assert_eq!(
+            named,
+            [
+                ("export", VariableModifiers::default()),
+                ("override", VariableModifiers::default()),
+                (
+                    "override",
+                    VariableModifiers {
+                        export: true,
+                        ..VariableModifiers::default()
+                    }
+                ),
+                (
+                    "unexport",
+                    VariableModifiers {
+                        private: true,
+                        ..VariableModifiers::default()
+                    }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn keyword_named_variables_are_assignments_not_directives() {
+        let makefile = parse("ifdef = 1\ndefine := 2\ninclude += 3\nendif\n");
+
+        assert_eq!(makefile.assignments.len(), 3);
+        assert_eq!(makefile.variables["ifdef"].value, "1");
+        assert_eq!(makefile.variables["define"].value, "2");
+        assert_eq!(makefile.variables["include"].value, "3");
+        assert!(makefile.definitions.is_empty());
+        assert!(makefile.includes.is_empty());
+        assert_eq!(makefile.conditionals.len(), 1);
+        assert_eq!(makefile.conditionals[0].kind, ConditionalKind::Endif);
+    }
+
+    #[test]
+    fn a_prerequisite_list_is_not_an_assignment_when_the_name_has_whitespace() {
+        let makefile = parse("all: a b = 1\nall: $(a b) := 2\n");
+
+        assert!(makefile.rules[0].target_assignment.is_none());
+        assert_eq!(makefile.rules[0].prerequisites, ["a", "b", "=", "1"]);
+        let assignment = makefile.rules[1].target_assignment.as_ref().unwrap();
+        assert_eq!(assignment.name, "$(a b)");
+        assert_eq!(assignment.value, "2");
+    }
+
+    #[test]
     fn models_rule_separators_and_prerequisite_classes() {
         let content = "one\\ two archive &: input.o lib.o | generated stamp\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         let rule = &makefile.rules[0];
 
         assert_eq!(rule.targets, ["one two", "archive"]);
@@ -114,7 +177,7 @@ target: dependency
     #[test]
     fn parses_double_colon_and_inline_recipes() {
         let content = "clean:: ; -@+rm -rf build # handled by the shell\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         let rule = &makefile.rules[0];
         let recipe = &rule.recipes[0];
 
@@ -130,7 +193,7 @@ target: dependency
     #[test]
     fn honors_custom_recipe_prefixes() {
         let content = ".RECIPEPREFIX := >\nall:\n>@echo ok\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         let recipe = &makefile.rules[0].recipes[0];
 
         assert_eq!(recipe.indentation, ">");
@@ -141,7 +204,7 @@ target: dependency
     #[test]
     fn comments_between_a_rule_and_recipe_are_not_commands() {
         let content = "all:\n  # explanation\n\ttrue\n";
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.rules[0].recipes.len(), 1);
         assert_eq!(makefile.rules[0].recipes[0].command, "true");
@@ -151,7 +214,7 @@ target: dependency
     fn indented_conditionals_after_a_rule_are_not_parsed_as_recipes() {
         let content = "all:\n\t@echo all\n  ifeq ($(MODE),debug)\n  CFLAGS := -g\n  endif\n";
 
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.rules.len(), 1);
         assert_eq!(makefile.rules[0].recipes.len(), 1);
@@ -166,7 +229,7 @@ target: dependency
             "$(call target,a:b=c): $(call deps,x:y=z) \\\n  generated.o | stamp\n",
             "\tprintf '%s\\n' one \\\n\t  two\n",
         );
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
         let rule = &makefile.rules[0];
 
         assert_eq!(rule.targets, ["$(call target,a:b=c)"]);
@@ -189,7 +252,7 @@ target: dependency
             "endef\n",
             "endif\n",
         );
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(
             makefile.includes[0].paths,
@@ -211,7 +274,7 @@ target: dependency
 
     #[test]
     fn strips_inline_comments_from_include_paths() {
-        let makefile = parse("include mk/common.mk\t# shared settings\n").unwrap();
+        let makefile = parse("include mk/common.mk\t# shared settings\n");
 
         assert_eq!(makefile.includes.len(), 1);
         assert_eq!(makefile.includes[0].paths, ["mk/common.mk"]);
@@ -223,7 +286,7 @@ target: dependency
             "objects: %.o: %.c | generated\n",
             "app debug: private CFLAGS += -g\n",
         );
-        let makefile = parse(content).unwrap();
+        let makefile = parse(content);
 
         assert_eq!(makefile.rules[0].target_pattern.as_deref(), Some("%.o"));
         assert_eq!(makefile.rules[0].prerequisites, ["%.c"]);
@@ -240,7 +303,7 @@ target: dependency
 
     #[test]
     fn recognizes_oneshell_mode() {
-        let makefile = parse(".ONESHELL:\nall:\n\tcd build\n\tprintf '%s\\n' done\n").unwrap();
+        let makefile = parse(".ONESHELL:\nall:\n\tcd build\n\tprintf '%s\\n' done\n");
 
         assert!(makefile.oneshell);
         assert_eq!(makefile.rules[1].recipes.len(), 2);

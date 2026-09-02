@@ -10,8 +10,8 @@ pub mod style;
 pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK004", "MK005", "MK101", "MK102", "MK103", "MK201", "MK202",
-    "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK102", "MK103", "MK201",
+    "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
 ];
 
 pub trait Rule: Send + Sync {
@@ -80,6 +80,7 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(syntax::ConditionalStructure),
         Box::new(project::MixedTargetSeparators),
         Box::new(syntax::SpecialTargetPlacement),
+        Box::new(syntax::InvalidSyntax),
         Box::new(style::LineLength::new(120)),
         Box::new(style::VariableNaming::new(style::NamingStyle::Upper)),
         Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
@@ -103,6 +104,7 @@ pub fn get_default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(syntax::ConditionalStructure),
         Box::new(project::MixedTargetSeparators),
         Box::new(syntax::SpecialTargetPlacement),
+        Box::new(syntax::InvalidSyntax),
         Box::new(style::LineLength::new(120)),
         Box::new(best_practices::MissingPhony::default()),
         Box::new(best_practices::RecursiveMake),
