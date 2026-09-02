@@ -2,7 +2,7 @@ use crate::analysis::StructuralIssueKind;
 use crate::binding::Expansions;
 use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
 use crate::parser::{Makefile, SyntaxErrorKind};
-use crate::rules::{Rule, RuleCategory};
+use crate::rules::{PathKind, ReadFailure, Rule, RuleCategory};
 
 pub struct TabInRecipe;
 
@@ -158,6 +158,57 @@ impl Rule for ConditionalStructure {
                 )
             })
             .collect()
+    }
+}
+
+pub struct UnreadableFile;
+
+impl Rule for UnreadableFile {
+    fn id(&self) -> &'static str {
+        "MK007"
+    }
+
+    fn name(&self) -> &'static str {
+        "Path could not be read"
+    }
+
+    fn description(&self) -> &'static str {
+        "Rumk reports a path it cannot read instead of stopping the whole run. A file or \
+         directory that cannot be opened is an error and nothing in it is checked. A file that \
+         is not valid UTF-8 is a warning: Rumk lints it with the invalid bytes replaced but \
+         never fixes it."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Syntax
+    }
+
+    fn check(&self, _makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        Vec::new()
+    }
+
+    fn check_read(&self, failure: &ReadFailure) -> Vec<Diagnostic> {
+        let diagnostic = match failure {
+            ReadFailure::Unreadable { kind, error } => {
+                let message = match kind {
+                    PathKind::File => format!("File could not be read: {error}"),
+                    PathKind::Directory => format!(
+                        "Directory could not be read, so any Makefile in it was missed: {error}"
+                    ),
+                    PathKind::Unknown => format!("Path could not be read: {error}"),
+                };
+                Diagnostic::new(self.id(), Severity::Error, message, 1, 1)
+            }
+            ReadFailure::InvalidUtf8 { line, column } => Diagnostic::new(
+                self.id(),
+                Severity::Warning,
+                "File is not valid UTF-8; invalid bytes were replaced before linting and fixes \
+                 are disabled",
+                *line,
+                *column,
+            ),
+        };
+        vec![diagnostic]
     }
 }
 

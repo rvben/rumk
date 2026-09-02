@@ -114,7 +114,7 @@ pub struct Project {
 
 impl Project {
     pub fn load(path: &Path, options: &ProjectOptions) -> Result<Self> {
-        let content = std::fs::read_to_string(path)
+        let content = read_source(path)
             .with_context(|| format!("Failed to read Makefile: {}", path.display()))?;
         Self::load_with_root_content(path, content, options)
     }
@@ -573,7 +573,7 @@ impl<'a> Loader<'a> {
             return (IncludeResolution::LimitExceeded, None);
         }
 
-        let content = match std::fs::read_to_string(&path) {
+        let content = match read_source(&path) {
             Ok(content) => content,
             Err(error) => {
                 return (
@@ -610,6 +610,13 @@ impl<'a> Loader<'a> {
         }
         self.cycles.push(IncludeCycle { sources, edge_line });
     }
+}
+
+/// Reads a Makefile the way GNU Make does, as bytes: a file that is not valid
+/// UTF-8 is decoded lossily instead of counting as unreadable, so an include
+/// GNU Make follows is analyzed rather than reported as missing.
+fn read_source(path: &Path) -> std::io::Result<String> {
+    Ok(String::from_utf8_lossy(&std::fs::read(path)?).into_owned())
 }
 
 fn include_candidates(

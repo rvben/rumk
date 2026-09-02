@@ -1,15 +1,15 @@
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::parser::Makefile;
 use crate::project::{Project, ProjectOptions};
-use crate::rules::{self, Rule, RuleCategory};
+use crate::rules::{self, ReadFailure, Rule, RuleCategory};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_RULES: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK201", "MK203", "MK204",
-    "MK205", "MK206", "MK207",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK201", "MK203",
+    "MK204", "MK205", "MK206", "MK207",
 ];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
@@ -225,6 +225,19 @@ impl Config {
             .exclude
             .iter()
             .any(|pattern| glob_matches(pattern, &normalized))
+    }
+
+    /// Whether the exclude patterns leave nothing to check below `path`, which
+    /// a directory Rumk cannot read is judged by: `vendor/**` says every file
+    /// under it is excluded, while `vendor` excludes only that one path.
+    pub fn excludes_everything_below(&self, path: &Path) -> bool {
+        let normalized = self.relative_to_project(path);
+        self.global.exclude.iter().any(|pattern| {
+            pattern
+                .replace('\\', "/")
+                .strip_suffix("/**")
+                .is_some_and(|directory| glob_matches(directory, &normalized))
+        })
     }
 
     pub fn is_rule_fixable(&self, rule_id: &str) -> bool {
@@ -856,6 +869,7 @@ fn build_rule(
         "MK004" => Box::new(rules::project::MixedTargetSeparators),
         "MK005" => Box::new(rules::syntax::SpecialTargetPlacement),
         "MK006" => Box::new(rules::syntax::InvalidSyntax),
+        "MK007" => Box::new(rules::syntax::UnreadableFile),
         "MK101" => Box::new(
             rules::style::LineLength::new(integer_option(rule_id, settings, "max", 120)?)
                 .ignore_comments(boolean_option(rule_id, settings, "ignore-comments", true)?)
@@ -1054,6 +1068,14 @@ impl Rule for SeverityOverride {
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
         let mut diagnostics = self.rule.check_project(project);
+        for diagnostic in &mut diagnostics {
+            diagnostic.severity = self.severity;
+        }
+        diagnostics
+    }
+
+    fn check_read(&self, failure: &ReadFailure) -> Vec<Diagnostic> {
+        let mut diagnostics = self.rule.check_read(failure);
         for diagnostic in &mut diagnostics {
             diagnostic.severity = self.severity;
         }

@@ -9,7 +9,8 @@ semantics require a different design.
 - `rumk check`, `rumk fmt`, `rumk init`, `rumk rule`, `rumk explain`, and `rumk config`
   carry the same meaning as their Rumdl counterparts.
 - Exit code `0` means success, `1` means violations, and `2` means a tool or configuration
-  error.
+  error. A Makefile that cannot be read is a diagnostic (`MK007`) with exit code `1`, not a
+  tool error, so one bad file does not abort a run.
 - `check --fix` exits based on violations remaining after fixes. `fmt` exits successfully after
   formatting; `fmt --check` fails when formatting changes are required.
 - Text diagnostics use `path:line:column: [RULE] message [*]`.

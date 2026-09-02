@@ -209,12 +209,15 @@ rumk fmt --fixable MK001 .
 ### Exit codes
 
 - `0`: success, or all selected violations were fixed
-- `1`: lint violations, or `fmt --check` found required changes
-- `2`: configuration, file access, or other tool error
+- `1`: lint violations, `fmt --check` found required changes, or a path could not be read
+- `2`: configuration error, a path that does not exist, a failed write, or another tool error
 
 `rumk check` fails on any diagnostic by default. Use `--fail-on warning`, `--fail-on error`, or
 `--fail-on never` to change that policy. `rumk fmt` exits successfully after formatting even if
-non-fixable lint diagnostics remain.
+non-fixable lint diagnostics remain. A Makefile that cannot be read, or a directory that cannot be
+searched for Makefiles, is reported as
+[`MK007`](https://github.com/rvben/rumk/blob/main/docs/mk007.md) and fails every command regardless
+of `--fail-on`; the other files are still checked.
 
 ## Output
 
@@ -273,6 +276,9 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [`MK006`](https://github.com/rvben/rumk/blob/main/docs/mk006.md) - Statement is not valid GNU
   Make syntax: missing separators, recipes before the first target, unterminated references,
   empty variable names, and unbalanced `define` blocks (**default**)
+- [`MK007`](https://github.com/rvben/rumk/blob/main/docs/mk007.md) - Path could not be read: an
+  unreadable file or directory is an error and a file that is not valid UTF-8 is linted with the
+  invalid bytes replaced and fixes disabled, without stopping the run (**default**)
 
 ### Style
 

@@ -256,6 +256,25 @@ struct FileReport {
     fixed_count: usize,
     changed: bool,
     diff: Option<String>,
+    state: ReadState,
+}
+
+/// How much of a path Rumk managed to read.
+#[derive(Clone, Copy, PartialEq)]
+enum ReadState {
+    /// The file was read and linted, even if its invalid bytes were replaced.
+    Linted,
+    /// The file could not be read, so nothing in it was checked.
+    UnreadableFile,
+    /// A directory could not be read, so any Makefile in it was missed.
+    UnreadableDirectory,
+}
+
+impl ReadState {
+    /// Whether Rumk checked nothing behind this path.
+    fn unread(self) -> bool {
+        !matches!(self, Self::Linted)
+    }
 }
 
 #[derive(Serialize)]
@@ -429,7 +448,10 @@ fn run_files(
         bail!("--diff and --check require text output");
     }
 
-    let files = discover_files(&paths, config)?;
+    let Discovery {
+        files,
+        unreadable_paths,
+    } = discover_files(&paths, config)?;
     let mut project_roots = paths
         .iter()
         .filter(|path| path.is_file())
@@ -447,8 +469,18 @@ fn run_files(
     let mut included_files = BTreeSet::new();
     if config.rules.iter().any(|rule| rule.project_aware()) {
         for root in &project_roots {
-            let project = Project::load(root, &config.project_options(root))
-                .with_context(|| format!("Failed to load Make project: {}", root.display()))?;
+            // A root that cannot be read is reported when the file itself is
+            // processed; it just contributes no included files here. A root
+            // that is only invalid UTF-8 is loaded from the same lossy decode
+            // that lints it, so the files it includes stay contextual.
+            let Ok((content, _)) = read_makefile(root) else {
+                continue;
+            };
+            let Ok(project) =
+                Project::load_with_root_content(root, content, &config.project_options(root))
+            else {
+                continue;
+            };
             included_files.extend(
                 project
                     .files()
@@ -461,7 +493,7 @@ fn run_files(
     let covered_files = files.iter().map(|path| path_identity(path)).collect();
     let mut reports = files
         .iter()
-        .map(|path| {
+        .filter_map(|path| {
             let project_root = project_roots.contains(path);
             let contextual = project_root || included_files.contains(&path_identity(path));
             process_file(
@@ -471,9 +503,19 @@ fn run_files(
                 project_root,
                 contextual,
                 &covered_files,
+                args.silent,
             )
+            .transpose()
         })
         .collect::<Result<Vec<_>>>()?;
+    reports.extend(unreadable_paths.into_iter().filter_map(|(path, error)| {
+        let message = error.to_string();
+        let failure = rules::ReadFailure::Unreadable {
+            kind: path_kind(&path),
+            error,
+        };
+        unreadable_report(&path, config, &failure, &message, args.silent)
+    }));
     reports.sort_by(|left, right| left.path.cmp(&right.path));
     deduplicate_diagnostics(&mut reports);
 
@@ -497,7 +539,17 @@ fn run_files(
             .flat_map(|report| &report.diagnostics)
             .any(|diagnostic| fail_on.matches(diagnostic.severity)),
     };
-    Ok(if violations {
+    // A path that could not be read was never checked, so a clean exit would
+    // be a false result: an MK007 error for it fails every command and ignores
+    // --fail-on. Lowering the rule's severity is the way to opt out. A file
+    // that is only invalid UTF-8 was linted, so it follows --fail-on.
+    let unread = reports.iter().any(|report| {
+        report.state.unread()
+            && report.diagnostics.iter().any(|diagnostic| {
+                diagnostic.rule_id == "MK007" && diagnostic.severity == Severity::Error
+            })
+    });
+    Ok(if violations || unread {
         VIOLATIONS_FOUND
     } else {
         SUCCESS
@@ -515,19 +567,46 @@ impl FailOn {
     }
 }
 
-fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Vec<PathBuf>> {
+/// The Makefiles a run covers, plus the paths it was not allowed to look
+/// inside.
+struct Discovery {
+    files: Vec<PathBuf>,
+    unreadable_paths: Vec<(PathBuf, std::io::Error)>,
+}
+
+fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
     let mut files = BTreeSet::new();
+    let mut unreadable_paths = Vec::new();
     let current_dir = std::env::current_dir().context("Failed to determine current directory")?;
 
     for path in paths {
-        if path.is_file() {
+        let metadata = match std::fs::metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
+                "Path '{}' is neither a file nor a directory",
+                path.display()
+            ),
+            // A path Rumk may not even inspect, such as one below a directory
+            // it cannot search, was asked for by name: it is handed to the
+            // reader, which reports the failure as MK007, and the other paths
+            // are still checked. Its name says nothing about its type, so the
+            // Makefile-name filter does not apply.
+            Err(_) => {
+                let relative = path.strip_prefix(&current_dir).unwrap_or(path);
+                if !config.is_path_excluded(relative) {
+                    files.insert(path.clone());
+                }
+                continue;
+            }
+        };
+        if metadata.is_file() {
             let relative = path.strip_prefix(&current_dir).unwrap_or(path);
             if is_makefile(path) && !config.is_path_excluded(relative) {
                 files.insert(path.clone());
             }
             continue;
         }
-        if !path.is_dir() {
+        if !metadata.is_dir() {
             bail!(
                 "Path '{}' is neither a file nor a directory",
                 path.display()
@@ -542,8 +621,35 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Vec<PathBuf>> {
             .ignore(config.global.respect_gitignore)
             .parents(config.global.respect_gitignore);
         for entry in builder.build() {
-            let entry =
-                entry.with_context(|| format!("Failed to walk directory: {}", path.display()))?;
+            let entry = match entry {
+                Ok(entry) => entry,
+                // A path Rumk may not read can hide Makefiles, so the run
+                // reports it and walks on instead of aborting or reporting a
+                // success it cannot vouch for.
+                Err(error) => match unreadable_path(error) {
+                    Ok(unreadable) => {
+                        // A path the configuration excludes hides nothing the
+                        // run would have checked, so not reading it costs the
+                        // report nothing.
+                        let relative = unreadable
+                            .0
+                            .strip_prefix(path)
+                            .unwrap_or(&unreadable.0)
+                            .to_path_buf();
+                        if !config.is_path_excluded(&relative)
+                            && !config.excludes_everything_below(&relative)
+                        {
+                            unreadable_paths.push(unreadable);
+                        }
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(anyhow::Error::new(error)).with_context(|| {
+                            format!("Failed to walk directory: {}", path.display())
+                        });
+                    }
+                },
+            };
             if !entry.file_type().is_some_and(|kind| kind.is_file()) || !is_makefile(entry.path()) {
                 continue;
             }
@@ -554,7 +660,48 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Vec<PathBuf>> {
         }
     }
 
-    Ok(files.into_iter().collect())
+    unreadable_paths.sort_by(|left, right| left.0.cmp(&right.0));
+    unreadable_paths.dedup_by(|left, right| left.0 == right.0);
+    Ok(Discovery {
+        files: files.into_iter().collect(),
+        unreadable_paths,
+    })
+}
+
+/// The path and I/O failure of a walk error about one path, or the error itself
+/// when it is about the walk as a whole, such as an unreadable ignore file.
+fn unreadable_path(error: ignore::Error) -> Result<(PathBuf, std::io::Error), ignore::Error> {
+    match error_path(&error).filter(|_| error.io_error().is_some()) {
+        Some(path) => match error.into_io_error() {
+            Some(io) => Ok((path, os_failure(io))),
+            None => unreachable!("an error with an I/O error carries an I/O error"),
+        },
+        None => Err(error),
+    }
+}
+
+/// The operating system failure behind a walk error. The walker wraps it in a
+/// message that repeats the path Rumk already prints beside the diagnostic, so
+/// the original failure is unwrapped whenever it is still reachable.
+fn os_failure(io: std::io::Error) -> std::io::Error {
+    let code = io.raw_os_error().or_else(|| {
+        io.get_ref()
+            .and_then(std::error::Error::source)
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .and_then(std::io::Error::raw_os_error)
+    });
+    code.map_or(io, std::io::Error::from_raw_os_error)
+}
+
+/// The path a walk error is about, when it names one.
+fn error_path(error: &ignore::Error) -> Option<PathBuf> {
+    match error {
+        ignore::Error::WithPath { path, .. } => Some(path.clone()),
+        ignore::Error::WithLineNumber { err, .. } | ignore::Error::WithDepth { err, .. } => {
+            error_path(err)
+        }
+        _ => None,
+    }
 }
 
 fn process_file(
@@ -564,10 +711,20 @@ fn process_file(
     project_root: bool,
     contextual: bool,
     covered_files: &BTreeSet<PathBuf>,
-) -> Result<FileReport> {
-    let original = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read Makefile: {}", path.display()))?;
-    let initial_diagnostics = lint(
+    silent: bool,
+) -> Result<Option<FileReport>> {
+    let (original, failure) = match read_makefile(path) {
+        Ok(source) => source,
+        Err(error) => {
+            let message = error.to_string();
+            let failure = rules::ReadFailure::Unreadable {
+                kind: path_kind(path),
+                error,
+            };
+            return Ok(unreadable_report(path, config, &failure, &message, silent));
+        }
+    };
+    let mut initial_diagnostics = lint(
         &original,
         config,
         path,
@@ -576,13 +733,28 @@ fn process_file(
         covered_files,
     )
     .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    if let Some(failure) = &failure {
+        // A lossy decode is never written back, so nothing in it is fixable.
+        for diagnostic in &mut initial_diagnostics {
+            diagnostic.fixable = false;
+            diagnostic.fix = None;
+        }
+        initial_diagnostics.extend(
+            inline_config::apply_inline_suppressions(
+                &original,
+                read_diagnostics(config, path, failure),
+            )
+            .map_err(anyhow::Error::msg)?,
+        );
+        sort_diagnostics(&mut initial_diagnostics);
+    }
     let mut diagnostics = initial_diagnostics.clone();
     let mut content = original.clone();
     let mut fixed_diagnostics = Vec::new();
     let mut fixed_count = 0;
     let mut diff = None;
 
-    if operation.applies_fixes() {
+    if operation.applies_fixes() && failure.is_none() {
         let mut seen = BTreeSet::from([content.clone()]);
         for iteration in 0..MAX_FIX_ITERATIONS {
             let fixed = fix::apply_fixes(&content, &diagnostics);
@@ -627,7 +799,7 @@ fn process_file(
         }
     }
 
-    Ok(FileReport {
+    Ok(Some(FileReport {
         path: display_path(path),
         diagnostics,
         initial_diagnostics,
@@ -636,7 +808,103 @@ fn process_file(
         content,
         fixed_count,
         diff,
+        state: ReadState::Linted,
+    }))
+}
+
+/// The report for a path Rumk could not read, or `None` when MK007 is disabled
+/// for it, in which case the path is skipped with a warning instead.
+fn unreadable_report(
+    path: &Path,
+    config: &Config,
+    failure: &rules::ReadFailure,
+    message: &str,
+    silent: bool,
+) -> Option<FileReport> {
+    let state = match failure {
+        rules::ReadFailure::Unreadable {
+            kind: rules::PathKind::Directory,
+            ..
+        } => ReadState::UnreadableDirectory,
+        _ => ReadState::UnreadableFile,
+    };
+    let diagnostics = read_diagnostics(config, path, failure);
+    if diagnostics.is_empty() {
+        // A rule the configuration silences for this path was silenced on
+        // purpose, so only a rule disabled everywhere is worth saying.
+        if !silent && !read_failure_is_ignored(config, path, failure) {
+            eprintln!(
+                "warning: {} could not be read and MK007 is disabled: {message}",
+                display_path(path)
+            );
+        }
+        return None;
+    }
+    Some(FileReport {
+        path: display_path(path),
+        initial_diagnostics: diagnostics.clone(),
+        diagnostics,
+        fixed_diagnostics: Vec::new(),
+        content: String::new(),
+        fixed_count: 0,
+        changed: false,
+        diff: None,
+        state,
     })
+}
+
+/// Reads a Makefile, decoding invalid UTF-8 lossily so that it can still be
+/// linted; the failure says where the first invalid byte was.
+fn read_makefile(path: &Path) -> std::io::Result<(String, Option<rules::ReadFailure>)> {
+    let bytes = std::fs::read(path)?;
+    Ok(match String::from_utf8(bytes) {
+        Ok(content) => (content, None),
+        Err(error) => {
+            let (line, column) = text_position(error.as_bytes(), error.utf8_error().valid_up_to());
+            (
+                String::from_utf8_lossy(error.as_bytes()).into_owned(),
+                Some(rules::ReadFailure::InvalidUtf8 { line, column }),
+            )
+        }
+    })
+}
+
+/// Line and character column, both 1-based, of the byte at `offset`, which
+/// follows only valid UTF-8.
+fn text_position(bytes: &[u8], offset: usize) -> (usize, usize) {
+    let line_start = bytes[..offset]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    let line = bytes[..line_start]
+        .iter()
+        .filter(|byte| **byte == b'\n')
+        .count()
+        + 1;
+    let column = std::str::from_utf8(&bytes[line_start..offset])
+        .expect("bytes before the first invalid sequence are valid UTF-8")
+        .chars()
+        .count()
+        + 1;
+    (line, column)
+}
+
+fn read_diagnostics(config: &Config, path: &Path, failure: &rules::ReadFailure) -> Vec<Diagnostic> {
+    config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.check_read(failure))
+        .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
+        .collect()
+}
+
+/// Whether an enabled rule reports `failure` but is ignored for `path`.
+fn read_failure_is_ignored(config: &Config, path: &Path, failure: &rules::ReadFailure) -> bool {
+    config
+        .rules
+        .iter()
+        .flat_map(|rule| rule.check_read(failure))
+        .any(|diagnostic| config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
 }
 
 fn lint(
@@ -722,6 +990,11 @@ fn lint(
             );
         }
     }
+    sort_diagnostics(&mut diagnostics);
+    Ok(diagnostics)
+}
+
+fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
     diagnostics.sort_by_key(|diagnostic| {
         (
             diagnostic.source.clone(),
@@ -730,7 +1003,6 @@ fn lint(
             diagnostic.rule_id.clone(),
         )
     });
-    Ok(diagnostics)
 }
 
 fn render_diff(path: &Path, original: &str, fixed: &str) -> String {
@@ -785,6 +1057,17 @@ fn display_path(path: &Path) -> String {
 
 fn path_identity(path: &Path) -> PathBuf {
     dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// What Rumk can still tell about a path whose read failed. A path it is not
+/// even allowed to inspect has no known kind, so the diagnostic must not claim
+/// one.
+fn path_kind(path: &Path) -> rules::PathKind {
+    match std::fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => rules::PathKind::Directory,
+        Ok(metadata) if metadata.is_file() => rules::PathKind::File,
+        _ => rules::PathKind::Unknown,
+    }
 }
 
 fn is_makefile(path: &Path) -> bool {
@@ -849,6 +1132,12 @@ fn output_reports(
         for report in reports {
             if let Some(diff) = &report.diff {
                 print!("{diff}");
+            }
+            // A path that could not be read has no diff to show, and the run
+            // fails because of it, so its diagnostic is printed instead of
+            // leaving the failure unexplained.
+            if report.state.unread() {
+                output_text(report, operation);
             }
         }
     }
@@ -977,12 +1266,18 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
         return;
     }
     let issue_count: usize = reports.iter().map(|report| report.diagnostics.len()).sum();
+    // A directory Rumk could not read is reported, but it is not a file it
+    // checked.
+    let checked = reports
+        .iter()
+        .filter(|report| report.state != ReadState::UnreadableDirectory)
+        .count();
     if issue_count == 0 {
         println!(
             "{} No issues found in {} {}",
             "✓".green(),
-            reports.len(),
-            pluralize(reports.len(), "file", "files")
+            checked,
+            pluralize(checked, "file", "files")
         );
     } else {
         let issue_files = reports
@@ -997,11 +1292,10 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
             .len();
         println!();
         println!(
-            "Found {issue_count} {} in {issue_files} {} ({} {} checked)",
+            "Found {issue_count} {} in {issue_files} {} ({checked} {} checked)",
             pluralize(issue_count, "issue", "issues"),
             pluralize(issue_files, "file", "files"),
-            reports.len(),
-            pluralize(reports.len(), "file", "files")
+            pluralize(checked, "file", "files")
         );
         if reports
             .iter()

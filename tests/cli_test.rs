@@ -627,3 +627,472 @@ fn per_file_ignores_apply_to_project_diagnostic_source_paths() {
         .iter()
         .any(|diagnostic| diagnostic["rule"] == "MK004"));
 }
+
+/// Strips every permission from `path` and reports whether that made it
+/// unreadable; root reads a file regardless of its mode, and then there is
+/// nothing to test.
+#[cfg(unix)]
+fn make_unreadable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::read(path).is_err()
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_file_is_reported_without_stopping_the_run() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        ".PHONY: all\nall:\n\ttrue\n",
+    )
+    .unwrap();
+    let locked = directory.path().join("aaa.mk");
+    std::fs::write(&locked, "all:\n\ttrue\n").unwrap();
+    std::fs::write(
+        directory.path().join("zzz.mk"),
+        ".PHONY: clean\nclean:\n    rm -f out\n",
+    )
+    .unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "."])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout.contains("aaa.mk:1:1: [MK007] File could not be read: Permission denied"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("zzz.mk:3:1: [MK001]"), "{stdout}");
+    assert!(
+        stdout.contains("Found 2 issues in 2 files (3 files checked)"),
+        "{stdout}"
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_file_fails_every_command_unless_its_severity_is_lowered() {
+    let directory = tempfile::tempdir().unwrap();
+    let locked = directory.path().join("Makefile");
+    std::fs::write(&locked, "all:\n\ttrue\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    for args in [
+        &["check", "--fail-on", "never", "Makefile"][..],
+        &["fmt", "Makefile"],
+        &["fmt", "--check", "Makefile"],
+    ] {
+        let output = rumk()
+            .current_dir(directory.path())
+            .args(args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+    }
+
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK007]\nseverity = \"warning\"\n",
+    )
+    .unwrap();
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--fail-on", "error", "Makefile"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Makefile:1:1: [MK007]"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_disabled_mk007_skips_an_unreadable_file_with_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        ".PHONY: all\nall:\n\ttrue\n",
+    )
+    .unwrap();
+    let locked = directory.path().join("locked.mk");
+    std::fs::write(&locked, "all:\n\ttrue\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--disable", "MK007", "."])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No issues found in 1 file"));
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("warning: locked.mk could not be read and MK007 is disabled: Permission denied"));
+
+    let silent = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--silent", "--disable", "MK007", "."])
+        .output()
+        .unwrap();
+
+    assert_eq!(silent.status.code(), Some(0));
+    assert!(silent.stdout.is_empty());
+    assert!(
+        silent.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&silent.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn an_mk007_ignored_for_a_path_skips_it_without_a_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        ".PHONY: all\nall:\n\ttrue\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[per-file-ignores]\n\"locked.mk\" = [\"MK007\"]\n",
+    )
+    .unwrap();
+    let locked = directory.path().join("locked.mk");
+    std::fs::write(&locked, "all:\n\ttrue\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "."])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No issues found in 1 file"));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_makefile_below_an_unsearchable_directory_is_reported_as_mk007() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let locked = directory.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::write(locked.join("Makefile"), "all:\n\ttrue\n").unwrap();
+    std::fs::write(
+        directory.path().join("other.mk"),
+        ".PHONY: clean\nclean:\n    rm -f out\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::metadata(locked.join("Makefile")).is_ok();
+    let restore = |directory: &std::path::Path| {
+        std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    if readable {
+        restore(&locked);
+        return;
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "locked/Makefile", "other.mk"])
+        .output()
+        .unwrap();
+    restore(&locked);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(1));
+    // Rumk may not even ask what this path is, so the diagnostic does not call
+    // it a file.
+    assert!(
+        stdout.contains("locked/Makefile:1:1: [MK007] Path could not be read: Permission denied"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("other.mk:3:1: [MK001]"), "{stdout}");
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_directory_is_reported_without_stopping_the_walk() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let locked = directory.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::write(locked.join("Makefile"), "all:\n\ttrue\n").unwrap();
+    std::fs::write(
+        directory.path().join("other.mk"),
+        ".PHONY: clean\nclean:\n    rm -f out\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let readable = std::fs::read_dir(&locked).is_ok();
+    let restore = || {
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    };
+    if readable {
+        restore();
+        return;
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "."])
+        .output()
+        .unwrap();
+    let disabled = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--disable", "MK007", "."])
+        .output()
+        .unwrap();
+    restore();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(1));
+    // The failure is the operating system's, not the walker's wrapper text
+    // repeating the path that already prefixes the diagnostic.
+    assert!(
+        stdout.contains(
+            "locked:1:1: [MK007] Directory could not be read, so any Makefile in it was \
+             missed: Permission denied"
+        ),
+        "{stdout}"
+    );
+    assert!(stdout.contains("other.mk:3:1: [MK001]"), "{stdout}");
+    // The directory is reported, but it is not a file Rumk checked.
+    assert!(
+        stdout.contains("Found 2 issues in 2 files (1 file checked)"),
+        "{stdout}"
+    );
+
+    assert_eq!(disabled.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&disabled.stderr)
+        .contains("warning: locked could not be read and MK007 is disabled: Permission denied"));
+}
+
+#[cfg(unix)]
+#[test]
+fn an_excluded_unreadable_directory_is_not_reported() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for exclude in ["locked", "locked/**"] {
+        let directory = tempfile::tempdir().unwrap();
+        let locked = directory.path().join("locked");
+        std::fs::create_dir(&locked).unwrap();
+        std::fs::write(locked.join("Makefile"), "all:\n\ttrue\n").unwrap();
+        std::fs::write(
+            directory.path().join("Makefile"),
+            ".PHONY: all\nall:\n\ttrue\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.path().join(".rumk.toml"),
+            format!("[global]\nexclude = [\"{exclude}\"]\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = std::fs::read_dir(&locked).is_ok();
+        let restore = || {
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+        };
+        if readable {
+            restore();
+            return;
+        }
+
+        let output = rumk()
+            .current_dir(directory.path())
+            .args(["check", "."])
+            .output()
+            .unwrap();
+        restore();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        assert_eq!(output.status.code(), Some(0), "{exclude}: {stdout}");
+        assert!(stdout.contains("No issues found in 1 file"), "{stdout}");
+        assert!(
+            output.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_path_that_does_not_exist_remains_a_tool_error() {
+    let directory = tempfile::tempdir().unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "missing.mk"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("is neither a file nor a directory"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_file_that_is_not_utf8_is_linted_lossily_and_never_fixed() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    let bytes = b".PHONY: all\nall:\n    echo caf\xc3\xa9 \xff\n";
+    std::fs::write(&path, bytes).unwrap();
+
+    let fixed = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--fix", "--output-format", "json", "Makefile"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&fixed.stdout).unwrap();
+    let diagnostics = diagnostics.as_array().unwrap();
+    let recipe = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK001")
+        .unwrap();
+    let encoding = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK007")
+        .unwrap();
+
+    assert_eq!(fixed.status.code(), Some(1));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(recipe["fixable"], false);
+    assert!(recipe.get("fix").is_none());
+    assert_eq!(encoding["severity"], "warning");
+    assert_eq!(encoding["line"], 3);
+    assert_eq!(encoding["column"], 15);
+
+    let checked = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+
+    assert!(stdout.contains("Makefile:3:1: [MK001]"), "{stdout}");
+    assert!(
+        stdout.contains("Makefile:3:15: [MK007] File is not valid UTF-8"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("[*]"), "{stdout}");
+    assert!(!stdout.contains("rumk fmt"), "{stdout}");
+}
+
+#[test]
+fn an_include_that_is_not_valid_utf8_is_still_part_of_the_project() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        ".PHONY: all\ninclude parts.mk\nSOURCES := $(TARGETS)\nall:\n\ttrue\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("parts.mk"),
+        b"TARGETS := \xff-build\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--extend-enable", "MK208", "Makefile"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // GNU Make reads the include as bytes, so it is analyzed rather than
+    // reported as unreadable, and the variables it defines are known.
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("No issues found in 1 file"), "{stdout}");
+
+    let checked = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--extend-enable", "MK208", "."])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+
+    // Checking the include itself still reports how it is encoded.
+    assert_eq!(checked.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("parts.mk:1:12: [MK007] File is not valid UTF-8"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("[MK206]"), "{stdout}");
+    assert!(!stdout.contains("[MK208]"), "{stdout}");
+}
+
+#[test]
+fn a_lossily_linted_file_still_follows_fail_on() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        b".PHONY: all\nall:\n\techo \xff\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK007]\nseverity = \"error\"\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--fail-on", "never", "Makefile"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(
+        stdout.contains("Makefile:3:7: [MK007] File is not valid UTF-8"),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn inline_suppressions_cover_the_utf8_warning() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        b"# rumk-disable MK007\n.PHONY: all\nall:\n\techo \xff\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No issues found in 1 file"));
+}

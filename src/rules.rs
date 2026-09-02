@@ -10,9 +10,34 @@ pub mod style;
 pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
-    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK101", "MK102", "MK103", "MK201",
-    "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
+    "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK102", "MK103",
+    "MK201", "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
 ];
+
+/// Why the content Rumk lints is not the file exactly as it is on disk.
+#[derive(Debug)]
+pub enum ReadFailure {
+    /// The path could not be read, so nothing behind it was linted.
+    Unreadable {
+        kind: PathKind,
+        error: std::io::Error,
+    },
+    /// The file holds bytes that are not UTF-8, the first of them at `line`
+    /// and `column`; Rumk lints the content with every invalid sequence
+    /// replaced by U+FFFD and never writes that content back.
+    InvalidUtf8 { line: usize, column: usize },
+}
+
+/// What Rumk still knows about a path it could not read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathKind {
+    /// A file, so nothing in it was linted.
+    File,
+    /// A directory, so any Makefile in it was missed.
+    Directory,
+    /// A path Rumk was not even allowed to inspect.
+    Unknown,
+}
 
 pub trait Rule: Send + Sync {
     fn id(&self) -> &'static str;
@@ -27,6 +52,10 @@ pub trait Rule: Send + Sync {
     }
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic>;
     fn check_project(&self, _project: &Project) -> Vec<Diagnostic> {
+        Vec::new()
+    }
+    /// Diagnostics for a file whose content could not be read as written.
+    fn check_read(&self, _failure: &ReadFailure) -> Vec<Diagnostic> {
         Vec::new()
     }
 }
@@ -81,6 +110,7 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(project::MixedTargetSeparators),
         Box::new(syntax::SpecialTargetPlacement),
         Box::new(syntax::InvalidSyntax),
+        Box::new(syntax::UnreadableFile),
         Box::new(style::LineLength::new(120)),
         Box::new(style::VariableNaming::new(style::NamingStyle::Upper)),
         Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
@@ -105,6 +135,7 @@ pub fn get_default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(project::MixedTargetSeparators),
         Box::new(syntax::SpecialTargetPlacement),
         Box::new(syntax::InvalidSyntax),
+        Box::new(syntax::UnreadableFile),
         Box::new(style::LineLength::new(120)),
         Box::new(best_practices::MissingPhony::default()),
         Box::new(best_practices::RecursiveMake),
