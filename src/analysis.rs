@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::expansion::is_make_function;
+use crate::expansion::{is_make_function, reference_end};
 use crate::logical::{find_top_level_char, ConditionalKind, LogicalKind};
 use crate::parser::{AssignmentOperator, Makefile, VariableScope};
 
@@ -548,9 +548,8 @@ fn scan_references(
         }
         if matches!(next, '(' | '{') {
             characters.next();
-            let closing = if next == '(' { ')' } else { '}' };
             let body_start = next_index + next.len_utf8();
-            if let Some(end) = matching_delimiter(text, body_start, closing) {
+            if let Some(end) = reference_end(text, body_start, next) {
                 let body = &text[body_start..end];
                 let (name, kind) = classify_reference(body);
                 if !name.is_empty() {
@@ -583,33 +582,6 @@ fn scan_references(
             });
         }
     }
-}
-
-fn matching_delimiter(text: &str, body_start: usize, initial_closing: char) -> Option<usize> {
-    let mut closers = vec![initial_closing];
-    let mut characters = text[body_start..].char_indices().peekable();
-    while let Some((relative, character)) = characters.next() {
-        if character == '$' {
-            if let Some((_, next)) = characters.peek().copied() {
-                if next == '$' {
-                    characters.next();
-                    continue;
-                }
-                if matches!(next, '(' | '{') {
-                    closers.push(if next == '(' { ')' } else { '}' });
-                    characters.next();
-                    continue;
-                }
-            }
-        }
-        if closers.last().copied() == Some(character) {
-            closers.pop();
-            if closers.is_empty() {
-                return Some(body_start + relative);
-            }
-        }
-    }
-    None
 }
 
 fn classify_reference(body: &str) -> (String, ReferenceKind) {

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::expansion::reference_length;
+use crate::expansion::{reference_end, reference_length};
 use crate::logical::ConditionalKind;
 use crate::parser::{AssignmentOperator, Variable};
 use crate::project::SourceId;
@@ -396,9 +396,8 @@ impl Evaluator {
                 continue;
             }
             let expansion = if matches!(next, '(' | '{') {
-                let closing = if next == '(' { ')' } else { '}' };
                 let body_start = next_index + next.len_utf8();
-                let Some(end) = matching_delimiter(input, body_start, closing) else {
+                let Some(end) = reference_end(input, body_start, next) else {
                     result.merge_unknown(Expansion::unknown(BlockedReason::MalformedExpansion));
                     break;
                 };
@@ -916,33 +915,6 @@ fn parse_substitution_reference(body: &str) -> Option<(&str, &str, &str)> {
             } else if character == '=' {
                 let colon = colon?;
                 return Some((&body[..colon], &body[colon + 1..index], &body[index + 1..]));
-            }
-        }
-    }
-    None
-}
-
-fn matching_delimiter(text: &str, body_start: usize, initial_closing: char) -> Option<usize> {
-    let mut closers = vec![initial_closing];
-    let mut characters = text[body_start..].char_indices().peekable();
-    while let Some((relative, character)) = characters.next() {
-        if character == '$' {
-            if let Some((_, next)) = characters.peek().copied() {
-                if next == '$' {
-                    characters.next();
-                    continue;
-                }
-                if matches!(next, '(' | '{') {
-                    closers.push(if next == '(' { ')' } else { '}' });
-                    characters.next();
-                    continue;
-                }
-            }
-        }
-        if closers.last().copied() == Some(character) {
-            closers.pop();
-            if closers.is_empty() {
-                return Some(body_start + relative);
             }
         }
     }

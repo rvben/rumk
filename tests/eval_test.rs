@@ -238,3 +238,21 @@ fn lazy_functions_never_expand_unselected_unsafe_branches() {
         .blocked
         .contains(&BlockedReason::UndefinedVariable("UNKNOWN".into())));
 }
+
+#[test]
+fn a_bare_parenthesis_inside_a_function_call_nests_the_way_gnu_make_nests_it() {
+    let mut evaluator = Evaluator::new(&BTreeMap::new());
+    evaluator.assign(&assignment("A := 1\n"), location(1), Truth::True);
+
+    assert_eq!(
+        evaluator.expand("$(if $(A),(y) z,n)").as_known(),
+        Some("(y) z")
+    );
+    assert_eq!(evaluator.expand("$(if ,(a),b)").as_known(), Some("b"));
+    // The `(` opens a level the final `)` closes, so the call never ends,
+    // which is the "unterminated call to function" GNU Make reports.
+    assert!(evaluator
+        .expand("$(subst (,[,a(b)")
+        .blocked
+        .contains(&BlockedReason::MalformedExpansion));
+}
