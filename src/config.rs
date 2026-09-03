@@ -205,9 +205,7 @@ impl Config {
         if let Some(unsafe_fixes) = unsafe_fixes {
             self.global.unsafe_fixes = unsafe_fixes;
         }
-        // MK101 is built knowing whether MK201's fix runs, which these
-        // overrides decide.
-        self.rebuild_rules()
+        Ok(())
     }
 
     /// Whether this run applies the fixes that can change what Make does.
@@ -445,19 +443,13 @@ impl Config {
     }
 
     fn rebuild_rules(&mut self) -> Result<()> {
-        // MK101 coordinates with MK201's fix, so it has to be told whether that
-        // fix runs at all: the rule can be disabled, held unfixable, or hold an
-        // unsafe fix this run does not apply.
-        let phony_fix_applies = self.settings["MK201"].enabled
-            && self.is_rule_fixable("MK201")
-            && self.global.unsafe_fixes;
         self.rules = ALL_RULES
             .iter()
             .filter_map(|rule_id| {
                 let settings = &self.settings[*rule_id];
                 settings
                     .enabled
-                    .then(|| build_rule(rule_id, settings, &self.global, phony_fix_applies))
+                    .then(|| build_rule(rule_id, settings, &self.global))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(())
@@ -885,7 +877,6 @@ fn build_rule(
     rule_id: &str,
     settings: &RuleSettings,
     global: &GlobalConfig,
-    phony_fix_applies: bool,
 ) -> Result<Box<dyn Rule>> {
     let rule: Box<dyn Rule> = match rule_id {
         "MK001" => Box::new(rules::syntax::TabInRecipe),
@@ -898,8 +889,7 @@ fn build_rule(
         "MK101" => Box::new(
             rules::style::LineLength::new(integer_option(rule_id, settings, "max", 120)?)
                 .ignore_comments(boolean_option(rule_id, settings, "ignore-comments", true)?)
-                .ignore_recipes(boolean_option(rule_id, settings, "ignore-recipes", true)?)
-                .phony_fix_applies(phony_fix_applies),
+                .ignore_recipes(boolean_option(rule_id, settings, "ignore-recipes", true)?),
         ),
         "MK102" => Box::new(rules::style::VariableNaming::new(naming_style_option(
             rule_id,

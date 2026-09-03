@@ -335,6 +335,68 @@ fn long_phony_declarations_are_wrapped_when_the_phony_fix_is_withheld() {
 }
 
 #[test]
+fn long_phony_declarations_are_wrapped_when_the_phony_rule_is_ignored_for_the_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n\n[per-file-ignores]\n\"Makefile\" = [\"MK201\"]\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+
+    // The run asked for unsafe fixes, but MK201 is ignored for this file, so
+    // nothing else is going to rewrite the declaration.
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        ".PHONY: build test lint \\\n        release docs\nclean:\n\trm -rf build\n"
+    );
+}
+
+#[test]
+fn the_fixable_count_matches_what_fixing_repairs() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let reported = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+    let fixed = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+
+    // MK201 rewrites the declaration and MK101 wraps what MK201 leaves, one
+    // after the other. Both fixes are real, so both are counted.
+    assert!(String::from_utf8_lossy(&reported.stdout).contains("to fix 2 issues"));
+    assert!(String::from_utf8_lossy(&fixed.stdout).contains("Fixed 2 issues"));
+}
+
+#[test]
 fn long_phony_declarations_are_left_to_the_phony_fix_when_it_runs() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");

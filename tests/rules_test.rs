@@ -83,12 +83,15 @@ fn line_length_does_not_fix_dynamic_conditional_or_unwrappable_phonies() {
 }
 
 #[test]
-fn line_length_defers_phony_wrapping_when_mk201_must_edit_the_file() {
+fn line_length_offers_to_wrap_a_declaration_another_rule_also_rewrites() {
     let content = ".PHONY: lint command-one command-two\nall:\n\t@:\n";
     let diagnostics = LineLength::new(24).check(&parse(content), content);
 
+    // MK201 will want this declaration too, to add the missing `all`. Both
+    // fixes are real, and the fix loop settles which of them rewrites the line
+    // first, so MK101 offers its own rather than guessing about MK201.
     assert_eq!(diagnostics.len(), 1);
-    assert!(!diagnostics[0].fixable);
+    assert!(diagnostics[0].fixable);
 }
 
 #[test]

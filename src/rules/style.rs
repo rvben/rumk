@@ -7,7 +7,7 @@ use crate::logical::{
 use crate::parser::Makefile;
 use crate::rules::{Rule, RuleCategory};
 
-use super::phony::{format_continued_declaration, preferred_line_ending, COMMON_PHONY_TARGETS};
+use super::phony::{format_continued_declaration, preferred_line_ending};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NamingStyle {
@@ -19,7 +19,6 @@ pub struct LineLength {
     max_length: usize,
     ignore_comments: bool,
     ignore_recipes: bool,
-    phony_fix_applies: bool,
 }
 
 impl LineLength {
@@ -28,16 +27,7 @@ impl LineLength {
             max_length,
             ignore_comments: true,
             ignore_recipes: true,
-            phony_fix_applies: true,
         }
-    }
-
-    /// Whether MK201's fix runs in this configuration, which decides whether
-    /// MK101 leaves a `.PHONY` declaration MK201 is about to rewrite alone or
-    /// wraps it itself.
-    pub fn phony_fix_applies(mut self, applies: bool) -> Self {
-        self.phony_fix_applies = applies;
-        self
     }
 
     pub fn ignore_comments(mut self, ignore: bool) -> Self {
@@ -74,11 +64,6 @@ impl Rule for LineLength {
 
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
-        // MK201 rewrites a `.PHONY` declaration to add the names it is
-        // missing, wrapping it in the process, so MK101 leaves that line to it.
-        // Where that fix does not run, the line is MK101's to wrap.
-        let phony_fix_isolated =
-            !self.phony_fix_applies || !has_missing_conventional_phony(makefile);
         let ignored_lines: BTreeSet<_> = makefile
             .logical
             .statements()
@@ -106,12 +91,10 @@ impl Rule for LineLength {
                     line_num + 1,
                     self.max_length + 1,
                 );
-                if phony_fix_isolated {
-                    if let Some(fix) =
-                        phony_wrap_fix(makefile, content, line_num + 1, line, self.max_length)
-                    {
-                        diagnostic = diagnostic.with_fix(fix);
-                    }
+                if let Some(fix) =
+                    phony_wrap_fix(makefile, content, line_num + 1, line, self.max_length)
+                {
+                    diagnostic = diagnostic.with_fix(fix);
                 }
                 diagnostics.push(diagnostic);
             }
@@ -119,14 +102,6 @@ impl Rule for LineLength {
 
         diagnostics
     }
-}
-
-fn has_missing_conventional_phony(makefile: &Makefile) -> bool {
-    makefile.rules.iter().any(|rule| {
-        rule.targets.iter().any(|target| {
-            COMMON_PHONY_TARGETS.contains(&target.as_str()) && !makefile.phonies.contains(target)
-        })
-    })
 }
 
 fn phony_wrap_fix(
