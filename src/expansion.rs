@@ -10,6 +10,12 @@
 
 use std::ops::Range;
 
+/// How deep a reference is followed into the references nested inside it.
+/// Make itself has no limit, and neither does the text a Makefile may hold,
+/// so every walk over nested references stops here rather than recursing as
+/// deep as the file asks for.
+pub const MAX_EXPANSION_DEPTH: usize = 64;
+
 /// A `$(` or `${` whose closing delimiter never arrives.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnterminatedReference {
@@ -33,9 +39,20 @@ pub enum CommentHandling {
 }
 
 /// Finds the first reference in `text` that Make would fail to expand.
+/// References nested deeper than [`MAX_EXPANSION_DEPTH`] are left unread, so
+/// a text that nests deeper than the stack allows is reported as far as it
+/// was read rather than crashing the walk.
 pub fn find_unterminated_reference(
     text: &str,
     comments: CommentHandling,
+) -> Option<UnterminatedReference> {
+    find_unterminated(text, comments, 0)
+}
+
+fn find_unterminated(
+    text: &str,
+    comments: CommentHandling,
+    depth: usize,
 ) -> Option<UnterminatedReference> {
     let bytes = text.as_bytes();
     let mut index = 0;
@@ -59,14 +76,17 @@ pub fn find_unterminated_reference(
                                 function: function_name(&text[body_start..]).map(str::to_string),
                             });
                         };
-                        if let Some(inner) = find_unterminated_reference(
-                            &text[body_start..end],
-                            CommentHandling::Keep,
-                        ) {
-                            return Some(UnterminatedReference {
-                                offset: body_start + inner.offset,
-                                ..inner
-                            });
+                        if depth < MAX_EXPANSION_DEPTH {
+                            if let Some(inner) = find_unterminated(
+                                &text[body_start..end],
+                                CommentHandling::Keep,
+                                depth + 1,
+                            ) {
+                                return Some(UnterminatedReference {
+                                    offset: body_start + inner.offset,
+                                    ..inner
+                                });
+                            }
                         }
                         index = end + 1;
                     }

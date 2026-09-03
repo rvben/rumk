@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::expansion::{is_make_function, reference_end};
+use crate::expansion::{is_make_function, reference_end, MAX_EXPANSION_DEPTH};
 use crate::logical::{find_top_level_char, ConditionalKind, LogicalKind};
 use crate::parser::{AssignmentOperator, Makefile, VariableScope};
 
@@ -499,6 +499,7 @@ fn extract_references(makefile: &Makefile) -> Vec<Reference> {
             statement.span.start.offset,
             context,
             &line_index,
+            0,
             &mut references,
         );
     }
@@ -527,11 +528,16 @@ fn reference_context(kind: LogicalKind) -> ReferenceContext {
     }
 }
 
+/// Records every reference in `text`, and the references nested in their
+/// bodies down to `MAX_EXPANSION_DEPTH`. A Makefile can nest references as
+/// deep as it has bytes for, which is deeper than the stack this walk runs
+/// on, so a body below the limit is left unread rather than followed.
 fn scan_references(
     text: &str,
     base_offset: usize,
     context: ReferenceContext,
     lines: &LineIndex<'_>,
+    depth: usize,
     output: &mut Vec<Reference>,
 ) {
     let mut characters = text.char_indices().peekable();
@@ -560,7 +566,16 @@ fn scan_references(
                         location: lines.location(base_offset + index),
                     });
                 }
-                scan_references(body, base_offset + body_start, context, lines, output);
+                if depth < MAX_EXPANSION_DEPTH {
+                    scan_references(
+                        body,
+                        base_offset + body_start,
+                        context,
+                        lines,
+                        depth + 1,
+                        output,
+                    );
+                }
                 while characters
                     .peek()
                     .is_some_and(|(position, _)| *position <= end)

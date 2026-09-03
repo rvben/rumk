@@ -1,4 +1,5 @@
 use rumk::analysis::{ReferenceContext, ReferenceKind, SemanticIndex, StructuralIssueKind};
+use rumk::expansion::MAX_EXPANSION_DEPTH;
 use rumk::parser::{parse, VariableScope};
 
 #[test]
@@ -184,4 +185,24 @@ fn finds_only_concrete_dependency_cycles() {
             vec![String::from("self")]
         ]
     );
+}
+
+#[test]
+fn a_reference_nested_deeper_than_the_expansion_limit_is_left_unread() {
+    // Deep enough that following every level would run out of stack.
+    let depth = 20_000;
+    let source = format!("X := {}A{}\n", "$(".repeat(depth), ")".repeat(depth));
+
+    let index = SemanticIndex::build(&parse(&source));
+
+    assert_eq!(index.references.len(), MAX_EXPANSION_DEPTH + 1);
+    assert!(index
+        .references
+        .iter()
+        .all(|reference| reference.kind == ReferenceKind::Dynamic
+            && reference.context == ReferenceContext::Assignment));
+    assert!(index
+        .references
+        .iter()
+        .all(|reference| reference.name != "A"));
 }

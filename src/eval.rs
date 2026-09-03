@@ -2,12 +2,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::expansion::{reference_end, reference_length};
+use crate::expansion::{reference_end, reference_length, MAX_EXPANSION_DEPTH};
 use crate::logical::ConditionalKind;
 use crate::parser::{AssignmentOperator, Variable};
 use crate::project::SourceId;
-
-const MAX_EXPANSION_DEPTH: usize = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Truth {
