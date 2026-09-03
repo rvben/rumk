@@ -455,12 +455,12 @@ impl<'a> Loader<'a> {
             });
             return;
         };
-        for expanded in value.split_whitespace() {
-            let (resolution, discovered) = self.resolve_include(expanded, line);
+        for expanded in include_paths(value) {
+            let (resolution, discovered) = self.resolve_include(&expanded, line);
             self.edges.push(IncludeEdge {
                 from: source,
                 expression: expression.to_string(),
-                expanded: Some(expanded.to_string()),
+                expanded: Some(expanded),
                 trace: expansion.trace.clone(),
                 blocked: expansion.blocked.clone(),
                 optional,
@@ -642,6 +642,42 @@ fn include_candidates(
         }))
         .map(|directory| normalize_path(&directory.join(path)))
         .collect()
+}
+
+/// The files GNU Make reads for an expanded include list. Make splits the list
+/// at whitespace and removes the escapes only here, after expansion: a run of
+/// backslashes before a blank halves, and an odd run leaves the blank inside
+/// the path instead of ending it.
+fn include_paths(value: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let mut current = String::new();
+    let mut backslashes = 0usize;
+
+    for character in value.chars() {
+        if character == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        if character.is_whitespace() {
+            current.extend(std::iter::repeat_n('\\', backslashes / 2));
+            if backslashes % 2 == 1 {
+                current.push(character);
+            } else if !current.is_empty() {
+                paths.push(std::mem::take(&mut current));
+            }
+            backslashes = 0;
+            continue;
+        }
+        current.extend(std::iter::repeat_n('\\', backslashes));
+        backslashes = 0;
+        current.push(character);
+    }
+
+    current.extend(std::iter::repeat_n('\\', backslashes));
+    if !current.is_empty() {
+        paths.push(current);
+    }
+    paths
 }
 
 fn is_dynamic_path(expression: &str) -> bool {

@@ -4,6 +4,7 @@ use std::process::{Command, Output};
 use rumk::fix::apply_fixes;
 use rumk::parser::{parse, VariableScope};
 use rumk::project::{Project, ProjectOptions};
+use rumk::rules::project::MissingInclude;
 use rumk::rules::style::LineLength;
 use rumk::rules::syntax::{InvalidSyntax, TabInRecipe};
 use rumk::rules::Rule;
@@ -231,6 +232,73 @@ fn safe_evaluator_matches_gnu_make_on_a_controlled_project() {
             .collect::<Vec<_>>(),
         ["one", "two"]
     );
+}
+
+#[test]
+fn gnu_make_reads_an_escaped_include_path_as_one_file_and_mk206_agrees() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("foo bar.mk"), "all:\n\t@:\n").unwrap();
+
+    for source in [
+        "include foo\\ bar.mk\n",
+        "X := foo\\ bar.mk\ninclude $(X)\n",
+        "include $(EMPTY)foo\\ bar.mk\n",
+    ] {
+        std::fs::write(&root, source).unwrap();
+        let diagnostics = MissingInclude
+            .check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+        assert!(diagnostics.is_empty(), "{source:?}: {diagnostics:?}");
+        let Some(accepted) = dry_run(directory.path()) else {
+            return;
+        };
+        assert!(
+            accepted.status.success(),
+            "GNU Make rejected {source:?}:\n{}",
+            String::from_utf8_lossy(&accepted.stderr)
+        );
+    }
+
+    // The escape is not what makes an include resolve: an escaped path that is
+    // really absent is reported, under the name Make itself reads.
+    std::fs::write(&root, "include zzz\\ qqq.mk\nall:\n\t@:\n").unwrap();
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("'zzz qqq.mk'"));
+    let rejected = dry_run(directory.path()).unwrap();
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(error.contains("zzz qqq.mk"), "{error}");
+
+    // Make halves the run of backslashes in front of a comment as it
+    // recognizes the comment, so it reads one backslash less than the line
+    // carries.
+    std::fs::write(&root, "include zzz\\\\#comment\nall:\n\t@:\n").unwrap();
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].message.contains("'zzz\\'"),
+        "{}",
+        diagnostics[0].message
+    );
+    let rejected = dry_run(directory.path()).unwrap();
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(error.contains("zzz\\:"), "{error}");
+}
+
+/// What GNU Make makes of `all` in `directory`, and `None` where GNU Make is
+/// not installed.
+fn dry_run(directory: &Path) -> Option<Output> {
+    match Command::new("make")
+        .current_dir(directory)
+        .args(["--no-builtin-rules", "--dry-run", "-f", "Makefile", "all"])
+        .output()
+    {
+        Ok(output) => Some(output),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => panic!("failed to launch GNU Make: {error}"),
+    }
 }
 
 /// A Makefile under `tests/fixtures/gnu_make/syntax` whose leading

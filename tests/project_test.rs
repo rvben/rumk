@@ -171,6 +171,47 @@ fn resolves_variable_expanded_includes_in_evaluation_order() {
 }
 
 #[test]
+fn reads_include_paths_the_way_gnu_make_unescapes_them() {
+    // GNU Make removes the escapes in an include's file list only after
+    // expanding it, so a backslash reaches the expansion and a value may bring
+    // its own. A blank ends a path where the run of backslashes before it is
+    // even, and each run halves where a blank consumed it.
+    for (source, expected) in [
+        ("include foo\\ bar.mk\n", vec!["foo bar.mk"]),
+        ("include foo\\\\ bar.mk\n", vec!["foo\\", "bar.mk"]),
+        ("include foo\\\\\\ bar.mk\n", vec!["foo\\ bar.mk"]),
+        ("X := foo\\ bar.mk\ninclude $(X)\n", vec!["foo bar.mk"]),
+        (
+            "X := foo\\\\ bar.mk\ninclude $(X)\n",
+            vec!["foo\\", "bar.mk"],
+        ),
+        (
+            "SLASH := \\\\\nX := foo$(SLASH)\ninclude $(X)\n",
+            vec!["foo\\\\"],
+        ),
+        ("X := bar.mk\ninclude \\$(X)\n", vec!["\\bar.mk"]),
+        ("include \\#foo\n", vec!["#foo"]),
+        // The run before a comment halves as Make recognizes the comment,
+        // whether or not it leaves the `#` escaped.
+        ("include foo\\\\#comment\n", vec!["foo\\"]),
+        ("include a.mk  b.mk\n", vec!["a.mk", "b.mk"]),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("Makefile");
+        std::fs::write(&root, source).unwrap();
+
+        let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+
+        let read: Vec<&str> = project
+            .edges()
+            .iter()
+            .filter_map(|edge| edge.expanded.as_deref())
+            .collect();
+        assert_eq!(read, expected, "reading {source:?}");
+    }
+}
+
+#[test]
 fn evaluates_known_branches_and_preserves_unknown_ones() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

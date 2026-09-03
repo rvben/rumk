@@ -8,9 +8,9 @@ use crate::binding::value_expands_later;
 use crate::expansion::{contains_reference, find_unterminated_reference, CommentHandling};
 use crate::logical::{
     conditional_expression, find_top_level_assignment, find_top_level_rule_separator,
-    inline_recipe_separator, split_once_top_level, split_top_level_words, strip_top_level_comment,
-    target_assignment, ConditionalKind, IncludeKind, LogicalDocument, LogicalKind,
-    LogicalStatement, Reach,
+    inline_recipe_separator, split_include_words, split_once_top_level, split_top_level_words,
+    strip_top_level_comment, target_assignment, ConditionalKind, IncludeKind, LogicalDocument,
+    LogicalKind, LogicalStatement, Reach,
 };
 use crate::syntax::{RecipePrefix, SyntaxTree};
 
@@ -458,7 +458,7 @@ impl Parser {
         self.check_statement(statement);
         let text = statement.text().trim_start();
         let keyword_length = text.find(char::is_whitespace).unwrap_or(text.len());
-        let paths = split_top_level_words(strip_top_level_comment(text[keyword_length..].trim()));
+        let paths = split_include_words(text[keyword_length..].trim());
         self.makefile.includes.push(Include {
             paths,
             optional: kind == IncludeKind::Optional,

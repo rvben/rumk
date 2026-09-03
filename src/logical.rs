@@ -640,6 +640,75 @@ pub(crate) fn split_top_level_words(line: &str) -> Vec<String> {
     words
 }
 
+/// Splits the file list of an include directive where GNU Make splits it,
+/// leaving the escapes Make only removes once it has expanded the list.
+///
+/// A blank ends a path when the run of backslashes before it is even, and that
+/// run halves here because the blank it belonged to is gone. An odd run keeps
+/// the blank inside the path, so both are left as they are for the pass after
+/// expansion to read once.
+///
+/// The comment goes here as well, because Make removes it before it looks at
+/// the directive at all, and halves the run of backslashes in front of the `#`
+/// as it recognizes it. `line` is therefore the text after the keyword with
+/// its comment still on it.
+pub(crate) fn split_include_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut backslashes = 0usize;
+    let mut skip_to = 0;
+
+    for (index, character) in line.char_indices() {
+        if index < skip_to {
+            continue;
+        }
+        if character == '\\' {
+            backslashes += 1;
+            continue;
+        }
+        match character {
+            '$' => {
+                current.extend(std::iter::repeat_n('\\', backslashes));
+                let end = reference_length(line, index).map_or(line.len(), |length| index + length);
+                current.push_str(&line[index..end]);
+                skip_to = end;
+            }
+            '#' => {
+                current.extend(std::iter::repeat_n('\\', backslashes / 2));
+                if backslashes % 2 == 0 {
+                    // The run quoted itself rather than the `#`, so the
+                    // comment starts here and the path ends with it.
+                    backslashes = 0;
+                    break;
+                }
+                current.push(character);
+            }
+            _ if character.is_whitespace() => {
+                if backslashes % 2 == 1 {
+                    current.extend(std::iter::repeat_n('\\', backslashes));
+                    current.push(character);
+                } else {
+                    current.extend(std::iter::repeat_n('\\', backslashes / 2));
+                    if !current.is_empty() {
+                        words.push(std::mem::take(&mut current));
+                    }
+                }
+            }
+            _ => {
+                current.extend(std::iter::repeat_n('\\', backslashes));
+                current.push(character);
+            }
+        }
+        backslashes = 0;
+    }
+
+    current.extend(std::iter::repeat_n('\\', backslashes));
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 /// Returns UTF-8 byte offsets that are outside Make variable/function
 /// expansions and are not backslash-escaped. Every `$` opens a reference,
 /// so `$:` and `$#` hold no separator, and nothing after an unterminated
