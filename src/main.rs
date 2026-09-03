@@ -4,8 +4,9 @@ use colored::Colorize;
 use ignore::WalkBuilder;
 use rumk::config::Config;
 use rumk::diagnostic::{Diagnostic, Severity};
+use rumk::lint::{self, LintContext};
 use rumk::project::Project;
-use rumk::{fix, inline_config, parser, rules, source};
+use rumk::{fix, inline_config, rules, source};
 use serde::Serialize;
 use similar::TextDiff;
 use std::collections::BTreeSet;
@@ -16,7 +17,6 @@ use std::process::ExitCode;
 const SUCCESS: u8 = 0;
 const VIOLATIONS_FOUND: u8 = 1;
 const TOOL_ERROR: u8 = 2;
-const MAX_FIX_ITERATIONS: usize = 10;
 
 #[derive(Parser)]
 #[command(name = "rumk", author, version, about = "A fast linter for Makefiles")]
@@ -736,15 +736,15 @@ fn process_file(
             return Ok(unreadable_report(path, config, &failure, &message, silent));
         }
     };
-    let mut initial_diagnostics = lint(
-        &original,
+    let context = LintContext {
         config,
         path,
         project_root,
         contextual,
         covered_files,
-    )
-    .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    };
+    let mut initial_diagnostics = lint::lint(&original, &context)
+        .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
     if let Some(failure) = &failure {
         // A lossy decode is never written back, so nothing in it is fixable.
         for diagnostic in &mut initial_diagnostics {
@@ -758,7 +758,7 @@ fn process_file(
             )
             .map_err(anyhow::Error::msg)?,
         );
-        sort_diagnostics(&mut initial_diagnostics);
+        lint::sort_diagnostics(&mut initial_diagnostics);
     }
     let mut diagnostics = initial_diagnostics.clone();
     let mut content = original.clone();
@@ -767,40 +767,10 @@ fn process_file(
     let mut diff = None;
 
     if operation.applies_fixes() && failure.is_none() {
-        let mut seen = BTreeSet::from([content.clone()]);
-        for iteration in 0..MAX_FIX_ITERATIONS {
-            let fixed = fix::apply_fixes(&content, &diagnostics);
-            if fixed == content {
-                break;
-            }
-            if !seen.insert(fixed.clone()) {
-                bail!("Fix cycle detected while formatting {}", path.display());
-            }
-            fixed_diagnostics.extend(
-                diagnostics
-                    .iter()
-                    .filter(|diagnostic| diagnostic.fixable)
-                    .cloned(),
-            );
-            content = fixed;
-            diagnostics = lint(
-                &content,
-                config,
-                path,
-                project_root,
-                contextual,
-                covered_files,
-            )
-            .with_context(|| format!("Failed to parse formatted Makefile: {}", path.display()))?;
-            if iteration + 1 == MAX_FIX_ITERATIONS
-                && diagnostics.iter().any(|diagnostic| diagnostic.fixable)
-            {
-                bail!(
-                    "Fixes did not stabilize after {MAX_FIX_ITERATIONS} iterations for {}",
-                    path.display()
-                );
-            }
-        }
+        let fixed = lint::fix(&content, diagnostics, &context)?;
+        content = fixed.content;
+        diagnostics = fixed.diagnostics;
+        fixed_diagnostics = fixed.applied;
 
         if content != original {
             fixed_count = fixed_diagnostics.len();
@@ -943,104 +913,6 @@ fn read_failure_is_ignored(config: &Config, path: &Path, failure: &rules::ReadFa
         .iter()
         .flat_map(|rule| rule.check_read(failure))
         .any(|diagnostic| config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
-}
-
-fn lint(
-    content: &str,
-    config: &Config,
-    path: &Path,
-    project_root: bool,
-    contextual: bool,
-    covered_files: &BTreeSet<PathBuf>,
-) -> Result<Vec<Diagnostic>> {
-    let makefile = parser::parse(content);
-    let mut diagnostics = config
-        .rules
-        .iter()
-        .filter(|rule| !contextual || !rule.project_aware())
-        .flat_map(|rule| rule.check(&makefile, content))
-        .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
-        .map(|mut diagnostic| {
-            if !config.is_rule_fixable(&diagnostic.rule_id) {
-                diagnostic.fixable = false;
-                diagnostic.fix = None;
-            }
-            diagnostic
-        })
-        .collect::<Vec<_>>();
-    diagnostics = inline_config::apply_inline_suppressions(content, diagnostics)
-        .map_err(anyhow::Error::msg)?;
-    if project_root {
-        let project = Project::load_with_root_content(
-            path,
-            content.to_string(),
-            &config.project_options(path),
-        )?;
-        let mut project_diagnostics = config
-            .rules
-            .iter()
-            .flat_map(|rule| rule.check_project(&project))
-            .map(|mut diagnostic| {
-                if diagnostic.source.is_none() {
-                    diagnostic.source = Some(project.file(project.root()).path.clone());
-                }
-                if !config.is_rule_fixable(&diagnostic.rule_id) {
-                    diagnostic.fixable = false;
-                    diagnostic.fix = None;
-                }
-                diagnostic
-            })
-            .collect::<Vec<_>>();
-        for file in project.files().iter().filter(|file| {
-            file.id != project.root()
-                && !covered_files.contains(&file.path)
-                && !config.is_path_ignored(&file.path)
-        }) {
-            project_diagnostics.extend(
-                config
-                    .rules
-                    .iter()
-                    .filter(|rule| !rule.project_aware())
-                    .flat_map(|rule| rule.check(&file.makefile, &file.content))
-                    .filter(|diagnostic| {
-                        !config.is_rule_ignored_for_path(&file.path, &diagnostic.rule_id)
-                    })
-                    .map(|mut diagnostic| {
-                        diagnostic.source = Some(file.path.clone());
-                        diagnostic.fixable = false;
-                        diagnostic.fix = None;
-                        diagnostic
-                    }),
-            );
-        }
-        for file in project.files() {
-            let source_diagnostics = project_diagnostics
-                .iter()
-                .filter(|diagnostic| diagnostic.source.as_deref() == Some(file.path.as_path()))
-                .filter(|diagnostic| {
-                    !config.is_rule_ignored_for_path(&file.path, &diagnostic.rule_id)
-                })
-                .cloned()
-                .collect();
-            diagnostics.extend(
-                inline_config::apply_inline_suppressions(&file.content, source_diagnostics)
-                    .map_err(anyhow::Error::msg)?,
-            );
-        }
-    }
-    sort_diagnostics(&mut diagnostics);
-    Ok(diagnostics)
-}
-
-fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
-    diagnostics.sort_by_key(|diagnostic| {
-        (
-            diagnostic.source.clone(),
-            diagnostic.line,
-            diagnostic.column,
-            diagnostic.rule_id.clone(),
-        )
-    });
 }
 
 fn render_diff(path: &Path, original: &str, fixed: &str) -> String {
