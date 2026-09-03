@@ -302,7 +302,7 @@ fn the_suggested_command_keeps_the_opt_in_the_counted_fixes_need() {
 }
 
 #[test]
-fn fmt_withholds_unsafe_fixes_the_configuration_asked_for() {
+fn fmt_lays_the_file_out_and_leaves_what_make_does_to_check() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");
     std::fs::write(&path, "clean:\n    make -C sub\n").unwrap();
@@ -312,22 +312,156 @@ fn fmt_withholds_unsafe_fixes_the_configuration_asked_for() {
     )
     .unwrap();
 
-    let output = rumk()
+    let formatted = rumk()
         .current_dir(directory.path())
         .args(["fmt", "Makefile"])
         .output()
         .unwrap();
 
     // Formatting repairs the indentation and stops there: declaring the target
-    // .PHONY and spelling the sub-make $(MAKE) change what Make does, and `fmt`
-    // is not where that is agreed to.
-    assert!(output.status.success());
+    // .PHONY and spelling the sub-make $(MAKE) are what Make does with the
+    // file, so `fmt` neither applies them nor reports them, whatever the
+    // configuration asked for.
+    assert!(formatted.status.success());
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
         "clean:\n\tmake -C sub\n"
     );
+    let stdout = String::from_utf8_lossy(&formatted.stdout);
+    assert!(stdout.contains("[MK001]"));
+    assert!(!stdout.contains("[MK201]"));
+    assert!(!stdout.contains("[MK203]"));
+    assert!(!stdout.contains("can change what Make does"));
+    // A formatting run says the file is laid out, not that nothing is wrong
+    // with it, because it never looked at what Make does with the file.
+    assert!(stdout.contains("1 file formatted"));
+    assert!(!stdout.contains("No issues found"));
+
+    // The findings are still there, and `check` is where they are reported.
+    let checked = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile"])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&checked.stdout);
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(stdout.contains("[MK201]"));
+    assert!(stdout.contains("[MK203]"));
+}
+
+#[test]
+fn fmt_check_passes_a_laid_out_file_that_check_still_reports_on() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    let original = "all:\n\tcd build && $(MAKE) install\n";
+    std::fs::write(&path, original).unwrap();
+
+    let formatted = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "--check", "Makefile"])
+        .output()
+        .unwrap();
+    let checked = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile"])
+        .output()
+        .unwrap();
+
+    // A file laid out the way Rumk lays it out passes `fmt --check` silently,
+    // so the formatting gate does not fail on lint findings a project has
+    // chosen to keep.
+    assert_eq!(formatted.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&formatted.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&formatted.stderr), "");
+    assert_eq!(checked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&checked.stdout).contains("[MK201]"));
+}
+
+#[test]
+fn fmt_reports_a_layout_finding_it_has_no_fix_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    // The recipe prefix is decided at run time, so MK001 reports the
+    // space-indented line without writing a character it had to guess.
+    let original = "ifdef ALTERNATE\n.RECIPEPREFIX := >\nendif\nall:\n    true\n";
+    std::fs::write(&path, original).unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "Makefile"])
+        .output()
+        .unwrap();
+
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("2 fixes can change what Make does"));
+    assert_eq!(output.status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+    assert!(stdout.contains("[MK001]"));
+    assert!(!stdout.contains("rumk check --fix"));
+}
+
+#[test]
+fn fmt_lays_out_a_layout_rule_whose_severity_is_configured() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all:\n    true\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK001]\nseverity = \"warning\"\n",
+    )
+    .unwrap();
+
+    let gate = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "--check", "Makefile"])
+        .output()
+        .unwrap();
+    let formatted = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "Makefile"])
+        .output()
+        .unwrap();
+
+    // Choosing what a rule's findings are called says nothing about which
+    // command runs it, so a configured severity leaves MK001 a layout rule.
+    assert_eq!(gate.status.code(), Some(1));
+    assert!(formatted.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "all:\n\ttrue\n",
+        "a severity of its own must not take MK001 out of `fmt`"
+    );
+    assert!(String::from_utf8_lossy(&formatted.stdout).contains("[MK001]"));
+}
+
+#[test]
+fn fmt_wraps_a_long_phony_declaration() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "Makefile"])
+        .output()
+        .unwrap();
+
+    // Where a line is broken is layout, so MK101 is `fmt`'s to apply.
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        ".PHONY: build test lint \\\n        release docs\nclean:\n\trm -rf build\n"
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("[MK101]"));
 }
 
 #[test]
@@ -658,6 +792,8 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
     .unwrap();
 
     let rule_output = rumk().args(["rule", "MK101"]).output().unwrap();
+    let lint_rule_output = rumk().args(["rule", "MK201"]).output().unwrap();
+    let read_rule_output = rumk().args(["rule", "MK007"]).output().unwrap();
     let fixable_output = rumk().args(["rule", "--fixable"]).output().unwrap();
     let config_output = rumk()
         .current_dir(directory.path())
@@ -677,8 +813,15 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
     assert!(rule_stdout.contains("Default: enabled"));
     assert!(rule_stdout.contains("Fixable: yes"));
     assert!(rule_stdout.contains("Scope: file"));
+    assert!(rule_stdout.contains("Commands: check, fmt"));
     assert!(rule_stdout.contains("line-length = 120"));
     assert!(rule_stdout.contains("docs/mk101.md"));
+    let lint_rule_stdout = String::from_utf8_lossy(&lint_rule_output.stdout);
+    assert!(lint_rule_stdout.contains("Scope: project"));
+    assert!(lint_rule_stdout.contains("Commands: check\n"));
+    // MK007 is not a layout rule, but it reports a path that could not be read
+    // and both commands read paths.
+    assert!(String::from_utf8_lossy(&read_rule_output.stdout).contains("Commands: check, fmt"));
     assert_eq!(
         String::from_utf8_lossy(&fixable_output.stdout)
             .lines()

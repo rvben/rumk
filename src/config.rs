@@ -1,7 +1,6 @@
-use crate::diagnostic::{Applicability, Diagnostic, Severity};
-use crate::parser::Makefile;
-use crate::project::{Project, ProjectOptions};
-use crate::rules::{self, ReadFailure, Rule, RuleCategory};
+use crate::diagnostic::{Diagnostic, Severity};
+use crate::project::ProjectOptions;
+use crate::rules::{self, Rule};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
@@ -250,6 +249,22 @@ impl Config {
                 .strip_suffix("/**")
                 .is_some_and(|directory| glob_matches(directory, &normalized))
         })
+    }
+
+    /// Gives `diagnostic` the severity this configuration sets for the rule
+    /// that reported it, and leaves the rule's own severity where it sets none.
+    ///
+    /// Severity is settled here rather than by a rule that wraps another,
+    /// because such a wrapper answers for the rule inside it and every question
+    /// it forgets to pass on is silently answered wrong.
+    pub fn apply_severity(&self, diagnostic: &mut Diagnostic) {
+        if let Some(severity) = self
+            .settings
+            .get(&diagnostic.rule_id)
+            .and_then(|settings| settings.severity)
+        {
+            diagnostic.severity = severity;
+        }
     }
 
     pub fn is_rule_fixable(&self, rule_id: &str) -> bool {
@@ -920,11 +935,7 @@ fn build_rule(
         _ => bail!("Unknown rule: {rule_id}"),
     };
 
-    Ok(if let Some(severity) = settings.severity {
-        Box::new(SeverityOverride { rule, severity })
-    } else {
-        rule
-    })
+    Ok(rule)
 }
 
 fn integer_option(
@@ -1042,65 +1053,6 @@ fn format_string_map(values: &BTreeMap<String, String>) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     )
-}
-
-struct SeverityOverride {
-    rule: Box<dyn Rule>,
-    severity: Severity,
-}
-
-impl Rule for SeverityOverride {
-    fn id(&self) -> &'static str {
-        self.rule.id()
-    }
-
-    fn name(&self) -> &'static str {
-        self.rule.name()
-    }
-
-    fn description(&self) -> &'static str {
-        self.rule.description()
-    }
-
-    fn category(&self) -> RuleCategory {
-        self.rule.category()
-    }
-
-    fn fixable(&self) -> bool {
-        self.rule.fixable()
-    }
-
-    fn fix_applicability(&self) -> Applicability {
-        self.rule.fix_applicability()
-    }
-
-    fn project_aware(&self) -> bool {
-        self.rule.project_aware()
-    }
-
-    fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
-        let mut diagnostics = self.rule.check(makefile, content);
-        for diagnostic in &mut diagnostics {
-            diagnostic.severity = self.severity;
-        }
-        diagnostics
-    }
-
-    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        let mut diagnostics = self.rule.check_project(project);
-        for diagnostic in &mut diagnostics {
-            diagnostic.severity = self.severity;
-        }
-        diagnostics
-    }
-
-    fn check_read(&self, failure: &ReadFailure) -> Vec<Diagnostic> {
-        let mut diagnostics = self.rule.check_read(failure);
-        for diagnostic in &mut diagnostics {
-            diagnostic.severity = self.severity;
-        }
-        diagnostics
-    }
 }
 
 fn normalize_path(path: &Path) -> String {

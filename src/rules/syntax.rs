@@ -28,6 +28,10 @@ impl Rule for TabInRecipe {
         true
     }
 
+    fn layout(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
 

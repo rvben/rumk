@@ -117,7 +117,7 @@
           "default": []
         },
         "unsafe-fixes": {
-          "description": "Also apply the fixes that can change what Make does with the file. `rumk fmt` withholds them regardless.",
+          "description": "Also apply the fixes that can change what Make does with the file. `rumk fmt` runs the layout rules alone, and every layout fix is safe, so this setting does not reach it.",
           "type": "boolean",
           "default": false
         },

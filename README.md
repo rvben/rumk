@@ -44,7 +44,8 @@ Rumdl so existing users can reuse their workflow.
 - Supports GNU substitution references plus common word, path, list, and lazy logical functions
 - Resolves expanded include graphs and reports cross-file findings at their real source paths
 - Preserves LF/CRLF line endings and final newlines during fixes
-- Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
+- Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands, with `fmt`
+  responsible for layout alone and `check` for what Make does with the file
 - Discovers `.rumk.toml` upward through the project tree
 - Respects `.gitignore` by default
 - Supports rule selection, file globs, per-file ignores, severities, fix allowlists, and
@@ -104,7 +105,7 @@ rumk check --fix
 # Also apply the fixes that can change what Make does
 rumk check --fix --unsafe-fixes
 
-# Format files with formatter-style exit behavior
+# Lay files out, leaving what Make does with them alone
 rumk fmt
 
 # Preview formatting changes
@@ -233,7 +234,6 @@ jobserver down. Both are the right change to make, and both are a change a perso
 `--unsafe-fixes`, refuse them explicitly with `--no-unsafe-fixes`, or set `unsafe-fixes` under
 `[global]` to choose for a project. `rumk rule MK201` says which kind a rule offers. Under
 `--diff` the withheld count goes to stderr, leaving stdout a patch other tools can read.
-`rumk fmt` never applies an unsafe fix, whatever `[global] unsafe-fixes` says.
 
 ```bash
 rumk check --fix .                  # safe fixes only
@@ -241,6 +241,25 @@ rumk check --fix --unsafe-fixes .   # every fix the enabled rules offer
 ```
 
 Rumdl has no equivalent setting; this is a Rumk addition, modeled on Ruff's `--unsafe-fixes`.
+
+### Formatting
+
+`rumk fmt` is responsible for how a Makefile is laid out, and leaves what Make does with it to
+`rumk check`. Only the layout rules run:
+[`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md) indents recipes with the prefix
+Make expects there, and [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) wraps a
+long static `.PHONY` declaration. A path that cannot be read is still reported as
+[`MK007`](https://github.com/rvben/rumk/blob/main/docs/mk007.md), because a file that was never
+read was never formatted either. `rumk rule <ID>` says which commands run a rule.
+
+So a formatting run neither reports nor rewrites a missing `.PHONY` declaration, a hardcoded
+path, or a bare `make` in a recipe: those are lint findings, they belong to `rumk check`, and a
+project that formats on save should not have them appear as formatting noise. This also makes
+`rumk fmt --check` usable as a CI gate on its own, since it fails only when a file's layout is
+not the one Rumk writes.
+
+Every layout fix is safe, so `rumk fmt` has no unsafe fix to withhold and `--unsafe-fixes` makes
+no difference to it.
 
 ### Exit codes
 
@@ -250,7 +269,7 @@ Rumdl has no equivalent setting; this is a Rumk addition, modeled on Ruff's `--u
 
 `rumk check` fails on any diagnostic by default. Use `--fail-on warning`, `--fail-on error`, or
 `--fail-on never` to change that policy. `rumk fmt` exits successfully after formatting even if
-non-fixable lint diagnostics remain. A Makefile that cannot be read, or a directory that cannot be
+a layout diagnostic it has no fix for remains. A Makefile that cannot be read, or a directory that cannot be
 searched for Makefiles, is reported as
 [`MK007`](https://github.com/rvben/rumk/blob/main/docs/mk007.md) and fails every command regardless
 of `--fail-on`; the other files are still checked.
@@ -305,7 +324,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 ### Syntax
 
 - [`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md) - Recipes must use tab
-  indentation (**default**, safe fix)
+  indentation (**default**, safe fix, run by `fmt`)
 - [`MK002`](https://github.com/rvben/rumk/blob/main/docs/mk002.md) - Invalid variable syntax
   (**default**)
 - [`MK003`](https://github.com/rvben/rumk/blob/main/docs/mk003.md) - Malformed conditional
@@ -325,7 +344,8 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 
 - [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) - Declarative line exceeds
   the configured maximum length; comments and recipes are ignored by default, and static
-  `.PHONY` declarations can be wrapped safely (**default**, partially fixable, safe fix)
+  `.PHONY` declarations can be wrapped safely (**default**, partially fixable, safe fix, run by
+  `fmt`)
 - [`MK102`](https://github.com/rvben/rumk/blob/main/docs/mk102.md) - Variable naming convention
 - [`MK103`](https://github.com/rvben/rumk/blob/main/docs/mk103.md) - Target naming convention
 

@@ -32,6 +32,7 @@ fuzz_target!(|data: &[u8]| {
         path: Path::new("Makefile"),
         project_root: false,
         contextual: false,
+        layout_only: false,
         covered_files: &covered_files,
     };
 

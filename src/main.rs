@@ -42,7 +42,7 @@ struct Cli {
 enum Commands {
     /// Lint Makefiles and print violations
     Check(CheckArgs),
-    /// Format Makefiles using all enabled safe fixes
+    /// Lay Makefiles out, leaving what Make does with them to `check`
     Fmt(FmtArgs),
     /// Create a starter .rumk.toml configuration
     Init {
@@ -266,6 +266,12 @@ impl Operation {
 
     fn shows_diff(self) -> bool {
         matches!(self, Self::CheckDiff | Self::FormatDiff | Self::FormatCheck)
+    }
+
+    /// Whether this is `rumk fmt`, which is responsible for how a file is laid
+    /// out and leaves what Make does with it to `rumk check`.
+    fn formats(self) -> bool {
+        matches!(self, Self::Format | Self::FormatDiff | Self::FormatCheck)
     }
 }
 
@@ -503,7 +509,10 @@ fn run_files(
         project_roots.insert(files[0].clone());
     }
     let mut included_files = BTreeSet::new();
-    if config.rules.iter().any(|rule| rule.project_aware()) {
+    // Which files a Makefile includes decides only which pass reports the
+    // project-aware rules, and formatting runs none of them, so it does not
+    // read the include graph to find out.
+    if !operation.formats() && config.rules.iter().any(|rule| rule.project_aware()) {
         for root in &project_roots {
             // A root that cannot be read is reported when the file itself is
             // processed; it just contributes no included files here. A root
@@ -774,6 +783,7 @@ fn process_file(
         path,
         project_root,
         contextual,
+        layout_only: operation.formats(),
         covered_files,
     };
     let mut initial_diagnostics = lint::lint(&original, &context)
@@ -930,12 +940,43 @@ fn text_position(bytes: &[u8], offset: usize) -> (usize, usize) {
     (line, column)
 }
 
+/// The commands that run `rule`. `fmt` is responsible for how a file is laid
+/// out, and it reads the same paths as `check`, so a rule reporting a path it
+/// could not read has its say there too.
+fn rule_commands(rule: &dyn rules::Rule) -> &'static str {
+    if rule.layout() || reports_read_failures(rule) {
+        "check, fmt"
+    } else {
+        "check"
+    }
+}
+
+/// Whether `rule` reports anything about a path that could not be read as
+/// written, asked by handing it each failure rather than by a second answer
+/// beside `check_read` that can come to disagree with it.
+fn reports_read_failures(rule: &dyn rules::Rule) -> bool {
+    let failures = [
+        rules::ReadFailure::Unreadable {
+            kind: rules::PathKind::Unknown,
+            error: std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+        },
+        rules::ReadFailure::InvalidUtf8 { line: 1, column: 1 },
+    ];
+    failures
+        .iter()
+        .any(|failure| !rule.check_read(failure).is_empty())
+}
+
 fn read_diagnostics(config: &Config, path: &Path, failure: &rules::ReadFailure) -> Vec<Diagnostic> {
     config
         .rules
         .iter()
         .flat_map(|rule| rule.check_read(failure))
         .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
+        .map(|mut diagnostic| {
+            config.apply_severity(&mut diagnostic);
+            diagnostic
+        })
         .collect()
 }
 
@@ -1257,12 +1298,23 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
         .filter(|report| report.state != ReadState::UnreadableDirectory)
         .count();
     if issue_count == 0 {
-        println!(
-            "{} No issues found in {} {}",
-            "✓".green(),
-            checked,
-            pluralize(checked, "file", "files")
-        );
+        // Formatting judges the layout alone, so a clean run says the files are
+        // laid out the way Rumk lays them out rather than that nothing is wrong
+        // with them: what `rumk check` reports is still there to be reported.
+        if operation.formats() {
+            println!(
+                "{} {checked} {} formatted",
+                "✓".green(),
+                pluralize(checked, "file", "files")
+            );
+        } else {
+            println!(
+                "{} No issues found in {} {}",
+                "✓".green(),
+                checked,
+                pluralize(checked, "file", "files")
+            );
+        }
     } else {
         let issue_files = reports
             .iter()
@@ -1413,6 +1465,7 @@ fn show_rule(
                 "file"
             }
         );
+        println!("Commands: {}", rule_commands(rule.as_ref()));
         let options = defaults
             .rule_options(rule.id())
             .expect("known rule has default settings");

@@ -1,7 +1,34 @@
+use std::collections::BTreeSet;
+use std::path::Path;
+
 use rumk::config::Config;
-use rumk::diagnostic::Severity;
+use rumk::diagnostic::{Diagnostic, Severity};
 use rumk::fix::apply_fixes;
+use rumk::lint::{self, LintContext};
 use rumk::parser::parse;
+
+/// Lints `content` the way a run does, so what a configuration decides is
+/// observed where the run observes it.
+fn lint(config: &Config, content: &str) -> Vec<Diagnostic> {
+    let covered_files = BTreeSet::new();
+    let context = LintContext {
+        config,
+        path: Path::new("Makefile"),
+        project_root: false,
+        contextual: false,
+        layout_only: false,
+        covered_files: &covered_files,
+    };
+    lint::lint(content, &context).expect("the content parses")
+}
+
+/// What `rule_id` reported about `content` under `config`.
+fn diagnostics_for(config: &Config, rule_id: &str, content: &str) -> Vec<Diagnostic> {
+    lint(config, content)
+        .into_iter()
+        .filter(|diagnostic| diagnostic.rule_id == rule_id)
+        .collect()
+}
 
 #[test]
 fn an_empty_config_keeps_the_builtin_default_rule_set() {
@@ -52,13 +79,7 @@ rules = ["MK202"]
     assert!(config.is_path_ignored(std::path::Path::new("vendor/lib/Makefile")));
     assert!(!config.is_path_ignored(std::path::Path::new("src/Makefile")));
 
-    let makefile = parse("1234\n");
-    let line_length = config
-        .rules
-        .iter()
-        .find(|rule| rule.id() == "MK101")
-        .unwrap();
-    let diagnostics = line_length.check(&makefile, "1234\n");
+    let diagnostics = diagnostics_for(&config, "MK101", "1234\n");
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].severity, Severity::Error);
 }
@@ -102,12 +123,7 @@ enabled = true
     );
     assert!(config.render(false, false).contains("[per-file-ignores]"));
 
-    let diagnostics = config
-        .rules
-        .iter()
-        .find(|rule| rule.id() == "MK101")
-        .unwrap()
-        .check(&parse("1234\n"), "1234\n");
+    let diagnostics = diagnostics_for(&config, "MK101", "1234\n");
     assert_eq!(diagnostics[0].severity, Severity::Error);
 }
 

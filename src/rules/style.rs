@@ -62,6 +62,10 @@ impl Rule for LineLength {
         true
     }
 
+    fn layout(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let ignored_lines: BTreeSet<_> = makefile

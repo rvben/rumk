@@ -29,6 +29,10 @@ pub struct LintContext<'a> {
     /// Whether a project pass covers this file, in which case the project-aware
     /// rules are left to that pass rather than run over the file on its own.
     pub contextual: bool,
+    /// Whether only the rules about the file's layout run, which is what
+    /// formatting is. What Make does with the file is then nobody's business
+    /// here: the rules that judge it do not run and are not reported.
+    pub layout_only: bool,
     /// The files the run reports on itself, which a project pass over an
     /// including file does not report on their behalf.
     pub covered_files: &'a BTreeSet<PathBuf>,
@@ -51,23 +55,28 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
         path,
         project_root,
         contextual,
+        layout_only,
         covered_files,
     } = *context;
     let makefile = parser::parse(content);
     let mut diagnostics = config
         .rules
         .iter()
+        .filter(|rule| !layout_only || rule.layout())
         .filter(|rule| !contextual || !rule.project_aware())
         .flat_map(|rule| rule.check(&makefile, content))
         .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
         .map(|mut diagnostic| {
+            config.apply_severity(&mut diagnostic);
             resolve_fix(config, &mut diagnostic);
             diagnostic
         })
         .collect::<Vec<_>>();
     diagnostics = inline_config::apply_inline_suppressions(content, diagnostics)
         .map_err(anyhow::Error::msg)?;
-    if project_root {
+    // The project pass judges what the files a Makefile includes do together,
+    // and it reports on files this run does not rewrite. Neither is formatting.
+    if project_root && !layout_only {
         let project = Project::load_with_root_content(
             path,
             content.to_string(),
@@ -81,6 +90,7 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
                 if diagnostic.source.is_none() {
                     diagnostic.source = Some(project.file(project.root()).path.clone());
                 }
+                config.apply_severity(&mut diagnostic);
                 resolve_fix(config, &mut diagnostic);
                 diagnostic
             })
@@ -101,6 +111,7 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
                     })
                     .map(|mut diagnostic| {
                         diagnostic.source = Some(file.path.clone());
+                        config.apply_severity(&mut diagnostic);
                         diagnostic.fixable = false;
                         diagnostic.fix = None;
                         diagnostic

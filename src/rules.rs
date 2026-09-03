@@ -56,6 +56,12 @@ pub trait Rule: Send + Sync {
     fn project_aware(&self) -> bool {
         false
     }
+    /// Whether the rule is about how the file is laid out rather than what
+    /// Make does with it, which is what `rumk fmt` is responsible for. Every
+    /// other rule is left to `rumk check`.
+    fn layout(&self) -> bool {
+        false
+    }
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic>;
     fn check_project(&self, _project: &Project) -> Vec<Diagnostic> {
         Vec::new()
