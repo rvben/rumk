@@ -603,7 +603,13 @@ impl Evaluator {
         let value = match name {
             "strip" => collapse_whitespace(argument(&expanded, 0)),
             "subst" => {
-                argument(&expanded, 2).replace(argument(&expanded, 0), argument(&expanded, 1))
+                let text = argument(&expanded, 2);
+                match argument(&expanded, 0) {
+                    // Make has nothing to look for and appends the
+                    // replacement once, rather than at every position.
+                    "" => format!("{text}{}", argument(&expanded, 1)),
+                    from => text.replace(from, argument(&expanded, 1)),
+                }
             }
             "patsubst" => words(argument(&expanded, 2))
                 .map(|word| pattern_replace(argument(&expanded, 0), argument(&expanded, 1), word))

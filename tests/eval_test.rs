@@ -61,6 +61,24 @@ fn protects_predefined_values_unless_override_is_explicit() {
 }
 
 #[test]
+fn substitutes_nothing_the_way_gnu_make_substitutes_it() {
+    let evaluator = Evaluator::default();
+
+    // With nothing to look for Make appends the replacement once, to the
+    // whole text rather than to each word in it.
+    assert_eq!(evaluator.expand("$(subst ,z,abc)").as_known(), Some("abcz"));
+    assert_eq!(evaluator.expand("$(subst ,z,a b)").as_known(), Some("a bz"));
+    assert_eq!(evaluator.expand("$(subst ,z,)").as_known(), Some("z"));
+    assert_eq!(evaluator.expand("$(subst ,,abc)").as_known(), Some("abc"));
+    assert_eq!(evaluator.expand("$(subst a,,aa)").as_known(), Some(""));
+    // A pattern with nothing in it matches no word at all.
+    assert_eq!(
+        evaluator.expand("$(patsubst ,z,abc)").as_known(),
+        Some("abc")
+    );
+}
+
+#[test]
 fn expands_nested_safe_functions_and_preserves_trace() {
     let mut evaluator = Evaluator::new(&BTreeMap::new());
     evaluator.assign(
