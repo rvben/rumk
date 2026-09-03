@@ -1,0 +1,65 @@
+name: Fuzz
+
+# Runs every libFuzzer target for a bounded time on a weekly cadence, and on
+# demand. The per-commit suite only runs the tests and the corpus, so this is
+# where the parser, the evaluator, and the fix loop meet input nobody wrote on
+# purpose. A crash uploads the input that caused it.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      fuzz_time:
+        description: Seconds to fuzz each target
+        default: '300'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: Fuzz every target
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: nightly
+
+      - name: Cache Rust build data
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: |
+            .
+            fuzz
+
+      # Built here rather than downloaded: a prebuilt cargo-fuzz is a static
+      # musl binary, which both targets its own triple instead of this host's
+      # and links a libc the sanitizer refuses to work with.
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      - name: Fuzz every target
+        env:
+          FUZZ_TIME: ${{ github.event.inputs.fuzz_time || '300' }}
+        run: make fuzz FUZZ_TIME="$FUZZ_TIME"
+
+      - name: Upload the inputs that crashed
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

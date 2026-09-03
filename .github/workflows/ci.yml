@@ -41,6 +41,12 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # The fuzz targets are built for real only by the weekly Fuzz workflow,
+      # so this is what keeps a library change from leaving one uncompilable
+      # until the next run. It needs neither nightly nor a sanitizer.
+      - name: Type-check the fuzz targets
+        run: make check-fuzz
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

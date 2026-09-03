@@ -1,0 +1,33 @@
+[package]
+name = "rumk-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.rumk]
+path = ".."
+
+# Keeps this crate out of the workspace the linter itself builds in, so a
+# `cargo build` at the repository root never pulls in the sanitizer runtime.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_lint"
+path = "fuzz_targets/fuzz_lint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_fix"
+path = "fuzz_targets/fuzz_fix.rs"
+test = false
+doc = false
+bench = false
