@@ -713,7 +713,12 @@ fn process_file(
     covered_files: &BTreeSet<PathBuf>,
     silent: bool,
 ) -> Result<Option<FileReport>> {
-    let (original, failure) = match read_makefile(path) {
+    // A symlink names the file to read and to rewrite, so the link is followed
+    // once: the read and the write address the same file even if the link is
+    // pointed elsewhere in between, and a rewrite replaces the file rather than
+    // the link that names it.
+    let resolved = path_identity(path);
+    let (original, failure) = match read_makefile(&resolved) {
         Ok(source) => source,
         Err(error) => {
             let message = error.to_string();
@@ -794,7 +799,7 @@ fn process_file(
             fixed_count = fixed_diagnostics.len();
             diff = Some(render_diff(path, &original, &content));
             if operation.writes() {
-                atomic_write(path, &content)?;
+                atomic_write(&resolved, &content)?;
             }
         }
     }
@@ -1013,6 +1018,8 @@ fn render_diff(path: &Path, original: &str, fixed: &str) -> String {
         .to_string()
 }
 
+/// Replaces the file at `path`, which the caller has already resolved, so the
+/// temporary file shares its filesystem and a symlink pointing at it survives.
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let permissions = std::fs::metadata(path)

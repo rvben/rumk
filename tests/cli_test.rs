@@ -71,6 +71,30 @@ fn fix_on_a_clean_file_is_a_byte_for_byte_noop() {
     assert!(!String::from_utf8_lossy(&output.stdout).contains("Fixed 0 issues"));
 }
 
+#[cfg(unix)]
+#[test]
+fn fix_writes_through_a_symlink_instead_of_replacing_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let target = directory.path().join("real.mk");
+    let link = directory.path().join("Makefile");
+    std::fs::write(&target, ".PHONY: all\nall:\n    true\n").unwrap();
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(std::fs::read_link(&link).unwrap(), target);
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        ".PHONY: all\nall:\n\ttrue\n"
+    );
+}
+
 #[test]
 fn fix_reports_only_issues_remaining_after_the_write() {
     let directory = tempfile::tempdir().unwrap();
