@@ -1206,10 +1206,14 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
         .iter()
         .flat_map(|report| {
             report.diagnostics.iter().map(|diagnostic| {
+                let file = diagnostic_path(report, diagnostic);
+                // A byte range is only meaningful in the content it was
+                // measured against, so a diagnostic another file carries is
+                // reported without the edit that would fix it.
                 let json_fix = diagnostic
                     .fix
                     .as_ref()
-                    .filter(|_| diagnostic.source.is_none())
+                    .filter(|_| file == report.path)
                     .and_then(|fix| fix.edits.first())
                     .and_then(|edit| {
                         fix::edit_byte_range(&report.content, edit).map(|(start, end)| JsonFix {
@@ -1218,7 +1222,7 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                         })
                     });
                 JsonDiagnostic {
-                    file: diagnostic_path(report, diagnostic),
+                    file,
                     line: diagnostic.line,
                     column: diagnostic.column,
                     end_line: diagnostic.end_line.unwrap_or(diagnostic.line),

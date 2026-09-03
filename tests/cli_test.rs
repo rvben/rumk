@@ -624,6 +624,35 @@ fn explicit_roots_lint_unselected_includes_without_fixing_them() {
 }
 
 #[test]
+fn json_carries_the_edit_of_a_project_aware_fix_for_the_checked_file() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "include shared.mk\nall:\n\t@:\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "helper:\n\t@:\n").unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let phony = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK201" && diagnostic["file"] == "Makefile")
+        .unwrap();
+
+    assert_eq!(phony["fixable"], true);
+    assert_eq!(phony["fix"]["replacement"], ".PHONY: all\n");
+    assert_eq!(phony["fix"]["range"]["start"], 18);
+    assert_eq!(phony["fix"]["range"]["end"], 18);
+}
+
+#[test]
 fn per_file_ignores_apply_to_project_diagnostic_source_paths() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
