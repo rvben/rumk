@@ -263,12 +263,19 @@ fn split_arguments(
 }
 
 /// The Make function a reference body invokes: its first word, when that word
-/// is a function name followed by whitespace or the end of the body.
+/// is a function name followed by whitespace or the end of the body. A body
+/// runs to the end of the text it was found in, so the first word is only
+/// looked for as far as the longest function name reaches.
 pub fn function_name(body: &str) -> Option<&str> {
-    let end = body
-        .find(|character: char| character.is_ascii_whitespace())
-        .unwrap_or(body.len());
-    let name = &body[..end];
+    let head = body
+        .as_bytes()
+        .get(..=LONGEST_FUNCTION_NAME)
+        .unwrap_or(body.as_bytes());
+    let end = head
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(head.len());
+    let name = body.get(..end)?;
     is_make_function(name).then_some(name)
 }
 
@@ -280,49 +287,68 @@ pub fn closing_delimiter(opening: char) -> char {
     }
 }
 
+/// Every function GNU Make expands, and the only words that can start a
+/// reference body Make reads as a call.
+const FUNCTION_NAMES: &[&str] = &[
+    "subst",
+    "patsubst",
+    "strip",
+    "findstring",
+    "filter",
+    "filter-out",
+    "sort",
+    "word",
+    "wordlist",
+    "words",
+    "firstword",
+    "lastword",
+    "dir",
+    "notdir",
+    "suffix",
+    "basename",
+    "addsuffix",
+    "addprefix",
+    "join",
+    "wildcard",
+    "realpath",
+    "abspath",
+    "if",
+    "or",
+    "and",
+    "intcmp",
+    "foreach",
+    "let",
+    "file",
+    "call",
+    "value",
+    "eval",
+    "origin",
+    "flavor",
+    "shell",
+    "error",
+    "warning",
+    "info",
+    "guile",
+];
+
+/// The length of the longest name in [`FUNCTION_NAMES`], which bounds how far
+/// [`function_name`] looks for the end of the first word.
+const LONGEST_FUNCTION_NAME: usize = longest(FUNCTION_NAMES);
+
+const fn longest(names: &[&str]) -> usize {
+    let mut longest = 0;
+    let mut index = 0;
+    while index < names.len() {
+        if names[index].len() > longest {
+            longest = names[index].len();
+        }
+        index += 1;
+    }
+    longest
+}
+
 pub fn is_make_function(name: &str) -> bool {
-    matches!(
-        name,
-        "subst"
-            | "patsubst"
-            | "strip"
-            | "findstring"
-            | "filter"
-            | "filter-out"
-            | "sort"
-            | "word"
-            | "wordlist"
-            | "words"
-            | "firstword"
-            | "lastword"
-            | "dir"
-            | "notdir"
-            | "suffix"
-            | "basename"
-            | "addsuffix"
-            | "addprefix"
-            | "join"
-            | "wildcard"
-            | "realpath"
-            | "abspath"
-            | "if"
-            | "or"
-            | "and"
-            | "intcmp"
-            | "foreach"
-            | "let"
-            | "file"
-            | "call"
-            | "value"
-            | "eval"
-            | "origin"
-            | "flavor"
-            | "shell"
-            | "error"
-            | "warning"
-            | "info"
-            | "guile"
-    )
+    name.len() <= LONGEST_FUNCTION_NAME && FUNCTION_NAMES.contains(&name)
 }
 
 fn counted_end(body: &str, opening: char, closing: char) -> Option<usize> {

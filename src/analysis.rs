@@ -540,6 +540,12 @@ fn scan_references(
     depth: usize,
     output: &mut Vec<Reference>,
 ) {
+    // A reference ends at a closing delimiter, so one that starts past the
+    // last of its kind cannot end at all. Comparing against that position
+    // costs a scan of the text once instead of once per reference, which is
+    // what a text of nothing but `$(` would otherwise ask for.
+    let last_parenthesis = text.rfind(')');
+    let last_brace = text.rfind('}');
     let mut characters = text.char_indices().peekable();
     while let Some((index, character)) = characters.next() {
         if character != '$' {
@@ -555,7 +561,15 @@ fn scan_references(
         if matches!(next, '(' | '{') {
             characters.next();
             let body_start = next_index + next.len_utf8();
-            if let Some(end) = reference_end(text, body_start, next) {
+            let last_closing = if next == '(' {
+                last_parenthesis
+            } else {
+                last_brace
+            };
+            let end = last_closing
+                .filter(|last| body_start <= *last)
+                .and_then(|_| reference_end(text, body_start, next));
+            if let Some(end) = end {
                 let body = &text[body_start..end];
                 let (name, kind) = classify_reference(body);
                 if !name.is_empty() {

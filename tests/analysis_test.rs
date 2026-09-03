@@ -206,3 +206,21 @@ fn a_reference_nested_deeper_than_the_expansion_limit_is_left_unread() {
         .iter()
         .all(|reference| reference.name != "A"));
 }
+
+#[test]
+fn a_reference_that_never_closes_leaves_the_rest_of_the_text_unread() {
+    let source = format!("X := {}\n", "$(".repeat(400_000));
+
+    let started = std::time::Instant::now();
+    let index = SemanticIndex::build(&parse(&source));
+    let elapsed = started.elapsed();
+
+    assert!(index.references.is_empty());
+    // Looking for the end of every `$(` in turn costs a scan of the rest of
+    // the text each time, which this text is long enough to make minutes of.
+    // The bound is far above what the walk takes, and far below that.
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "scanning took {elapsed:?}"
+    );
+}
