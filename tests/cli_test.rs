@@ -96,6 +96,61 @@ fn fix_writes_through_a_symlink_instead_of_replacing_it() {
 }
 
 #[test]
+fn a_byte_order_mark_is_read_past_the_way_gnu_make_reads_past_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    let original = "\u{feff}.PHONY: all\nall:\n\t@echo hi\n";
+    std::fs::write(&path, original).unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("No issues found"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+}
+
+#[test]
+fn a_fix_keeps_the_byte_order_mark_and_counts_it_in_byte_offsets() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "\u{feff}.PHONY: all\nall:\n    @echo hi\n").unwrap();
+
+    let reported = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&reported.stdout).unwrap();
+    let recipe = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK001")
+        .unwrap();
+
+    // The mark takes three bytes, so the spaces the recipe is indented with
+    // stand at bytes 20 to 24 of the file.
+    assert_eq!(recipe["fix"]["range"]["start"], 20);
+    assert_eq!(recipe["fix"]["range"]["end"], 24);
+
+    let fixed = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(fixed.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "\u{feff}.PHONY: all\nall:\n\t@echo hi\n"
+    );
+}
+
+#[test]
 fn fix_reports_only_issues_remaining_after_the_write() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");

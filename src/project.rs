@@ -614,9 +614,12 @@ impl<'a> Loader<'a> {
 
 /// Reads a Makefile the way GNU Make does, as bytes: a file that is not valid
 /// UTF-8 is decoded lossily instead of counting as unreadable, so an include
-/// GNU Make follows is analyzed rather than reported as missing.
+/// GNU Make follows is analyzed rather than reported as missing, and a leading
+/// byte order mark is read past the way Make 4.3 and later read past it.
 fn read_source(path: &Path) -> std::io::Result<String> {
-    Ok(String::from_utf8_lossy(&std::fs::read(path)?).into_owned())
+    let read = std::fs::read(path)?;
+    let (bytes, _) = crate::source::split_byte_order_mark(&read);
+    Ok(String::from_utf8_lossy(bytes).into_owned())
 }
 
 fn include_candidates(

@@ -12,4 +12,5 @@ pub mod parser;
 pub mod project;
 pub mod project_analysis;
 pub mod rules;
+pub mod source;
 pub mod syntax;

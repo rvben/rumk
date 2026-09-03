@@ -5,7 +5,7 @@ use ignore::WalkBuilder;
 use rumk::config::Config;
 use rumk::diagnostic::{Diagnostic, Severity};
 use rumk::project::Project;
-use rumk::{fix, inline_config, parser, rules};
+use rumk::{fix, inline_config, parser, rules, source};
 use serde::Serialize;
 use similar::TextDiff;
 use std::collections::BTreeSet;
@@ -253,6 +253,9 @@ struct FileReport {
     initial_diagnostics: Vec<Diagnostic>,
     fixed_diagnostics: Vec<Diagnostic>,
     content: String,
+    /// Whether the file starts with a byte order mark, which stands before
+    /// every byte offset this report puts in machine-readable output.
+    byte_order_mark: bool,
     fixed_count: usize,
     changed: bool,
     diff: Option<String>,
@@ -473,11 +476,11 @@ fn run_files(
             // processed; it just contributes no included files here. A root
             // that is only invalid UTF-8 is loaded from the same lossy decode
             // that lints it, so the files it includes stay contextual.
-            let Ok((content, _)) = read_makefile(root) else {
+            let Ok(source) = read_makefile(root) else {
                 continue;
             };
             let Ok(project) =
-                Project::load_with_root_content(root, content, &config.project_options(root))
+                Project::load_with_root_content(root, source.text, &config.project_options(root))
             else {
                 continue;
             };
@@ -718,7 +721,11 @@ fn process_file(
     // pointed elsewhere in between, and a rewrite replaces the file rather than
     // the link that names it.
     let resolved = path_identity(path);
-    let (original, failure) = match read_makefile(&resolved) {
+    let MakefileSource {
+        text: original,
+        byte_order_mark,
+        failure,
+    } = match read_makefile(&resolved) {
         Ok(source) => source,
         Err(error) => {
             let message = error.to_string();
@@ -797,9 +804,15 @@ fn process_file(
 
         if content != original {
             fixed_count = fixed_diagnostics.len();
-            diff = Some(render_diff(path, &original, &content));
+            // The diff and the write both describe the file on disk, which
+            // keeps the byte order mark Make reads past.
+            diff = Some(render_diff(
+                path,
+                &with_byte_order_mark(&original, byte_order_mark),
+                &with_byte_order_mark(&content, byte_order_mark),
+            ));
             if operation.writes() {
-                atomic_write(&resolved, &content)?;
+                atomic_write(&resolved, &with_byte_order_mark(&content, byte_order_mark))?;
             }
         }
     }
@@ -811,6 +824,7 @@ fn process_file(
         fixed_diagnostics,
         changed: content != original,
         content,
+        byte_order_mark,
         fixed_count,
         diff,
         state: ReadState::Linted,
@@ -851,6 +865,7 @@ fn unreadable_report(
         diagnostics,
         fixed_diagnostics: Vec::new(),
         content: String::new(),
+        byte_order_mark: false,
         fixed_count: 0,
         changed: false,
         diff: None,
@@ -858,18 +873,36 @@ fn unreadable_report(
     })
 }
 
+/// A Makefile Rumk managed to read.
+struct MakefileSource {
+    /// The text Make reads, which every rule and every fix works on.
+    text: String,
+    /// Whether a byte order mark stood before that text, which a rewrite
+    /// writes back so the file keeps the bytes it came with.
+    byte_order_mark: bool,
+    /// Where the first byte that is not UTF-8 was, when the text had to be
+    /// decoded lossily.
+    failure: Option<rules::ReadFailure>,
+}
+
 /// Reads a Makefile, decoding invalid UTF-8 lossily so that it can still be
 /// linted; the failure says where the first invalid byte was.
-fn read_makefile(path: &Path) -> std::io::Result<(String, Option<rules::ReadFailure>)> {
-    let bytes = std::fs::read(path)?;
-    Ok(match String::from_utf8(bytes) {
-        Ok(content) => (content, None),
+fn read_makefile(path: &Path) -> std::io::Result<MakefileSource> {
+    let read = std::fs::read(path)?;
+    let (bytes, byte_order_mark) = source::split_byte_order_mark(&read);
+    Ok(match std::str::from_utf8(bytes) {
+        Ok(content) => MakefileSource {
+            text: content.to_string(),
+            byte_order_mark,
+            failure: None,
+        },
         Err(error) => {
-            let (line, column) = text_position(error.as_bytes(), error.utf8_error().valid_up_to());
-            (
-                String::from_utf8_lossy(error.as_bytes()).into_owned(),
-                Some(rules::ReadFailure::InvalidUtf8 { line, column }),
-            )
+            let (line, column) = text_position(bytes, error.valid_up_to());
+            MakefileSource {
+                text: String::from_utf8_lossy(bytes).into_owned(),
+                byte_order_mark,
+                failure: Some(rules::ReadFailure::InvalidUtf8 { line, column }),
+            }
         }
     })
 }
@@ -1016,6 +1049,16 @@ fn render_diff(path: &Path, original: &str, fixed: &str) -> String {
         .unified_diff()
         .header(&label, &label)
         .to_string()
+}
+
+/// The text as it stands on disk, which is the text Make reads behind the byte
+/// order mark the file may start with.
+fn with_byte_order_mark(text: &str, present: bool) -> std::borrow::Cow<'_, str> {
+    if present {
+        std::borrow::Cow::Owned(format!("{}{text}", source::BYTE_ORDER_MARK))
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    }
 }
 
 /// Replaces the file at `path`, which the caller has already resolved, so the
@@ -1216,8 +1259,18 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                     .filter(|_| file == report.path)
                     .and_then(|fix| fix.edits.first())
                     .and_then(|edit| {
+                        // Offsets name bytes in the file, which begins with the
+                        // byte order mark Make reads past.
+                        let mark = if report.byte_order_mark {
+                            source::BYTE_ORDER_MARK.len()
+                        } else {
+                            0
+                        };
                         fix::edit_byte_range(&report.content, edit).map(|(start, end)| JsonFix {
-                            range: JsonRange { start, end },
+                            range: JsonRange {
+                                start: start + mark,
+                                end: end + mark,
+                            },
                             replacement: &edit.replacement,
                         })
                     });

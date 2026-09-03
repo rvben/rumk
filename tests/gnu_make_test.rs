@@ -259,7 +259,11 @@ struct SyntaxFixture {
 impl SyntaxFixture {
     fn load(path: &Path) -> Self {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
-        let source = std::fs::read_to_string(path).unwrap();
+        // A fixture is read the way Rumk reads a Makefile, so a byte order
+        // mark stands only in the bytes GNU Make is given.
+        let bytes = std::fs::read(path).unwrap();
+        let source = String::from_utf8(rumk::source::split_byte_order_mark(&bytes).0.to_vec())
+            .unwrap_or_else(|error| panic!("{name}: {error}"));
         let mut fixture = Self {
             path: path.to_path_buf(),
             name,
