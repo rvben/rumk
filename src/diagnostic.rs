@@ -25,9 +25,34 @@ pub enum Severity {
     Info,
 }
 
+/// Whether applying a fix can change what Make does with the file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Applicability {
+    /// Make reads the fixed file the way it read the original, or the original
+    /// was not a file Make would read at all and the fix is the only reading
+    /// that makes it one.
+    #[default]
+    Safe,
+    /// The fix can change what Make does, so a run applies it only when it is
+    /// asked for.
+    Unsafe,
+}
+
+impl Applicability {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Safe => "safe",
+            Self::Unsafe => "unsafe",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Fix {
     pub description: String,
+    #[serde(default)]
+    pub applicability: Applicability,
     pub edits: Vec<Edit>,
 }
 
@@ -75,9 +100,21 @@ impl Diagnostic {
 }
 
 impl Fix {
+    /// A fix Make cannot tell apart from the text it replaces.
     pub fn new(description: impl Into<String>) -> Self {
+        Self::with_applicability(description, Applicability::Safe)
+    }
+
+    /// A fix that can change what Make does with the file, which a run applies
+    /// only when it asks for unsafe fixes.
+    pub fn unsafe_fix(description: impl Into<String>) -> Self {
+        Self::with_applicability(description, Applicability::Unsafe)
+    }
+
+    fn with_applicability(description: impl Into<String>, applicability: Applicability) -> Self {
         Self {
             description: description.into(),
+            applicability,
             edits: Vec::new(),
         }
     }

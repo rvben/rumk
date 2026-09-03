@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Applicability, Diagnostic};
 use crate::project::Project;
 use crate::{fix, inline_config, parser};
 
@@ -61,10 +61,7 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
         .flat_map(|rule| rule.check(&makefile, content))
         .filter(|diagnostic| !config.is_rule_ignored_for_path(path, &diagnostic.rule_id))
         .map(|mut diagnostic| {
-            if !config.is_rule_fixable(&diagnostic.rule_id) {
-                diagnostic.fixable = false;
-                diagnostic.fix = None;
-            }
+            resolve_fix(config, &mut diagnostic);
             diagnostic
         })
         .collect::<Vec<_>>();
@@ -84,10 +81,7 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
                 if diagnostic.source.is_none() {
                     diagnostic.source = Some(project.file(project.root()).path.clone());
                 }
-                if !config.is_rule_fixable(&diagnostic.rule_id) {
-                    diagnostic.fixable = false;
-                    diagnostic.fix = None;
-                }
+                resolve_fix(config, &mut diagnostic);
                 diagnostic
             })
             .collect::<Vec<_>>();
@@ -130,6 +124,28 @@ pub fn lint(content: &str, context: &LintContext<'_>) -> Result<Vec<Diagnostic>>
     }
     sort_diagnostics(&mut diagnostics);
     Ok(diagnostics)
+}
+
+/// Decides whether this run applies the fix a rule offered.
+///
+/// A rule the configuration marks unfixable loses its fix outright: nothing is
+/// to be reported about a fix that will never be applied. An unsafe fix a run
+/// did not ask for is kept and only withheld, so `rumk check` can still say the
+/// fix exists and `--unsafe-fixes` can be offered for it.
+fn resolve_fix(config: &Config, diagnostic: &mut Diagnostic) {
+    if !config.is_rule_fixable(&diagnostic.rule_id) {
+        diagnostic.fixable = false;
+        diagnostic.fix = None;
+        return;
+    }
+    if !config.unsafe_fixes()
+        && diagnostic
+            .fix
+            .as_ref()
+            .is_some_and(|fix| fix.applicability == Applicability::Unsafe)
+    {
+        diagnostic.fixable = false;
+    }
 }
 
 /// Applies the fixes the rules offer, re-linting after each pass until no fix

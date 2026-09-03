@@ -173,13 +173,40 @@ fn fix_reports_only_issues_remaining_after_the_write() {
 }
 
 #[test]
-fn check_fix_applies_all_safe_makefile_repairs() {
+fn check_fix_applies_only_the_repairs_make_cannot_tell_apart() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");
     std::fs::write(&path, "all clean:\n    make -C sub && gmake test\n").unwrap();
 
     let output = rumk()
         .args(["check", path.to_str().unwrap(), "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "all clean:\n\tmake -C sub && gmake test\n"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Fixed 1 issue"));
+    // The recipe indentation is repaired, and the declaration and the sub-make
+    // spelling are reported with their fixes withheld.
+    assert!(stdout.contains("[MK001]"));
+    assert!(stdout.contains("[MK201]"));
+    assert!(stdout.contains("[MK203]"));
+    assert!(stdout.contains("2 fixes can change what Make does"));
+    assert!(stdout.contains("--unsafe-fixes"));
+}
+
+#[test]
+fn check_fix_applies_the_repairs_that_change_make_behavior_when_asked() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all clean:\n    make -C sub && gmake test\n").unwrap();
+
+    let output = rumk()
+        .args(["check", path.to_str().unwrap(), "--fix", "--unsafe-fixes"])
         .output()
         .unwrap();
 
@@ -193,6 +220,191 @@ fn check_fix_applies_all_safe_makefile_repairs() {
     assert!(stdout.contains("[MK201]"));
     assert!(stdout.contains("[MK203]"));
     assert!(stdout.contains("Fixed 3 issues"));
+}
+
+#[test]
+fn configured_unsafe_fixes_are_applied_without_the_flag() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all clean:\n\tmake -C sub\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[global]\nunsafe-fixes = true\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        ".PHONY: all clean\nall clean:\n\t$(MAKE) -C sub\n"
+    );
+}
+
+#[test]
+fn no_unsafe_fixes_overrides_the_configured_setting() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all clean:\n\tmake -C sub\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[global]\nunsafe-fixes = true\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--no-unsafe-fixes"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(path).unwrap(),
+        "all clean:\n\tmake -C sub\n"
+    );
+}
+
+#[test]
+fn fmt_withholds_unsafe_fixes_the_configuration_asked_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "clean:\n    make -C sub\n").unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[global]\nunsafe-fixes = true\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["fmt", "Makefile"])
+        .output()
+        .unwrap();
+
+    // Formatting repairs the indentation and stops there: declaring the target
+    // .PHONY and spelling the sub-make $(MAKE) change what Make does, and `fmt`
+    // is not where that is agreed to.
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "clean:\n\tmake -C sub\n"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("2 fixes can change what Make does"));
+}
+
+#[test]
+fn long_phony_declarations_are_wrapped_when_the_phony_fix_is_withheld() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix"])
+        .output()
+        .unwrap();
+
+    // MK201 would have rewritten the declaration, wrapping it on the way, but
+    // its fix can change what Make does and this run withheld it. The long line
+    // is MK101's to wrap.
+    assert!(!output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        ".PHONY: build test lint \\\n        release docs\nclean:\n\trm -rf build\n"
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Fixed 1 issue"));
+    assert!(stdout.contains("[MK201]"));
+    assert!(stdout.contains("1 fix can change what Make does"));
+}
+
+#[test]
+fn long_phony_declarations_are_left_to_the_phony_fix_when_it_runs() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        ".PHONY: build test lint \\\n        release docs clean\nclean:\n\trm -rf build\n"
+    );
+}
+
+#[test]
+fn diff_reports_the_fixes_it_withheld() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "clean:\n\trm -rf build\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--diff"])
+        .output()
+        .unwrap();
+
+    // Every fix here was withheld, so there is no patch to print. The run still
+    // fails, and stderr says why and how to ask for the fix, leaving the patch
+    // on stdout clean for whatever reads it.
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("1 fix can change what Make does"));
+    assert!(stderr.contains("rumk check --fix --unsafe-fixes"));
+}
+
+#[test]
+fn quiet_diff_leaves_out_the_withheld_fix_report() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "clean:\n\trm -rf build\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--diff", "--quiet"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "");
 }
 
 #[test]
@@ -386,7 +598,7 @@ fn configured_missing_phony_placement_drives_fixes() {
 
     let output = rumk()
         .current_dir(directory.path())
-        .args(["check", "--fix", "Makefile"])
+        .args(["check", "--fix", "--unsafe-fixes", "Makefile"])
         .output()
         .unwrap();
 
@@ -701,10 +913,39 @@ fn json_carries_the_edit_of_a_project_aware_fix_for_the_checked_file() {
         .find(|diagnostic| diagnostic["rule"] == "MK201" && diagnostic["file"] == "Makefile")
         .unwrap();
 
-    assert_eq!(phony["fixable"], true);
+    // The fix is reported so an editor can offer it, and marked as one this run
+    // did not apply because it can change what Make does.
+    assert_eq!(phony["fixable"], false);
+    assert_eq!(phony["fix"]["applicability"], "unsafe");
     assert_eq!(phony["fix"]["replacement"], ".PHONY: all\n");
     assert_eq!(phony["fix"]["range"]["start"], 18);
     assert_eq!(phony["fix"]["range"]["end"], 18);
+}
+
+#[test]
+fn json_marks_a_fix_make_cannot_tell_apart_as_safe() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        ".PHONY: all\nall:\n    echo hi\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let indentation = diagnostics
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|diagnostic| diagnostic["rule"] == "MK001")
+        .unwrap();
+
+    assert_eq!(indentation["fixable"], true);
+    assert_eq!(indentation["fix"]["applicability"], "safe");
 }
 
 #[test]

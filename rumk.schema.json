@@ -116,6 +116,11 @@
           "$ref": "#/$defs/RuleIdList",
           "default": []
         },
+        "unsafe-fixes": {
+          "description": "Also apply the fixes that can change what Make does with the file. `rumk fmt` withholds them regardless.",
+          "type": "boolean",
+          "default": false
+        },
         "exclude": {
           "description": "File globs excluded from discovery.",
           "$ref": "#/$defs/StringList",

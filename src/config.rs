@@ -1,4 +1,4 @@
-use crate::diagnostic::{Diagnostic, Severity};
+use crate::diagnostic::{Applicability, Diagnostic, Severity};
 use crate::parser::Makefile;
 use crate::project::{Project, ProjectOptions};
 use crate::rules::{self, ReadFailure, Rule, RuleCategory};
@@ -30,6 +30,8 @@ pub struct GlobalConfig {
     pub extend_disable: Vec<String>,
     pub fixable: Vec<String>,
     pub unfixable: Vec<String>,
+    /// Whether a run also applies the fixes that can change what Make does.
+    pub unsafe_fixes: bool,
     pub exclude: Vec<String>,
     pub include: Vec<String>,
     pub include_paths: Vec<String>,
@@ -48,6 +50,7 @@ impl Default for GlobalConfig {
             extend_disable: Vec::new(),
             fixable: Vec::new(),
             unfixable: Vec::new(),
+            unsafe_fixes: false,
             exclude: Vec::new(),
             include: Vec::new(),
             include_paths: Vec::new(),
@@ -189,6 +192,7 @@ impl Config {
         &mut self,
         fixable: Option<Vec<String>>,
         unfixable: Option<Vec<String>>,
+        unsafe_fixes: Option<bool>,
     ) -> Result<()> {
         if let Some(fixable) = fixable {
             validate_rule_ids(&fixable)?;
@@ -198,7 +202,17 @@ impl Config {
             validate_rule_ids(&unfixable)?;
             self.global.unfixable = unfixable;
         }
-        Ok(())
+        if let Some(unsafe_fixes) = unsafe_fixes {
+            self.global.unsafe_fixes = unsafe_fixes;
+        }
+        // MK101 is built knowing whether MK201's fix runs, which these
+        // overrides decide.
+        self.rebuild_rules()
+    }
+
+    /// Whether this run applies the fixes that can change what Make does.
+    pub fn unsafe_fixes(&self) -> bool {
+        self.global.unsafe_fixes
     }
 
     pub fn is_path_ignored(&self, path: &Path) -> bool {
@@ -270,6 +284,7 @@ impl Config {
                 "extend-disable" => Some(format_string_list(&self.global.extend_disable)),
                 "fixable" => Some(format_string_list(&self.global.fixable)),
                 "unfixable" => Some(format_string_list(&self.global.unfixable)),
+                "unsafe-fixes" => Some(self.global.unsafe_fixes.to_string()),
                 _ => None,
             };
         }
@@ -430,13 +445,19 @@ impl Config {
     }
 
     fn rebuild_rules(&mut self) -> Result<()> {
+        // MK101 coordinates with MK201's fix, so it has to be told whether that
+        // fix runs at all: the rule can be disabled, held unfixable, or hold an
+        // unsafe fix this run does not apply.
+        let phony_fix_applies = self.settings["MK201"].enabled
+            && self.is_rule_fixable("MK201")
+            && self.global.unsafe_fixes;
         self.rules = ALL_RULES
             .iter()
             .filter_map(|rule_id| {
                 let settings = &self.settings[*rule_id];
                 settings
                     .enabled
-                    .then(|| build_rule(rule_id, settings, &self.global))
+                    .then(|| build_rule(rule_id, settings, &self.global, phony_fix_applies))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(())
@@ -751,6 +772,9 @@ fn render_global(output: &mut String, global: &GlobalConfig, defaults: Option<&G
             global.respect_gitignore
         ));
     }
+    if show(global.unsafe_fixes != defaults.is_some_and(|value| value.unsafe_fixes)) {
+        output.push_str(&format!("unsafe-fixes = {}\n", global.unsafe_fixes));
+    }
 
     let lists = [
         (
@@ -861,6 +885,7 @@ fn build_rule(
     rule_id: &str,
     settings: &RuleSettings,
     global: &GlobalConfig,
+    phony_fix_applies: bool,
 ) -> Result<Box<dyn Rule>> {
     let rule: Box<dyn Rule> = match rule_id {
         "MK001" => Box::new(rules::syntax::TabInRecipe),
@@ -873,7 +898,8 @@ fn build_rule(
         "MK101" => Box::new(
             rules::style::LineLength::new(integer_option(rule_id, settings, "max", 120)?)
                 .ignore_comments(boolean_option(rule_id, settings, "ignore-comments", true)?)
-                .ignore_recipes(boolean_option(rule_id, settings, "ignore-recipes", true)?),
+                .ignore_recipes(boolean_option(rule_id, settings, "ignore-recipes", true)?)
+                .phony_fix_applies(phony_fix_applies),
         ),
         "MK102" => Box::new(rules::style::VariableNaming::new(naming_style_option(
             rule_id,
@@ -1052,6 +1078,10 @@ impl Rule for SeverityOverride {
 
     fn fixable(&self) -> bool {
         self.rule.fixable()
+    }
+
+    fn fix_applicability(&self) -> Applicability {
+        self.rule.fix_applicability()
     }
 
     fn project_aware(&self) -> bool {

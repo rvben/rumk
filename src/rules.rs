@@ -1,4 +1,4 @@
-use crate::diagnostic::Diagnostic;
+use crate::diagnostic::{Applicability, Diagnostic};
 use crate::parser::Makefile;
 use crate::project::Project;
 use anyhow::{bail, Result};
@@ -46,6 +46,12 @@ pub trait Rule: Send + Sync {
     fn category(&self) -> RuleCategory;
     fn fixable(&self) -> bool {
         false
+    }
+    /// Whether the fixes this rule offers can change what Make does, which is
+    /// what `rumk rule` reports; the fixes themselves carry the applicability a
+    /// run acts on.
+    fn fix_applicability(&self) -> Applicability {
+        Applicability::Safe
     }
     fn project_aware(&self) -> bool {
         false

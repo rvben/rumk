@@ -5,6 +5,7 @@ disable = ["MK101"]
 extend-enable = ["MK102", "MK208"]
 fixable = ["MK001", "MK201"]
 unfixable = ["MK203"]
+unsafe-fixes = false
 exclude = ["vendor/**"]
 include = ["**/Makefile", "**/*.mk"]
 include-paths = ["mk"]

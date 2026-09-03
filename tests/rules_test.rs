@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use rumk::fix::apply_fixes;
 use rumk::parser::parse;
 use rumk::rules::best_practices::{
@@ -562,4 +564,51 @@ fn special_targets_must_not_share_the_left_hand_side() {
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].rule_id, "MK005");
+}
+
+/// Makefiles that reach every rule offering a fix, so the applicability check
+/// below has something to check.
+fn fix_corpus() -> Vec<String> {
+    vec![
+        "all:\n    echo hi\n".to_string(),
+        "all clean:\n\tmake -C sub && gmake test\n".to_string(),
+        format!(".PHONY: {}\n", ["target"; 40].join(" ")),
+    ]
+}
+
+/// The applicability a rule declares is what `rumk rule` reports and what the
+/// documentation promises; the applicability on the fix is what a run acts on.
+/// A rule whose two disagree tells a user one thing and does another.
+#[test]
+fn declared_fix_applicability_matches_the_fixes_rules_produce() {
+    let mut produced = BTreeSet::new();
+    for content in fix_corpus() {
+        let makefile = parse(&content);
+        for rule in rumk::rules::get_all_rules() {
+            for diagnostic in rule.check(&makefile, &content) {
+                let Some(fix) = diagnostic.fix else {
+                    continue;
+                };
+                assert_eq!(
+                    fix.applicability,
+                    rule.fix_applicability(),
+                    "{} produces a fix marked {} while declaring {}",
+                    rule.id(),
+                    fix.applicability.as_str(),
+                    rule.fix_applicability().as_str()
+                );
+                produced.insert(rule.id());
+            }
+        }
+    }
+
+    let declared = rumk::rules::get_all_rules()
+        .iter()
+        .filter(|rule| rule.fixable())
+        .map(|rule| rule.id())
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        produced, declared,
+        "the corpus must reach every rule that offers a fix, or the check above passes on nothing"
+    );
 }

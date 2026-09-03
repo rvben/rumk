@@ -34,6 +34,16 @@ semantics require a different design.
   variable definitions without changing Rumdl-style diagnostic output.
 - Rumk's analysis context contains rules, targets, prerequisites, variables, includes, recipes,
   and source-preserving syntax instead of Markdown elements.
-- Fixes must preserve Make behavior and every source byte outside their declared edit ranges.
+- Every fix preserves every source byte outside its declared edit ranges. A fix that also leaves
+  Make's reading of the file unchanged is safe; one that can change what Make does is unsafe, and
+  a run applies it only when asked.
+
+## Intentional differences
+
+- **Fix safety.** Rumdl applies every fix its rules offer. Rumk splits them into safe and unsafe,
+  applies only safe fixes by default, and gates the rest behind `check --unsafe-fixes`,
+  `--no-unsafe-fixes`, and `[global] unsafe-fixes`, following Ruff's model. Makefiles make this
+  necessary: declaring a target `.PHONY` or spelling a sub-make `$(MAKE)` is the right change and
+  still changes what a build does, which is not a change a linter should make unasked.
 
 Compatibility is a product requirement. Intentional differences must be documented here.

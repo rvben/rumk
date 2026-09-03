@@ -54,7 +54,7 @@ enum Commands {
     Rule {
         rule: Option<String>,
 
-        /// Only list rules with safe automatic fixes
+        /// Only list rules with automatic fixes
         #[arg(short, long)]
         fixable: bool,
 
@@ -110,12 +110,34 @@ struct CheckArgs {
     #[arg(long)]
     diff: bool,
 
+    /// Also apply the fixes that can change what Make does
+    #[arg(long, conflicts_with = "no_unsafe_fixes")]
+    unsafe_fixes: bool,
+
+    /// Withhold the fixes that can change what Make does
+    #[arg(long)]
+    no_unsafe_fixes: bool,
+
     /// Control which severity causes exit code 1
     #[arg(long, default_value_t, value_enum)]
     fail_on: FailOn,
 
     #[command(flatten)]
     shared: SharedArgs,
+}
+
+impl CheckArgs {
+    /// What the command line says about unsafe fixes, or nothing when it says
+    /// nothing and the configuration decides.
+    fn unsafe_fixes(&self) -> Option<bool> {
+        if self.unsafe_fixes {
+            Some(true)
+        } else if self.no_unsafe_fixes {
+            Some(false)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Args)]
@@ -297,6 +319,9 @@ struct JsonDiagnostic<'a> {
 
 #[derive(Serialize)]
 struct JsonFix<'a> {
+    /// Whether applying this fix can change what Make does, which decides
+    /// whether a run applies it without being asked.
+    applicability: &'static str,
     range: JsonRange,
     replacement: &'a str,
 }
@@ -356,7 +381,7 @@ fn run() -> Result<u8> {
         }
         Commands::Check(args) => {
             let mut config = load_config(cli.config.as_deref(), cli.no_config)?;
-            apply_shared_args(&mut config, &args.shared)?;
+            apply_shared_args(&mut config, &args.shared, args.unsafe_fixes())?;
             let operation = if args.fix {
                 Operation::CheckFix
             } else if args.diff {
@@ -368,7 +393,10 @@ fn run() -> Result<u8> {
         }
         Commands::Fmt(args) => {
             let mut config = load_config(cli.config.as_deref(), cli.no_config)?;
-            apply_shared_args(&mut config, &args.shared)?;
+            // Formatting is not a decision about what Make does, so `fmt` never
+            // applies a fix that can change it, whatever the configuration says.
+            // `check --fix --unsafe-fixes` is where those are agreed to.
+            apply_shared_args(&mut config, &args.shared, Some(false))?;
             let operation = if args.check {
                 Operation::FormatCheck
             } else if args.diff {
@@ -402,7 +430,11 @@ fn load_config(path: Option<&Path>, no_config: bool) -> Result<Config> {
     }
 }
 
-fn apply_shared_args(config: &mut Config, args: &SharedArgs) -> Result<()> {
+fn apply_shared_args(
+    config: &mut Config,
+    args: &SharedArgs,
+    unsafe_fixes: Option<bool>,
+) -> Result<()> {
     let enable = args.enable.as_deref().map(parse_list);
     let disable = args.disable.as_deref().map(parse_list).unwrap_or_default();
     let extend_enable = args
@@ -425,6 +457,7 @@ fn apply_shared_args(config: &mut Config, args: &SharedArgs) -> Result<()> {
     config.apply_fix_overrides(
         args.fixable.as_deref().map(parse_list),
         args.unfixable.as_deref().map(parse_list),
+        unsafe_fixes,
     )
 }
 
@@ -1129,8 +1162,8 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                     .fix
                     .as_ref()
                     .filter(|_| file == report.path)
-                    .and_then(|fix| fix.edits.first())
-                    .and_then(|edit| {
+                    .and_then(|fix| Some((fix.applicability, fix.edits.first()?)))
+                    .and_then(|(applicability, edit)| {
                         // Offsets name bytes in the file, which begins with the
                         // byte order mark Make reads past.
                         let mark = if report.byte_order_mark {
@@ -1139,6 +1172,7 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                             0
                         };
                         fix::edit_byte_range(&report.content, edit).map(|(start, end)| JsonFix {
+                            applicability: applicability.as_str(),
                             range: JsonRange {
                                 start: start + mark,
                                 end: end + mark,
@@ -1198,7 +1232,21 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
         );
     }
 
+    // A fix this run withheld because it can change what Make does. It is
+    // still reported, so the summary can say it is there to be asked for.
+    let hidden = reports
+        .iter()
+        .flat_map(|report| &report.diagnostics)
+        .filter(|diagnostic| !diagnostic.fixable && diagnostic.fix.is_some())
+        .count();
+
     if operation.shows_diff() {
+        // Diff output is a patch other tools read, so the note goes to stderr
+        // rather than into the patch. Without it a run whose only fixes are
+        // withheld prints nothing at all and still fails.
+        if hidden > 0 {
+            eprintln!("{}", hidden_fix_hint(hidden));
+        }
         return;
     }
     let issue_count: usize = reports.iter().map(|report| report.diagnostics.len()).sum();
@@ -1233,14 +1281,31 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
             pluralize(issue_files, "file", "files"),
             pluralize(checked, "file", "files")
         );
-        if reports
+        let fixable = reports
             .iter()
             .flat_map(|report| &report.diagnostics)
-            .any(|diagnostic| diagnostic.fixable)
-        {
-            println!("Run `{}` to automatically fix issues", "rumk fmt".green());
+            .filter(|diagnostic| diagnostic.fixable)
+            .count();
+        if fixable > 0 {
+            println!(
+                "Run `{}` to fix {fixable} {}",
+                "rumk check --fix".green(),
+                pluralize(fixable, "issue", "issues")
+            );
+        }
+        if hidden > 0 {
+            println!("{}", hidden_fix_hint(hidden));
         }
     }
+}
+
+/// Says that fixes exist which this run withheld, and how to ask for them.
+fn hidden_fix_hint(hidden: usize) -> String {
+    format!(
+        "{hidden} {} can change what Make does; apply with `{}`",
+        pluralize(hidden, "fix", "fixes"),
+        "rumk check --fix --unsafe-fixes".green()
+    )
 }
 
 fn severity_name(severity: Severity) -> &'static str {
@@ -1317,7 +1382,14 @@ fn show_rule(
                 "disabled"
             }
         );
-        println!("Fixable: {}", if rule.fixable() { "yes" } else { "no" });
+        println!(
+            "Fixable: {}",
+            if rule.fixable() {
+                format!("yes ({} fix)", rule.fix_applicability().as_str())
+            } else {
+                "no".to_string()
+            }
+        );
         println!(
             "Scope: {}",
             if rule.project_aware() {

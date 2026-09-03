@@ -1,4 +1,4 @@
-use crate::diagnostic::{Diagnostic, Edit, Fix, Severity};
+use crate::diagnostic::{Applicability, Diagnostic, Edit, Fix, Severity};
 use crate::logical::{
     find_top_level_char, find_top_level_rule_separator, split_top_level_words, LogicalKind,
 };
@@ -62,6 +62,15 @@ impl Rule for MissingPhony {
 
     fn fixable(&self) -> bool {
         true
+    }
+
+    /// Declaring a target `.PHONY` changes what Make does when a file of that
+    /// name exists: the recipe runs where Make would have called the target up
+    /// to date. Which targets never stand for a file is a judgement about the
+    /// project, which Rumk makes from their names, so the fix waits to be
+    /// asked for.
+    fn fix_applicability(&self) -> Applicability {
+        Applicability::Unsafe
     }
 
     fn project_aware(&self) -> bool {
@@ -210,7 +219,7 @@ fn adjacent_phony_fix(targets: &[MissingPhonyTarget], content: &str, description
     });
     by_line
         .into_iter()
-        .fold(Fix::new(description), |fix, (line, names)| {
+        .fold(Fix::unsafe_fix(description), |fix, (line, names)| {
             fix.add_edit(Edit::new(
                 line,
                 1,
@@ -242,7 +251,7 @@ fn top_phony_fix(
         .min()
         .unwrap_or(1);
     let line_ending = preferred_line_ending(content, line);
-    Fix::new(description).add_edit(Edit::new(
+    Fix::unsafe_fix(description).add_edit(Edit::new(
         line,
         1,
         line,
@@ -280,7 +289,7 @@ fn auto_phony_fix(
     }
 
     let line = targets.first().map_or(1, |target| target.line);
-    Fix::new(description).add_edit(Edit::new(
+    Fix::unsafe_fix(description).add_edit(Edit::new(
         line,
         1,
         line,
@@ -296,7 +305,7 @@ fn extend_phony_declaration(
     description: String,
 ) -> Fix {
     if let Some(column) = append_column(content, declaration, names) {
-        return Fix::new(description).add_edit(Edit::new(
+        return Fix::unsafe_fix(description).add_edit(Edit::new(
             declaration.start_line,
             column,
             declaration.start_line,
@@ -312,7 +321,7 @@ fn extend_phony_declaration(
             }
         }
         if let Some(end_column) = line_end_column(content, declaration.end_line) {
-            return Fix::new(description).add_edit(Edit::new(
+            return Fix::unsafe_fix(description).add_edit(Edit::new(
                 declaration.start_line,
                 1,
                 declaration.end_line,
@@ -326,7 +335,7 @@ fn extend_phony_declaration(
             ));
         }
     }
-    Fix::new(description).add_edit(Edit::new(
+    Fix::unsafe_fix(description).add_edit(Edit::new(
         declaration.start_line,
         1,
         declaration.start_line,
@@ -503,6 +512,15 @@ impl Rule for RecursiveMake {
         true
     }
 
+    /// `$(MAKE)` is not another spelling of `make`: it carries the command line
+    /// options and the jobserver of the running Make into the sub-make, and it
+    /// marks the line as recursive, so `make -n` runs it instead of printing
+    /// it. That is the point of the rule, and it is a change in what the file
+    /// does.
+    fn fix_applicability(&self) -> Applicability {
+        Applicability::Unsafe
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         makefile
             .rules
@@ -520,7 +538,7 @@ impl Rule for RecursiveMake {
                 );
                 if recipe.line == recipe.end_line {
                     let fix = invocations.into_iter().fold(
-                        Fix::new("Replace direct Make invocation with $(MAKE)"),
+                        Fix::unsafe_fix("Replace direct Make invocation with $(MAKE)"),
                         |fix, invocation| {
                             let start =
                                 recipe.column + recipe.command[..invocation.start].chars().count();

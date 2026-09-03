@@ -32,8 +32,9 @@ Rumdl so existing users can reuse their workflow.
 ## Features
 
 - Lints individual Makefiles or entire directory trees
-- Safely fixes recipe indentation, long static and style-aware missing `.PHONY` declarations,
-  and recursive Make invocations
+- Fixes recipe indentation and long static `.PHONY` declarations without changing what Make does,
+  and offers style-aware missing `.PHONY` declarations and `$(MAKE)` spellings behind
+  `--unsafe-fixes`
 - Parses continued logical statements and nested `$(...)`/`${...}` expressions
 - Models GNU Make assignment flavors, static patterns, target-specific variables, includes,
   conditionals, `define` blocks, custom recipe prefixes, and `.ONESHELL`
@@ -46,7 +47,8 @@ Rumdl so existing users can reuse their workflow.
 - Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands
 - Discovers `.rumk.toml` upward through the project tree
 - Respects `.gitignore` by default
-- Supports rule selection, file globs, per-file ignores, severities, and fix allowlists
+- Supports rule selection, file globs, per-file ignores, severities, fix allowlists, and
+  safe-versus-unsafe fix selection
 - Emits text, flat JSON, and GitHub Actions annotations
 
 ## Installation
@@ -99,6 +101,9 @@ rumk check Makefile build/
 # Apply safe fixes, then fail only if violations remain
 rumk check --fix
 
+# Also apply the fixes that can change what Make does
+rumk check --fix --unsafe-fixes
+
 # Format files with formatter-style exit behavior
 rumk fmt
 
@@ -129,6 +134,7 @@ respect-gitignore = true
 exclude = ["vendor/**", "generated/**"]
 disable = ["MK101"]
 fixable = ["MK001"]
+unsafe-fixes = false
 include-paths = ["mk"]
 predefined-variables = { FROM_CLI = "yes" }
 entry-targets = ["all"]
@@ -210,6 +216,32 @@ Path patterns are globs against the path relative to the project: `*` and `?` st
 path segment, `**` crosses segments, and a leading `**/` matches in the project root as well as
 below it, so `**/vendor/**` covers `vendor/a.mk` and `sub/vendor/a.mk` alike.
 
+### Fix safety
+
+A fix is **safe** when Make reads the fixed file the way it read the original, or when the
+original was not a file Make would read at all and the fix is the only reading that makes it one.
+Correcting recipe indentation ([`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md))
+is safe: the file did not build before, and a tab is what Make needs to see there.
+
+A fix is **unsafe** when applying it can change what Make does. Declaring a target `.PHONY`
+([`MK201`](https://github.com/rvben/rumk/blob/main/docs/mk201.md)) makes its recipe run where Make
+would have called the target up to date; spelling a sub-make `$(MAKE)`
+([`MK203`](https://github.com/rvben/rumk/blob/main/docs/mk203.md)) passes the parent's options and
+jobserver down. Both are the right change to make, and both are a change a person should agree to.
+
+`rumk check --fix` applies only safe fixes and reports how many it withheld. Ask for the rest with
+`--unsafe-fixes`, refuse them explicitly with `--no-unsafe-fixes`, or set `unsafe-fixes` under
+`[global]` to choose for a project. `rumk rule MK201` says which kind a rule offers. Under
+`--diff` the withheld count goes to stderr, leaving stdout a patch other tools can read.
+`rumk fmt` never applies an unsafe fix, whatever `[global] unsafe-fixes` says.
+
+```bash
+rumk check --fix .                  # safe fixes only
+rumk check --fix --unsafe-fixes .   # every fix the enabled rules offer
+```
+
+Rumdl has no equivalent setting; this is a Rumk addition, modeled on Ruff's `--unsafe-fixes`.
+
 ### Exit codes
 
 - `0`: success, or all selected violations were fixed
@@ -250,12 +282,17 @@ rumk check --output-format json .
     "severity": "error",
     "fixable": true,
     "fix": {
+      "applicability": "safe",
       "range": { "start": 7, "end": 11 },
       "replacement": "\t"
     }
   }
 ]
 ```
+
+`fixable` says whether this run would apply the fix; `fix.applicability` says why. A diagnostic
+with `"fixable": false` and an `"unsafe"` fix is one Rumk withheld, and an editor can still offer
+it as an explicit action.
 
 The legacy `--format` spelling remains an alias for `--output-format`.
 
@@ -268,7 +305,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 ### Syntax
 
 - [`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md) - Recipes must use tab
-  indentation (**default**, fixable)
+  indentation (**default**, safe fix)
 - [`MK002`](https://github.com/rvben/rumk/blob/main/docs/mk002.md) - Invalid variable syntax
   (**default**)
 - [`MK003`](https://github.com/rvben/rumk/blob/main/docs/mk003.md) - Malformed conditional
@@ -288,7 +325,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 
 - [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) - Declarative line exceeds
   the configured maximum length; comments and recipes are ignored by default, and static
-  `.PHONY` declarations can be wrapped safely (**default**, partially fixable)
+  `.PHONY` declarations can be wrapped safely (**default**, partially fixable, safe fix)
 - [`MK102`](https://github.com/rvben/rumk/blob/main/docs/mk102.md) - Variable naming convention
 - [`MK103`](https://github.com/rvben/rumk/blob/main/docs/mk103.md) - Target naming convention
 
@@ -297,11 +334,11 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [`MK201`](https://github.com/rvben/rumk/blob/main/docs/mk201.md) - Conventional
   non-file targets should be `.PHONY`;
   fixes consolidate canonical groups, preserve per-section style, and wrap long
-  declarations (**default**, fixable)
+  declarations (**default**, unsafe fix)
 - [`MK202`](https://github.com/rvben/rumk/blob/main/docs/mk202.md) - Avoid hardcoded absolute
   paths (opt-in)
 - [`MK203`](https://github.com/rvben/rumk/blob/main/docs/mk203.md) - Recursive Make invocations
-  should use `$(MAKE)` (**default**, fixable)
+  should use `$(MAKE)` (**default**, unsafe fix)
 - [`MK204`](https://github.com/rvben/rumk/blob/main/docs/mk204.md) - Concrete targets should not
   declare multiple single-colon recipes (**default**)
 - [`MK205`](https://github.com/rvben/rumk/blob/main/docs/mk205.md) - Explicit target dependencies
