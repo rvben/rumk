@@ -3,9 +3,9 @@ use std::collections::{BTreeSet, VecDeque};
 use crate::analysis::{ReferenceContext, ReferenceKind};
 use crate::builtins::is_defined_by_make;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::eval::BlockedReason;
+use crate::eval::{BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
-use crate::project::{IncludeResolution, Project};
+use crate::project::{IncludeEdge, IncludeResolution, Project};
 use crate::project_analysis::ProjectTargetSymbol;
 use crate::rules::{Rule, RuleCategory};
 
@@ -143,29 +143,129 @@ impl Rule for MissingInclude {
             .filter(|edge| !edge.optional)
             .filter_map(|edge| {
                 let include = edge.expanded.as_deref().unwrap_or(&edge.expression);
-                let detail = match &edge.resolution {
+                let (severity, detail) = match &edge.resolution {
                     IncludeResolution::Missing { .. }
                         if project.analysis().target(include).is_none() =>
                     {
-                        format!("Required include '{include}' was not found")
+                        (
+                            Severity::Warning,
+                            format!("Required include '{include}' was not found"),
+                        )
                     }
-                    IncludeResolution::Unreadable { path, message } => format!(
-                        "Required include '{}' could not be read at {}: {message}",
-                        include,
-                        path.display()
+                    IncludeResolution::Unreadable { path, message } => (
+                        Severity::Warning,
+                        format!(
+                            "Required include '{}' could not be read at {}: {message}",
+                            include,
+                            path.display()
+                        ),
                     ),
-                    IncludeResolution::LimitExceeded => format!(
-                        "Required include '{}' exceeds the project file limit",
-                        include
+                    IncludeResolution::LimitExceeded => (
+                        Severity::Warning,
+                        format!("Required include '{include}' exceeds the project file limit"),
                     ),
+                    IncludeResolution::Dynamic => undefined_include(project, edge)?,
                     _ => return None,
                 };
                 Some(
-                    Diagnostic::new(self.id(), Severity::Warning, detail, edge.line, 1)
+                    Diagnostic::new(self.id(), severity, detail, edge.line, 1)
                         .with_source(project.file(edge.from).path.clone()),
                 )
             })
             .collect()
+    }
+}
+
+/// What to report about an include whose expression names variables that have
+/// no value where Make reads it, and `None` when Make reads it the way the
+/// file reads.
+///
+/// A variable the project gives a value further down makes the include an
+/// error however Make ends up reading it: the file itself says which value was
+/// meant, and Make uses none of it. A variable the project defines but has
+/// taken back, or gives a value only where Make does not go, is reported only
+/// where Make then finds no file to read, and as a warning. A variable the
+/// project gives no value of its own is not reported at all: a caller supplies
+/// it, and so does a definition that only reads the name back and writes it
+/// again.
+fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity, String)> {
+    let undefined = edge.undefined.as_ref()?;
+    let index = project.analysis();
+    let missing: Vec<&String> = undefined
+        .missing
+        .iter()
+        // A missing include the project also knows how to build is generated
+        // rather than absent, which is what MK205 is for.
+        .filter(|path| index.target(path).is_none())
+        .collect();
+    let outcome = if undefined.paths.is_empty() {
+        "reads no file at all".to_string()
+    } else if missing.is_empty() {
+        format!("reads '{}' instead", undefined.paths.join("' '"))
+    } else {
+        format!(
+            "cannot find '{}'",
+            missing
+                .iter()
+                .map(|path| path.as_str())
+                .collect::<Vec<_>>()
+                .join("' '")
+        )
+    };
+    let defined_later = undefined.variables.iter().find_map(|found| {
+        project
+            .evaluation()
+            .definition_after(&found.name, found.definitions_read)
+            .map(|at| (&found.name, at))
+    });
+    match defined_later {
+        Some((name, at)) => Some((
+            Severity::Error,
+            format!(
+                "Required include '{}' expands '{name}' before {} defines it, so Make {outcome}",
+                edge.expression,
+                definition_site(project, edge.from, at)
+            ),
+        )),
+        None if missing.is_empty() => None,
+        // A name the project never defines is one a caller supplies: the
+        // environment, the command line, or a parent make, none of which Rumk
+        // reads. A fragment written to be included that way reads exactly like
+        // this, so it is left to MK208, which is opt-in for that reason.
+        None if !undefined
+            .variables
+            .iter()
+            .all(|found| project.evaluation().gives_a_value(&found.name)) =>
+        {
+            None
+        }
+        None => Some((
+            Severity::Warning,
+            format!(
+                "Required include '{}' expands '{}', which has no value there, so Make {outcome}",
+                edge.expression,
+                undefined
+                    .variables
+                    .iter()
+                    .map(|found| found.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("' '")
+            ),
+        )),
+    }
+}
+
+/// Names where a definition is, as read from `from`: a line number for the
+/// file being reported on, and a path for any other file.
+fn definition_site(
+    project: &Project,
+    from: crate::project::SourceId,
+    at: EvaluationLocation,
+) -> String {
+    if at.source == from {
+        format!("line {}", at.line)
+    } else {
+        format!("{}:{}", project.file(at.source).path.display(), at.line)
     }
 }
 

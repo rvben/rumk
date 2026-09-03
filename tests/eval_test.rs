@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use rumk::eval::{BlockedReason, EvaluationLocation, Evaluator, Truth, VariableFlavor};
+use rumk::eval::{
+    BlockedReason, EvaluationLocation, Evaluator, Truth, UndefinedName, VariableFlavor,
+};
 use rumk::logical::ConditionalKind;
 use rumk::parser::{parse, VariableScope};
 use rumk::project::SourceId;
@@ -18,6 +20,132 @@ fn location(line: usize) -> EvaluationLocation {
         source: SourceId(0),
         line,
     }
+}
+
+/// A name read where Make had read `definitions_read` definitions, so a
+/// definition it reads after that one is a definition the reading came before.
+fn waited_on(name: &str, definitions_read: usize) -> UndefinedName {
+    UndefinedName {
+        name: name.to_string(),
+        definitions_read,
+    }
+}
+
+#[test]
+fn reads_a_simple_assignment_that_waited_on_a_name_as_the_value_make_computed() {
+    let mut evaluator = Evaluator::new(&BTreeMap::new());
+    evaluator.assign(&assignment("DIR := $(LATER)\n"), location(1), Truth::True);
+
+    assert_eq!(
+        evaluator.expand_as_undefined("$(DIR)/x.mk"),
+        Some(("/x.mk".to_string(), vec![waited_on("LATER", 1)]))
+    );
+
+    // An assignment this expression never reads says nothing about it.
+    evaluator.assign(
+        &assignment("OTHER := $(ELSEWHERE)\n"),
+        location(2),
+        Truth::True,
+    );
+
+    assert_eq!(
+        evaluator.expand_as_undefined("$(DIR)/x.mk"),
+        Some(("/x.mk".to_string(), vec![waited_on("LATER", 1)]))
+    );
+
+    // Make computes a simple assignment where it is written, so a value given
+    // to LATER below never reaches what DIR already holds, and the definition
+    // that gives it one is still a definition DIR was read before.
+    evaluator.assign(&assignment("LATER := sub\n"), location(3), Truth::True);
+
+    assert_eq!(
+        evaluator.expand_as_undefined("$(DIR)/x.mk"),
+        Some(("/x.mk".to_string(), vec![waited_on("LATER", 1)]))
+    );
+    assert_eq!(evaluator.definition_after("LATER", 1), Some(location(3)));
+}
+
+#[test]
+fn reads_a_name_as_waiting_on_the_definitions_make_reads_after_it() {
+    let mut evaluator = Evaluator::new(&BTreeMap::new());
+    evaluator.assign(&assignment("DIR := sub\n"), location(1), Truth::True);
+    evaluator.undefine("DIR", Truth::True);
+
+    // DIR has no value here, and the definition on line 1 is not why: Make
+    // read that one and gave the value back. Nothing else has been read, so
+    // there is no definition this expansion waits on.
+    assert_eq!(
+        evaluator.expand_as_undefined("$(DIR)/x.mk"),
+        Some(("/x.mk".to_string(), vec![waited_on("DIR", 1)]))
+    );
+    assert_eq!(evaluator.definition_after("DIR", 1), None);
+
+    // A definition Make reads afterwards is one that expansion came before.
+    evaluator.assign(&assignment("DIR := other\n"), location(4), Truth::Unknown);
+    assert_eq!(evaluator.definition_after("DIR", 1), Some(location(4)));
+
+    // Reading line 1 again, as an include read twice makes Make do, is another
+    // definition, and one an expansion in between came before.
+    evaluator.undefine("DIR", Truth::True);
+    assert_eq!(
+        evaluator.expand_as_undefined("$(DIR)/x.mk"),
+        Some(("/x.mk".to_string(), vec![waited_on("DIR", 2)]))
+    );
+    assert_eq!(evaluator.definition_after("DIR", 2), None);
+
+    evaluator.assign(&assignment("DIR := sub\n"), location(1), Truth::True);
+    assert_eq!(evaluator.definition_after("DIR", 2), Some(location(1)));
+}
+
+#[test]
+fn keeps_the_earliest_reading_of_a_name_two_assignments_waited_on() {
+    let mut evaluator = Evaluator::new(&BTreeMap::new());
+    evaluator.assign(&assignment("A := $(X)\n"), location(1), Truth::True);
+    evaluator.assign(&assignment("X := prefix\n"), location(2), Truth::True);
+    evaluator.undefine("X", Truth::True);
+    evaluator.assign(&assignment("B := $(X)\n"), location(4), Truth::True);
+
+    // Both assignments read X while it had no value, and only the earlier
+    // reading came before the definition on line 2. An expression behind both
+    // of them is an expression that reading reached.
+    assert_eq!(
+        evaluator.expand_as_undefined("$(B)$(A)config.mk"),
+        Some(("config.mk".to_string(), vec![waited_on("X", 1)]))
+    );
+    assert_eq!(evaluator.definition_after("X", 1), Some(location(2)));
+}
+
+/// Reading an assignment Rumk cannot expand must cost the assignment, not the
+/// whole evaluation. Reading each of them against a copy of every variable
+/// read so far takes time in the square of their number, which a generated
+/// Makefile of a few thousand lines turns into half a minute.
+#[test]
+fn reads_an_unexpandable_assignment_without_rereading_every_variable() {
+    const ASSIGNMENTS: usize = 6400;
+    let mut evaluator = Evaluator::new(&BTreeMap::new());
+    let assignments: Vec<_> = (0..ASSIGNMENTS)
+        .map(|index| assignment(&format!("V{index} := $(U{index}) tail{index}\n")))
+        .collect();
+
+    let started = std::time::Instant::now();
+    for (index, variable) in assignments.iter().enumerate() {
+        evaluator.assign(variable, location(index + 1), Truth::True);
+    }
+    let elapsed = started.elapsed();
+
+    // Every one of them holds the value Make computed for it, so the reading
+    // did happen; it just did not read the rest of the file again.
+    assert_eq!(
+        evaluator.expand_as_undefined("$(V6399)"),
+        Some((
+            " tail6399".to_string(),
+            vec![waited_on("U6399", ASSIGNMENTS)]
+        ))
+    );
+    assert!(
+        elapsed < std::time::Duration::from_secs(5),
+        "reading {ASSIGNMENTS} unexpandable assignments took {elapsed:?}"
+    );
 }
 
 #[test]

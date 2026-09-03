@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
-use crate::eval::{BlockedReason, EvaluationLocation, Evaluator, TraceStep, Truth};
+use crate::eval::{BlockedReason, EvaluationLocation, Evaluator, TraceStep, Truth, UndefinedName};
 use crate::logical::{ConditionalKind, LogicalKind};
 use crate::parser::{self, Makefile, Variable, VariableScope};
 use crate::project_analysis::ProjectSemanticIndex;
@@ -45,6 +45,31 @@ pub struct IncludeEdge {
     pub optional: bool,
     pub line: usize,
     pub resolution: IncludeResolution,
+    /// What Make reads when the expression only stayed unexpanded because
+    /// variables in it have no value there.
+    pub undefined: Option<UndefinedExpansion>,
+}
+
+/// What GNU Make reads for an include whose expression names variables that
+/// have no value where it appears. Make expands such a reference to nothing,
+/// so the expression still says which files are read, just not the ones the
+/// author had in mind when the variable is given its value further down.
+///
+/// The include graph does not follow these paths: a variable with no value in
+/// the files Rumk reads may still have one in the environment, and then Make
+/// reads something else entirely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndefinedExpansion {
+    /// The variables that had no value there, in the order they were found,
+    /// each with the definitions of it Make had already read. A definition
+    /// outside that set is one Make reaches only after this include.
+    pub variables: Vec<UndefinedName>,
+    /// The files Make reads, which is the expression with those variables
+    /// contributing nothing. Empty when the expression expands to nothing,
+    /// which Make reads as including no file at all.
+    pub paths: Vec<String>,
+    /// The paths among them that Make finds no file for.
+    pub missing: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +117,24 @@ impl ProjectEvaluation {
 
     pub fn rules(&self, source: SourceId, line: usize) -> &[EvaluatedRule] {
         self.rules.get(&(source, line)).map_or(&[], Vec::as_slice)
+    }
+
+    /// Where GNU Make defines `name` next, having read `definitions_read`
+    /// definitions already, which is the definition an expansion at that point
+    /// was read before.
+    pub fn definition_after(
+        &self,
+        name: &str,
+        definitions_read: usize,
+    ) -> Option<EvaluationLocation> {
+        self.evaluator.definition_after(name, definitions_read)
+    }
+
+    /// Whether the project gives `name` a value of its own somewhere, as
+    /// against a caller supplying it through the environment, the command line
+    /// or a parent make.
+    pub fn gives_a_value(&self, name: &str) -> bool {
+        self.evaluator.gives_a_value(name)
     }
 }
 
@@ -264,6 +307,15 @@ impl<'a> Loader<'a> {
         let makefile = self.files[source.0].makefile.clone();
         let mut conditionals: Vec<ConditionalFrame> = Vec::new();
 
+        // A target- or pattern-specific assignment gives the name a value the
+        // evaluator never holds, because Make holds it only while that rule
+        // runs. It is still the project saying what the name is worth.
+        for variable in &makefile.assignments {
+            if variable.scope != VariableScope::Global {
+                self.evaluator.gives_a_scoped_value(&variable.name);
+            }
+        }
+
         for statement in makefile.logical.statements() {
             if let LogicalKind::Conditional(kind) = statement.kind {
                 let conditional = makefile
@@ -434,6 +486,7 @@ impl<'a> Loader<'a> {
                 optional,
                 line,
                 resolution: IncludeResolution::Inactive,
+                undefined: None,
             });
             return;
         }
@@ -443,6 +496,11 @@ impl<'a> Loader<'a> {
             .as_deref()
             .filter(|_| activity == Truth::True)
         else {
+            // An include Make may not even read says nothing about the files
+            // it would have read.
+            let undefined = (activity == Truth::True)
+                .then(|| self.undefined_expansion(expression))
+                .flatten();
             self.edges.push(IncludeEdge {
                 from: source,
                 expression: expression.to_string(),
@@ -452,6 +510,7 @@ impl<'a> Loader<'a> {
                 optional,
                 line,
                 resolution: IncludeResolution::Dynamic,
+                undefined,
             });
             return;
         };
@@ -466,11 +525,45 @@ impl<'a> Loader<'a> {
                 optional,
                 line,
                 resolution,
+                undefined: None,
             });
             if let Some(discovered) = discovered {
                 self.visit(discovered);
             }
         }
+    }
+
+    /// Which files GNU Make reads for an include expression Rumk could only
+    /// not expand because variables in it have no value yet. `None` when
+    /// anything else left the expression unexpanded, since Make then reads
+    /// files this cannot name.
+    fn undefined_expansion(&self, expression: &str) -> Option<UndefinedExpansion> {
+        let (value, variables) = self.evaluator.expand_as_undefined(expression)?;
+        if variables.is_empty() {
+            // Nothing without a value reached the result, so a name without one
+            // is not why Rumk could not expand this. A function that asks what
+            // a variable is rather than what it holds, such as `flavor`,
+            // answers the same either way.
+            return None;
+        }
+        let paths = include_paths(&value);
+        let missing = paths
+            .iter()
+            // Make matches a pattern against the working directory, so which
+            // files a pattern names is not a question about one path.
+            .filter(|path| !is_dynamic_path(path))
+            .filter(|path| {
+                !include_candidates(&self.working_directory, path, self.options)
+                    .iter()
+                    .any(|candidate| candidate.is_file())
+            })
+            .cloned()
+            .collect();
+        Some(UndefinedExpansion {
+            variables,
+            paths,
+            missing,
+        })
     }
 
     fn consider_rule(&mut self, source: SourceId, rule: &crate::parser::Rule, activity: Truth) {

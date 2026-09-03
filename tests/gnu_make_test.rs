@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use rumk::diagnostic::Severity;
 use rumk::fix::apply_fixes;
 use rumk::parser::{parse, VariableScope};
 use rumk::project::{Project, ProjectOptions};
@@ -234,6 +235,47 @@ fn safe_evaluator_matches_gnu_make_on_a_controlled_project() {
     );
 }
 
+/// GNU Make expands a variable that has no value yet to nothing, so an include
+/// placed above the definition reads a path the author never wrote. MK206 names
+/// that path, and this holds the claim to what Make does with the same project.
+#[test]
+fn includes_read_before_their_variable_is_defined_fail_in_gnu_make_where_mk206_reports_them() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/x.mk"), "all:\n\t@:\n").unwrap();
+
+    std::fs::write(&root, "include $(DIR)/x.mk\nDIR := sub\n").unwrap();
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+    assert!(diagnostics[0].message.contains("cannot find '/x.mk'"));
+    let Some(failed) = dry_run(directory.path()) else {
+        return;
+    };
+    assert!(
+        !failed.status.success(),
+        "GNU Make accepted an include read before its variable is defined"
+    );
+    // The path Make reports is the one the diagnostic names, which is the point
+    // of the report: the file says 'sub/x.mk' and Make reads '/x.mk'.
+    let error = String::from_utf8_lossy(&failed.stderr);
+    assert!(error.contains("/x.mk"), "{error}");
+    assert!(!error.contains("sub/x.mk"), "{error}");
+
+    std::fs::write(&root, "DIR := sub\ninclude $(DIR)/x.mk\n").unwrap();
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    let accepted = dry_run(directory.path()).unwrap();
+    assert!(
+        accepted.status.success(),
+        "GNU Make rejected the same project with the definition first:\n{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+}
+
 #[test]
 fn gnu_make_reads_an_escaped_include_path_as_one_file_and_mk206_agrees() {
     let directory = tempfile::tempdir().unwrap();
@@ -285,6 +327,136 @@ fn gnu_make_reads_an_escaped_include_path_as_one_file_and_mk206_agrees() {
     let rejected = dry_run(directory.path()).unwrap();
     let error = String::from_utf8_lossy(&rejected.stderr);
     assert!(error.contains("zzz\\:"), "{error}");
+}
+
+#[test]
+fn gnu_make_reads_an_include_through_a_variable_that_waited_and_mk206_names_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+
+    // Each variable is computed where LATER still has no value, so it holds
+    // what Make put in it there however the file reads on.
+    for (source, read) in [
+        (
+            "DIR := $(LATER)\ninclude $(DIR)/x.mk\nLATER := sub\nall:\n\t@:\n",
+            "/x.mk",
+        ),
+        (
+            "DIR := $(LATER)\nDIR += x\ninclude $(DIR)/y.mk\nLATER := sub\nall:\n\t@:\n",
+            "x/y.mk",
+        ),
+        (
+            "DIR :=\nDIR += $(LATER)sub\ninclude $(DIR)/y.mk\nLATER := q\nall:\n\t@:\n",
+            "sub/y.mk",
+        ),
+    ] {
+        std::fs::write(&root, source).unwrap();
+
+        let diagnostics = MissingInclude
+            .check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+
+        assert_eq!(diagnostics.len(), 1, "{source:?}: {diagnostics:?}");
+        assert_eq!(diagnostics[0].severity, Severity::Error, "{source:?}");
+        assert!(
+            diagnostics[0].message.contains(&format!("'{read}'")),
+            "{source:?}: {}",
+            diagnostics[0].message
+        );
+        let Some(rejected) = dry_run(directory.path()) else {
+            return;
+        };
+        let error = String::from_utf8_lossy(&rejected.stderr);
+        assert!(!rejected.status.success(), "{source:?}: {error}");
+        assert!(error.contains(read), "{source:?}: {error}");
+    }
+
+    // A definition that comes before the include can still come too late: Make
+    // reads a file here, just not the one below was meant to point at.
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("config.mk"), "WHICH := root\n").unwrap();
+    std::fs::write(directory.path().join("sub/config.mk"), "WHICH := sub\n").unwrap();
+    std::fs::write(
+        &root,
+        "FILES := $(LATER)config.mk\nLATER := sub/\ninclude $(FILES)\nall:\n\t@echo read=$(WHICH)\n",
+    )
+    .unwrap();
+
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].message.contains("so Make reads 'config.mk'"),
+        "{}",
+        diagnostics[0].message
+    );
+    let accepted = dry_run(directory.path()).unwrap();
+    let read = String::from_utf8_lossy(&accepted.stdout);
+    assert!(accepted.status.success(), "{read}");
+    assert!(read.contains("read=root"), "{read}");
+
+    // A name Make read a definition for and then gave back has no value here
+    // either, and the definition below is still one it reaches too late.
+    std::fs::write(
+        &root,
+        "DIR := old/\nundefine DIR\ninclude $(DIR)config.mk\nDIR := sub/\nall:\n\t@echo read=$(WHICH)\n",
+    )
+    .unwrap();
+
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("expands 'DIR' before line 4 defines it, so Make reads 'config.mk'"),
+        "{}",
+        diagnostics[0].message
+    );
+    // GNU Make 3.82 introduced `undefine`.
+    let modern = matches!(installed_make_version(), Some(version) if version >= (3, 82));
+    if modern {
+        let accepted = dry_run(directory.path()).unwrap();
+        let read = String::from_utf8_lossy(&accepted.stdout);
+        assert!(accepted.status.success(), "{read}");
+        assert!(read.contains("read=root"), "{read}");
+    }
+
+    // Make reads a file included twice from the top both times, so a
+    // definition in it is one it reaches again after the include above it.
+    std::fs::write(directory.path().join("x.mk"), "WHICH := root\n").unwrap();
+    std::fs::write(directory.path().join("sub/x.mk"), "WHICH := sub\n").unwrap();
+    std::fs::write(
+        directory.path().join("shared.mk"),
+        "include $(DIR)x.mk\nDIR := sub/\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &root,
+        "DIR := sub/\ninclude shared.mk\nundefine DIR\ninclude shared.mk\nall:\n\t@echo read=$(WHICH)\n",
+    )
+    .unwrap();
+
+    let diagnostics =
+        MissingInclude.check_project(&Project::load(&root, &ProjectOptions::default()).unwrap());
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("expands 'DIR' before line 2 defines it, so Make reads 'x.mk'"),
+        "{}",
+        diagnostics[0].message
+    );
+    if modern {
+        let accepted = dry_run(directory.path()).unwrap();
+        let read = String::from_utf8_lossy(&accepted.stdout);
+        assert!(accepted.status.success(), "{read}");
+        // The second reading of shared.mk is the one that lands, and it read
+        // the file in this directory.
+        assert!(read.contains("read=root"), "{read}");
+    }
 }
 
 /// What GNU Make makes of `all` in `directory`, and `None` where GNU Make is

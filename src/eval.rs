@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::builtins::is_defined_by_make;
 use crate::expansion::{reference_end, reference_length, MAX_EXPANSION_DEPTH};
 use crate::logical::ConditionalKind;
 use crate::parser::{AssignmentOperator, Variable};
@@ -115,7 +116,36 @@ pub enum VariableFlavor {
 enum StoredValue {
     Recursive(String),
     Simple(String),
-    Unknown(BlockedReason),
+    Unknown {
+        reason: BlockedReason,
+        /// What GNU Make holds here once the names that had no value at the
+        /// assignment contribute nothing, for an assignment Rumk expanded
+        /// itself. `None` where something else left the value unexpanded, and
+        /// Make then holds text this cannot name.
+        undefined: Option<UndefinedValue>,
+    },
+}
+
+/// The value a simple assignment produces where every name it reads that has
+/// no value contributes nothing, computed where the assignment appears so it
+/// reads the variables Make read there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UndefinedValue {
+    value: String,
+    /// The names that had no value, in the order they were found.
+    variables: Vec<UndefinedName>,
+}
+
+/// A name an expansion read while it had no value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndefinedName {
+    pub name: String,
+    /// How many definitions Make had read where this expansion read the name.
+    /// A definition it reads after that point is one it reaches only
+    /// afterwards, whatever the name is worth in between. A simple assignment
+    /// reads its value where it is written, so that is where this is taken for
+    /// the names behind it.
+    pub definitions_read: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,14 +155,44 @@ struct VariableState {
     command_line: bool,
 }
 
+/// What one expansion carries: the values it is inside, so a reference back to
+/// one of them is not expanded forever, and, while an expression is being read
+/// the way Make reads it with the valueless names contributing nothing, the
+/// names it found that way.
+struct Expanding<'a> {
+    stack: Vec<String>,
+    undefined: Option<&'a mut Vec<UndefinedName>>,
+}
+
+impl Expanding<'_> {
+    fn plain() -> Self {
+        Self {
+            stack: Vec::new(),
+            undefined: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Evaluator {
     variables: BTreeMap<String, VariableState>,
+    /// Every definition Make has read, in the order it read them. A file read
+    /// twice contributes its definitions twice, because Make reads them again,
+    /// and `undefine` takes none of them back: the reading happened whatever
+    /// the value is worth afterwards.
+    definitions_read: Vec<(String, EvaluationLocation)>,
+    /// Every name the project gives a value of its own, whatever the name is
+    /// worth afterwards. A definition that only reads the name back and writes
+    /// it again leaves the name out: what it wrote came from wherever the
+    /// caller put it, not from the project.
+    values_given: BTreeSet<String>,
 }
 
 impl Evaluator {
     pub fn new(predefined: &BTreeMap<String, String>) -> Self {
         Self {
+            definitions_read: Vec::new(),
+            values_given: BTreeSet::new(),
             variables: predefined
                 .iter()
                 .map(|(name, value)| {
@@ -150,20 +210,41 @@ impl Evaluator {
     }
 
     pub fn expand(&self, input: &str) -> Expansion {
-        self.expand_inner(input, 0, &mut Vec::new())
+        self.expand_inner(input, 0, &mut Expanding::plain())
     }
 
     pub fn assign(&mut self, variable: &Variable, location: EvaluationLocation, activity: Truth) {
         if activity == Truth::False {
+            // Make never reads this definition, but the project still says
+            // what the name is worth here, so the value is the project's.
+            self.values_given.insert(variable.name.clone());
             return;
         }
+        self.definitions_read
+            .push((variable.name.clone(), location));
+        self.store_assignment(variable, location, activity);
+        // A definition that only restates the value the name already carried
+        // takes that value from wherever the caller put it, so it is not the
+        // project giving the name a value.
+        if !self.restates_the_caller(&variable.name) {
+            self.values_given.insert(variable.name.clone());
+        }
+    }
+
+    fn store_assignment(
+        &mut self,
+        variable: &Variable,
+        location: EvaluationLocation,
+        activity: Truth,
+    ) {
         if activity == Truth::Unknown {
             self.variables.insert(
                 variable.name.clone(),
                 VariableState {
-                    value: StoredValue::Unknown(BlockedReason::IndeterminateAssignment(
-                        variable.name.clone(),
-                    )),
+                    value: StoredValue::Unknown {
+                        reason: BlockedReason::IndeterminateAssignment(variable.name.clone()),
+                        undefined: None,
+                    },
                     origin: Some(location),
                     command_line: false,
                 },
@@ -186,9 +267,10 @@ impl Evaluator {
                 self.variables.insert(
                     variable.name.clone(),
                     VariableState {
-                        value: StoredValue::Unknown(BlockedReason::ShellAssignment(
-                            variable.name.clone(),
-                        )),
+                        value: StoredValue::Unknown {
+                            reason: BlockedReason::ShellAssignment(variable.name.clone()),
+                            undefined: None,
+                        },
                         origin: Some(location),
                         command_line: false,
                     },
@@ -196,15 +278,16 @@ impl Evaluator {
             }
             AssignmentOperator::Simple | AssignmentOperator::SimplePosix => {
                 let expansion = self.expand(&variable.value);
-                self.store_expansion(&variable.name, expansion, location);
+                self.store_expansion(&variable.name, &variable.value, expansion, location);
             }
             AssignmentOperator::ImmediateRecursive if variable.value.contains('$') => {
                 self.variables.insert(
                     variable.name.clone(),
                     VariableState {
-                        value: StoredValue::Unknown(BlockedReason::UnsupportedFunction(
-                            ":::=".into(),
-                        )),
+                        value: StoredValue::Unknown {
+                            reason: BlockedReason::UnsupportedFunction(":::=".into()),
+                            undefined: None,
+                        },
                         origin: Some(location),
                         command_line: false,
                     },
@@ -225,6 +308,34 @@ impl Evaluator {
         }
     }
 
+    /// Whether what `name` now holds rests on that same name having had no
+    /// value where it was written: the definition read the name back, so the
+    /// value it wrote is the one the name arrived with.
+    fn restates_the_caller(&self, name: &str) -> bool {
+        matches!(
+            self.variables.get(name).map(|state| &state.value),
+            Some(StoredValue::Unknown {
+                undefined: Some(undefined),
+                ..
+            }) if undefined.variables.iter().any(|found| found.name == name)
+        )
+    }
+
+    /// Whether the project gives `name` a value of its own somewhere, as
+    /// against a caller supplying it through the environment, the command line
+    /// or a parent make. `undefine` does not take this back: the project still
+    /// says what the name is worth.
+    pub fn gives_a_value(&self, name: &str) -> bool {
+        self.values_given.contains(name)
+    }
+
+    /// Records that the project gives `name` a value while one rule runs. Make
+    /// holds it nowhere else, so it is a value the project gives and nothing
+    /// the evaluator can read.
+    pub fn gives_a_scoped_value(&mut self, name: &str) {
+        self.values_given.insert(name.to_string());
+    }
+
     pub fn undefine(&mut self, name: &str, activity: Truth) {
         match activity {
             Truth::False => {}
@@ -235,15 +346,32 @@ impl Evaluator {
                 self.variables.insert(
                     name.to_string(),
                     VariableState {
-                        value: StoredValue::Unknown(BlockedReason::IndeterminateAssignment(
-                            name.to_string(),
-                        )),
+                        value: StoredValue::Unknown {
+                            reason: BlockedReason::IndeterminateAssignment(name.to_string()),
+                            undefined: None,
+                        },
                         origin: None,
                         command_line: false,
                     },
                 );
             }
         }
+    }
+
+    /// Where GNU Make defines `name` next, having read `definitions_read`
+    /// definitions already, and `None` where it reads no further definition of
+    /// the name. Answering this needs the whole reading, so it holds only once
+    /// the project is loaded.
+    pub fn definition_after(
+        &self,
+        name: &str,
+        definitions_read: usize,
+    ) -> Option<EvaluationLocation> {
+        self.definitions_read
+            .get(definitions_read..)?
+            .iter()
+            .find(|(defined, _)| defined == name)
+            .map(|(_, location)| *location)
     }
 
     pub fn condition(&self, kind: ConditionalKind, expression: &str) -> Truth {
@@ -285,12 +413,52 @@ impl Evaluator {
         self.variables.get(name).map(|state| match state.value {
             StoredValue::Recursive(_) => VariableFlavor::Recursive,
             StoredValue::Simple(_) => VariableFlavor::Simple,
-            StoredValue::Unknown(_) => VariableFlavor::Unknown,
+            StoredValue::Unknown { .. } => VariableFlavor::Unknown,
         })
     }
 
     pub fn is_defined(&self, name: &str) -> bool {
         self.variables.contains_key(name)
+    }
+
+    /// Expands `input` the way GNU Make expands it when variables it names
+    /// have no value here: such a reference contributes nothing to the text
+    /// around it. Returns the text Make produces and the variables that had no
+    /// value, in the order they were found.
+    ///
+    /// `None` once anything but a valueless variable keeps the expression from
+    /// being expanded, because what Make produces is then genuinely unknown
+    /// rather than known to be the text without those references.
+    pub fn expand_as_undefined(&self, input: &str) -> Option<(String, Vec<UndefinedName>)> {
+        let mut undefined: Vec<UndefinedName> = Vec::new();
+        let value = self
+            .expand_inner(
+                input,
+                0,
+                &mut Expanding {
+                    stack: Vec::new(),
+                    undefined: Some(&mut undefined),
+                },
+            )
+            .value?;
+        Some((value, undefined))
+    }
+
+    /// What an append produces where the names with no value contribute
+    /// nothing, for a base whose own such value is already known.
+    fn appended_as_undefined(
+        &self,
+        base: &UndefinedValue,
+        addition: &str,
+    ) -> Option<UndefinedValue> {
+        let (addition, names) = self.expand_as_undefined(addition)?;
+        let mut value = base.value.clone();
+        append_with_space(&mut value, &addition);
+        let mut variables = base.variables.clone();
+        for name in names {
+            push_undefined(&mut variables, name);
+        }
+        Some(UndefinedValue { value, variables })
     }
 
     fn append(&mut self, variable: &Variable, location: EvaluationLocation) {
@@ -316,16 +484,26 @@ impl Evaluator {
                     append_with_space(&mut value, &addition);
                     StoredValue::Simple(value)
                 } else {
-                    StoredValue::Unknown(
-                        expansion
+                    let base = UndefinedValue {
+                        value,
+                        variables: Vec::new(),
+                    };
+                    StoredValue::Unknown {
+                        reason: expansion
                             .blocked
                             .into_iter()
                             .next()
                             .unwrap_or(BlockedReason::MalformedExpansion),
-                    )
+                        undefined: self.appended_as_undefined(&base, &variable.value),
+                    }
                 }
             }
-            StoredValue::Unknown(reason) => StoredValue::Unknown(reason),
+            StoredValue::Unknown { reason, undefined } => StoredValue::Unknown {
+                reason,
+                undefined: undefined
+                    .as_ref()
+                    .and_then(|base| self.appended_as_undefined(base, &variable.value)),
+            },
         };
         self.variables.insert(
             variable.name.clone(),
@@ -337,19 +515,29 @@ impl Evaluator {
         );
     }
 
-    fn store_expansion(&mut self, name: &str, expansion: Expansion, location: EvaluationLocation) {
-        let value = expansion.value.map_or_else(
-            || {
-                StoredValue::Unknown(
-                    expansion
-                        .blocked
-                        .into_iter()
-                        .next()
-                        .unwrap_or(BlockedReason::MalformedExpansion),
-                )
+    fn store_expansion(
+        &mut self,
+        name: &str,
+        source: &str,
+        expansion: Expansion,
+        location: EvaluationLocation,
+    ) {
+        let value = match expansion.value {
+            Some(value) => StoredValue::Simple(value),
+            None => StoredValue::Unknown {
+                reason: expansion
+                    .blocked
+                    .into_iter()
+                    .next()
+                    .unwrap_or(BlockedReason::MalformedExpansion),
+                // Make computes this assignment here, so what it holds where
+                // the names with no value contribute nothing is settled here
+                // too, whatever they are given further down.
+                undefined: self
+                    .expand_as_undefined(source)
+                    .map(|(value, variables)| UndefinedValue { value, variables }),
             },
-            StoredValue::Simple,
-        );
+        };
         self.variables.insert(
             name.to_string(),
             VariableState {
@@ -369,11 +557,11 @@ impl Evaluator {
                     Truth::True
                 }
             }
-            Some(StoredValue::Unknown(_)) | None => Truth::Unknown,
+            Some(StoredValue::Unknown { .. }) | None => Truth::Unknown,
         }
     }
 
-    fn expand_inner(&self, input: &str, depth: usize, stack: &mut Vec<String>) -> Expansion {
+    fn expand_inner(&self, input: &str, depth: usize, context: &mut Expanding<'_>) -> Expansion {
         if depth >= MAX_EXPANSION_DEPTH {
             return Expansion::unknown(BlockedReason::ExpansionLimit);
         }
@@ -405,9 +593,9 @@ impl Evaluator {
                 {
                     characters.next();
                 }
-                self.expand_body(&input[body_start..end], depth + 1, stack)
+                self.expand_body(&input[body_start..end], depth + 1, context)
             } else {
-                self.expand_variable(&next.to_string(), depth + 1, stack)
+                self.expand_variable(&next.to_string(), depth + 1, context)
             };
             if let Some(value) = &expansion.value {
                 output.push_str(value);
@@ -423,7 +611,7 @@ impl Evaluator {
         result
     }
 
-    fn expand_body(&self, body: &str, depth: usize, stack: &mut Vec<String>) -> Expansion {
+    fn expand_body(&self, body: &str, depth: usize, context: &mut Expanding<'_>) -> Expansion {
         let trimmed = body.trim_start();
         let head_end = trimmed
             .find(|character: char| character.is_whitespace() || character == ',')
@@ -435,7 +623,7 @@ impl Evaluator {
         }
         if function_invocation && is_safe_function(head) {
             let arguments = trimmed[head_end..].trim_start();
-            return self.expand_function(head, arguments, depth, stack);
+            return self.expand_function(head, arguments, depth, context);
         }
         if function_invocation && is_known_unsupported_function(head) {
             return Expansion::unknown(BlockedReason::UnsupportedFunction(head.to_string()));
@@ -446,31 +634,46 @@ impl Evaluator {
                 pattern,
                 replacement,
                 depth,
-                stack,
+                context,
             );
         }
         if body.contains('$') {
             return Expansion::unknown(BlockedReason::DynamicVariableName(body.to_string()));
         }
-        self.expand_variable(body.trim(), depth, stack)
+        self.expand_variable(body.trim(), depth, context)
     }
 
-    fn expand_variable(&self, name: &str, depth: usize, stack: &mut Vec<String>) -> Expansion {
-        if stack.iter().any(|active| active == name) {
+    fn expand_variable(&self, name: &str, depth: usize, context: &mut Expanding<'_>) -> Expansion {
+        if context.stack.iter().any(|active| active == name) {
             return Expansion::unknown(BlockedReason::RecursiveReference(name.to_string()));
         }
         let Some(variable) = self.variables.get(name) else {
-            return Expansion::unknown(BlockedReason::UndefinedVariable(name.to_string()));
+            return self.read_as_undefined(name, context);
         };
         let mut result = match &variable.value {
             StoredValue::Simple(value) => Expansion::known(value.clone()),
             StoredValue::Recursive(value) => {
-                stack.push(name.to_string());
-                let result = self.expand_inner(value, depth, stack);
-                stack.pop();
+                context.stack.push(name.to_string());
+                let result = self.expand_inner(value, depth, context);
+                context.stack.pop();
                 result
             }
-            StoredValue::Unknown(reason) => Expansion::unknown(reason.clone()),
+            // An assignment Rumk could not expand where it was written still
+            // holds what Make computed there under this very assumption, so
+            // that value is what an expression reading it produces, and the
+            // names behind it had no value as they stood where that assignment
+            // read them.
+            StoredValue::Unknown { reason, undefined } => {
+                match (context.undefined.as_deref_mut(), undefined) {
+                    (Some(found), Some(stored)) => {
+                        for behind in &stored.variables {
+                            push_undefined(found, behind.clone());
+                        }
+                        Expansion::known(stored.value.clone())
+                    }
+                    _ => Expansion::unknown(reason.clone()),
+                }
+            }
         };
         result.trace.insert(
             0,
@@ -482,21 +685,45 @@ impl Evaluator {
         result
     }
 
+    /// What a reference to a name the project has given no value produces:
+    /// nothing, where the expression is being read the way Make reads it, and
+    /// an unknown otherwise. Make gives some names a value of its own, which
+    /// Rumk does not know, so what those expand to is unknown either way.
+    fn read_as_undefined(&self, name: &str, context: &mut Expanding<'_>) -> Expansion {
+        let blocked = Expansion::unknown(BlockedReason::UndefinedVariable(name.to_string()));
+        let Some(found) = context.undefined.as_deref_mut() else {
+            return blocked;
+        };
+        if is_defined_by_make(name) {
+            return blocked;
+        }
+        // This expansion is the reading, so how much of the project Make had
+        // read where the name had no value is settled here.
+        push_undefined(
+            found,
+            UndefinedName {
+                name: name.to_string(),
+                definitions_read: self.definitions_read.len(),
+            },
+        );
+        Expansion::known("")
+    }
+
     fn expand_substitution_reference(
         &self,
         variable: &str,
         pattern: &str,
         replacement: &str,
         depth: usize,
-        stack: &mut Vec<String>,
+        context: &mut Expanding<'_>,
     ) -> Expansion {
         let variable = variable.trim();
         if variable.contains('$') {
             return Expansion::unknown(BlockedReason::DynamicVariableName(variable.to_string()));
         }
-        let source = self.expand_variable(variable, depth, stack);
-        let pattern = self.expand_inner(pattern, depth, stack);
-        let replacement = self.expand_inner(replacement, depth, stack);
+        let source = self.expand_variable(variable, depth, context);
+        let pattern = self.expand_inner(pattern, depth, context);
+        let replacement = self.expand_inner(replacement, depth, context);
         let mut combined = Expansion::known("");
         for expansion in [&source, &pattern, &replacement] {
             combined.trace.extend(expansion.trace.clone());
@@ -535,10 +762,10 @@ impl Evaluator {
         name: &str,
         arguments: &str,
         depth: usize,
-        stack: &mut Vec<String>,
+        context: &mut Expanding<'_>,
     ) -> Expansion {
         if matches!(name, "if" | "or" | "and") {
-            return self.expand_lazy_function(name, arguments, depth, stack);
+            return self.expand_lazy_function(name, arguments, depth, context);
         }
         if name == "value" {
             let variable = arguments.trim();
@@ -556,7 +783,7 @@ impl Evaluator {
                     result
                 }
                 Some(VariableState {
-                    value: StoredValue::Unknown(reason),
+                    value: StoredValue::Unknown { reason, .. },
                     ..
                 }) => Expansion::unknown(reason.clone()),
                 None => Expansion::unknown(BlockedReason::UndefinedVariable(variable.into())),
@@ -588,7 +815,7 @@ impl Evaluator {
         let mut expanded = Vec::with_capacity(raw_arguments.len());
         let mut combined = Expansion::known("");
         for argument in raw_arguments {
-            let result = self.expand_inner(argument, depth, stack);
+            let result = self.expand_inner(argument, depth, context);
             if let Some(value) = result.value {
                 combined.trace.extend(result.trace);
                 expanded.push(value);
@@ -712,13 +939,13 @@ impl Evaluator {
         name: &str,
         arguments: &str,
         depth: usize,
-        stack: &mut Vec<String>,
+        context: &mut Expanding<'_>,
     ) -> Expansion {
         let arguments = split_function_arguments(arguments);
         match name {
             "if" => {
                 let condition =
-                    self.expand_inner(arguments.first().copied().unwrap_or(""), depth, stack);
+                    self.expand_inner(arguments.first().copied().unwrap_or(""), depth, context);
                 let Some(value) = condition.value.as_deref() else {
                     return condition;
                 };
@@ -727,7 +954,7 @@ impl Evaluator {
                 } else {
                     arguments.get(1).copied().unwrap_or("")
                 };
-                let mut result = self.expand_inner(selected, depth, stack);
+                let mut result = self.expand_inner(selected, depth, context);
                 result.trace.splice(0..0, condition.trace);
                 result.blocked.extend(condition.blocked);
                 result
@@ -735,7 +962,7 @@ impl Evaluator {
             "or" => {
                 let mut combined = Expansion::known("");
                 for argument in arguments {
-                    let expansion = self.expand_inner(argument, depth, stack);
+                    let expansion = self.expand_inner(argument, depth, context);
                     combined.trace.extend(expansion.trace.clone());
                     combined.blocked.extend(expansion.blocked.clone());
                     let Some(value) = expansion.value else {
@@ -752,7 +979,7 @@ impl Evaluator {
             "and" => {
                 let mut combined = Expansion::known("");
                 for argument in arguments {
-                    let expansion = self.expand_inner(argument, depth, stack);
+                    let expansion = self.expand_inner(argument, depth, context);
                     combined.trace.extend(expansion.trace.clone());
                     combined.blocked.extend(expansion.blocked.clone());
                     let Some(value) = expansion.value else {
@@ -768,6 +995,16 @@ impl Evaluator {
             }
             _ => Expansion::unknown(BlockedReason::UnsupportedFunction(name.to_string())),
         }
+    }
+}
+
+/// Records a name that had no value, keeping the earliest reading of it: a
+/// definition after that one is a definition the expression was read before,
+/// whatever a later reading of the same name had seen by then.
+fn push_undefined(names: &mut Vec<UndefinedName>, found: UndefinedName) {
+    match names.iter_mut().find(|seen| seen.name == found.name) {
+        Some(seen) => seen.definitions_read = seen.definitions_read.min(found.definitions_read),
+        None => names.push(found),
     }
 }
 

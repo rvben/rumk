@@ -222,10 +222,7 @@ impl ProjectSemanticIndex {
         let ranks = evaluation_ranks(project);
         let key = |location: SourceLocation| {
             (
-                ranks
-                    .get(&(location.source, location.line))
-                    .copied()
-                    .unwrap_or(usize::MAX),
+                rank_of(&ranks, location).unwrap_or(usize::MAX),
                 location.line,
                 location.column,
             )
@@ -316,6 +313,15 @@ impl ProjectSemanticIndex {
             .collect();
         dependency_cycles_for_graph(&graph)
     }
+}
+
+/// The rank of the statement `location` falls in, which is the last statement
+/// to begin at or before its line in that file.
+fn rank_of(ranks: &BTreeMap<(SourceId, usize), usize>, location: SourceLocation) -> Option<usize> {
+    ranks
+        .range((location.source, 0)..=(location.source, location.line))
+        .next_back()
+        .map(|(_, rank)| *rank)
 }
 
 fn is_static_name(name: &str) -> bool {
