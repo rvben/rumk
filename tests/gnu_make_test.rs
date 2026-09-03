@@ -44,7 +44,7 @@ fn wrapped_phony_fix_is_accepted_by_gnu_make() {
         "\t@:\n",
     );
     let diagnostics = LineLength::new(32).check(&parse(content), content);
-    let fixed = apply_fixes(content, &diagnostics);
+    let fixed = apply_fixes(content, &diagnostics).content;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");
     std::fs::write(&path, &fixed).unwrap();
@@ -79,7 +79,7 @@ fn recipe_prefix_fix_is_accepted_by_gnu_make() {
     }
     let content = ".RECIPEPREFIX := >\nall:\n    @echo prefixed\n";
     let diagnostics = TabInRecipe.check(&parse(content), content);
-    let fixed = apply_fixes(content, &diagnostics);
+    let fixed = apply_fixes(content, &diagnostics).content;
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("broken.mk"), content).unwrap();
     std::fs::write(directory.path().join("fixed.mk"), &fixed).unwrap();

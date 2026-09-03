@@ -428,6 +428,40 @@ fn the_fixable_count_matches_what_fixing_repairs() {
 }
 
 #[test]
+fn a_fix_two_passes_are_needed_for_is_counted_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        ".PHONY: build test lint release docs # keep in sync\nclean:\n\trm -rf build\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join(".rumk.toml"),
+        "[MK101]\nline-length = 32\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--fix", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // MK101 wraps the whole declaration and MK201 inserts into it before the
+    // comment, so one pass applies one of them and the next pass the other.
+    // Two violations were repaired, and the report says two.
+    assert!(output.status.success());
+    assert_eq!(stdout.matches("[MK101]").count(), 1);
+    assert!(stdout.contains("Fixed 2 issues"));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        ".PHONY: build test lint \\\n        release docs \\\n        clean # keep in sync\nclean:\n\trm -rf build\n"
+    );
+}
+
+#[test]
 fn long_phony_declarations_are_left_to_the_phony_fix_when_it_runs() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");

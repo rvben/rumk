@@ -167,24 +167,26 @@ pub fn fix(
     };
     let mut seen = BTreeSet::from([current.content.clone()]);
     for iteration in 0..MAX_FIX_ITERATIONS {
-        let fixed = fix::apply_fixes(&current.content, &current.diagnostics);
-        if fixed == current.content {
+        let applied = fix::apply_fixes(&current.content, &current.diagnostics);
+        if applied.content == current.content {
             break;
         }
-        if !seen.insert(fixed.clone()) {
+        if !seen.insert(applied.content.clone()) {
             bail!(
                 "Fix cycle detected while formatting {}",
                 context.path.display()
             );
         }
+        // Only what this pass wrote is reported as fixed. A fix it left out for
+        // overlapping one it applied is offered again by the next pass, and
+        // counting it here as well would report it twice.
         current.applied.extend(
-            current
-                .diagnostics
+            applied
+                .fixed
                 .iter()
-                .filter(|diagnostic| diagnostic.fixable)
-                .cloned(),
+                .map(|index| current.diagnostics[*index].clone()),
         );
-        current.content = fixed;
+        current.content = applied.content;
         current.diagnostics = lint(&current.content, context).with_context(|| {
             format!(
                 "Failed to parse formatted Makefile: {}",

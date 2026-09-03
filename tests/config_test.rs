@@ -251,7 +251,7 @@ fn missing_phony_placement_is_configurable_and_introspectable() {
 
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(
-        apply_fixes(content, &diagnostics),
+        apply_fixes(content, &diagnostics).content,
         ".PHONY: all\nall:\n\t@:\n.PHONY: clean\nclean:\n\t@:\n"
     );
     assert_eq!(config.get("MK201.placement").as_deref(), Some("adjacent"));
