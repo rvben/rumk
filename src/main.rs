@@ -3,7 +3,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use ignore::WalkBuilder;
 use rumk::config::Config;
-use rumk::diagnostic::{Diagnostic, Severity};
+use rumk::diagnostic::{Applicability, Diagnostic, Severity};
 use rumk::lint::{self, LintContext};
 use rumk::project::Project;
 use rumk::{fix, inline_config, rules, source};
@@ -1281,15 +1281,30 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
             pluralize(issue_files, "file", "files"),
             pluralize(checked, "file", "files")
         );
-        let fixable = reports
+        let fixable_diagnostics = reports
             .iter()
             .flat_map(|report| &report.diagnostics)
-            .filter(|diagnostic| diagnostic.fixable)
-            .count();
+            .filter(|diagnostic| diagnostic.fixable);
+        let mut fixable = 0;
+        // A fix counted here because this run asked for unsafe fixes is only
+        // applied by a run that asks again, so the command says so.
+        let mut needs_unsafe = false;
+        for diagnostic in fixable_diagnostics {
+            fixable += 1;
+            needs_unsafe |= diagnostic
+                .fix
+                .as_ref()
+                .is_some_and(|fix| fix.applicability == Applicability::Unsafe);
+        }
         if fixable > 0 {
+            let command = if needs_unsafe {
+                "rumk check --fix --unsafe-fixes"
+            } else {
+                "rumk check --fix"
+            };
             println!(
                 "Run `{}` to fix {fixable} {}",
-                "rumk check --fix".green(),
+                command.green(),
                 pluralize(fixable, "issue", "issues")
             );
         }

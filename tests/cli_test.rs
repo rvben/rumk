@@ -271,6 +271,37 @@ fn no_unsafe_fixes_overrides_the_configured_setting() {
 }
 
 #[test]
+fn the_suggested_command_keeps_the_opt_in_the_counted_fixes_need() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "all clean:\n\tmake -C sub\n",
+    )
+    .unwrap();
+
+    let counted = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--no-config", "Makefile", "--unsafe-fixes"])
+        .output()
+        .unwrap();
+    let withheld = rumk()
+        .current_dir(directory.path())
+        .args(["check", "--no-config", "Makefile"])
+        .output()
+        .unwrap();
+
+    // The two unsafe fixes are counted because this run asked for them, and the
+    // command it prints has to ask again or it fixes nothing.
+    let counted = String::from_utf8_lossy(&counted.stdout);
+    assert!(counted.contains("Run `rumk check --fix --unsafe-fixes` to fix 2 issues"));
+    // Nothing is applicable without the opt-in, so there is no such command to
+    // print, only the note that the fixes are there to be asked for.
+    let withheld = String::from_utf8_lossy(&withheld.stdout);
+    assert!(!withheld.contains("Run `rumk check --fix`"));
+    assert!(withheld.contains("2 fixes can change what Make does"));
+}
+
+#[test]
 fn fmt_withholds_unsafe_fixes_the_configuration_asked_for() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");
