@@ -898,7 +898,7 @@ fn an_unreadable_directory_is_reported_without_stopping_the_walk() {
 fn an_excluded_unreadable_directory_is_not_reported() {
     use std::os::unix::fs::PermissionsExt;
 
-    for exclude in ["locked", "locked/**"] {
+    for exclude in ["locked", "locked/**", "**/locked/**"] {
         let directory = tempfile::tempdir().unwrap();
         let locked = directory.path().join("locked");
         std::fs::create_dir(&locked).unwrap();

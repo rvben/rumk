@@ -1114,7 +1114,13 @@ fn glob_matches(pattern: &str, path: &str) -> bool {
         } else if pattern[pattern_index] == b'*' {
             let is_double = pattern.get(pattern_index + 1) == Some(&b'*');
             let next_pattern = pattern_index + if is_double { 2 } else { 1 };
-            matches_from(pattern, path, next_pattern, path_index, memo)
+            // `**/` stands for any run of leading directories, the empty one
+            // included, so `**/vendor/**` also covers a `vendor` in the root.
+            let skips_the_separator = is_double
+                && pattern.get(next_pattern) == Some(&b'/')
+                && matches_from(pattern, path, next_pattern + 1, path_index, memo);
+            skips_the_separator
+                || matches_from(pattern, path, next_pattern, path_index, memo)
                 || (path_index < path.len()
                     && (is_double || path[path_index] != b'/')
                     && matches_from(pattern, path, pattern_index, path_index + 1, memo))

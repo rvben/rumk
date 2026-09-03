@@ -112,6 +112,34 @@ enabled = true
 }
 
 #[test]
+fn a_leading_double_star_also_names_the_project_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join(".rumk.toml");
+    std::fs::write(
+        &path,
+        "[global]\nexclude = [\"**/vendor/**\", \"**/build.mk\", \"docs/**/notes.mk\"]\n",
+    )
+    .unwrap();
+
+    let config = Config::from_file(&path).unwrap();
+    let excluded = |path: &str| config.is_path_excluded(std::path::Path::new(path));
+
+    // A run of leading directories can be empty, which is how every other tool
+    // reads these patterns.
+    assert!(excluded("vendor/a.mk"));
+    assert!(excluded("sub/vendor/a.mk"));
+    assert!(excluded("build.mk"));
+    assert!(excluded("sub/build.mk"));
+    assert!(excluded("docs/notes.mk"));
+    assert!(excluded("docs/a/b/notes.mk"));
+
+    assert!(!excluded("vendor.mk"));
+    assert!(!excluded("vendored/a.mk"));
+    assert!(!excluded("build.mk.bak"));
+    assert!(!excluded("notes.mk"));
+}
+
+#[test]
 fn discovery_walks_up_to_the_project_config() {
     let directory = tempfile::tempdir().unwrap();
     let nested = directory.path().join("a/b");

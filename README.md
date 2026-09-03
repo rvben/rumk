@@ -206,6 +206,10 @@ rumk check --respect-gitignore=false .
 rumk fmt --fixable MK001 .
 ```
 
+Path patterns are globs against the path relative to the project: `*` and `?` stay within one
+path segment, `**` crosses segments, and a leading `**/` matches in the project root as well as
+below it, so `**/vendor/**` covers `vendor/a.mk` and `sub/vendor/a.mk` alike.
+
 ### Exit codes
 
 - `0`: success, or all selected violations were fixed
