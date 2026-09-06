@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 const DEFAULT_RULES: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK201", "MK203",
-    "MK204", "MK205", "MK206", "MK207",
+    "MK204", "MK205", "MK206", "MK207", "MK211", "MK212",
 ];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
@@ -932,6 +932,9 @@ fn build_rule(
             global.entry_targets.clone(),
         )),
         "MK210" => Box::new(rules::project::UnresolvedIncludeExpression),
+        "MK211" => Box::new(rules::best_practices::ShellStyleVariableReference),
+        "MK212" => Box::new(rules::best_practices::DirectoryChangeInRecipe),
+        "MK213" => Box::new(rules::best_practices::ShellInRecursiveVariable),
         _ => bail!("Unknown rule: {rule_id}"),
     };
 

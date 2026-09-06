@@ -373,6 +373,12 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
   from explicitly configured entries (opt-in)
 - [`MK210`](https://github.com/rvben/rumk/blob/main/docs/mk210.md) - Explain include expressions
   blocked by safe evaluation (opt-in)
+- [`MK211`](https://github.com/rvben/rumk/blob/main/docs/mk211.md) - Variable references longer than
+  one character need parentheses (**default**)
+- [`MK212`](https://github.com/rvben/rumk/blob/main/docs/mk212.md) - A recipe line must not end with
+  the `cd` the lines after it need (**default**)
+- [`MK213`](https://github.com/rvben/rumk/blob/main/docs/mk213.md) - `$(shell ...)` belongs in a
+  variable Make expands once (opt-in)
 
 ## Development
 

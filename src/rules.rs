@@ -12,6 +12,7 @@ pub mod syntax;
 pub const RULE_IDS: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK102", "MK103",
     "MK201", "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208", "MK209", "MK210",
+    "MK211", "MK212", "MK213",
 ];
 
 /// Why the content Rumk lints is not the file exactly as it is on disk.
@@ -136,6 +137,9 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(project::UndefinedVariableReference::default()),
         Box::new(project::UnreachableTarget::default()),
         Box::new(project::UnresolvedIncludeExpression),
+        Box::new(best_practices::ShellStyleVariableReference),
+        Box::new(best_practices::DirectoryChangeInRecipe),
+        Box::new(best_practices::ShellInRecursiveVariable),
     ]
 }
 
@@ -155,5 +159,7 @@ pub fn get_default_rules() -> Vec<Box<dyn Rule>> {
         Box::new(best_practices::DependencyCycle),
         Box::new(project::MissingInclude),
         Box::new(project::IncludeCycle),
+        Box::new(best_practices::ShellStyleVariableReference),
+        Box::new(best_practices::DirectoryChangeInRecipe),
     ]
 }

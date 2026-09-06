@@ -46,7 +46,8 @@ for rule_doc in \
     docs/mk001.md docs/mk002.md docs/mk003.md docs/mk004.md docs/mk005.md docs/mk006.md \
     docs/mk007.md docs/mk101.md docs/mk102.md docs/mk103.md \
     docs/mk201.md docs/mk202.md docs/mk203.md docs/mk204.md docs/mk205.md \
-    docs/mk206.md docs/mk207.md docs/mk208.md docs/mk209.md docs/mk210.md; do
+    docs/mk206.md docs/mk207.md docs/mk208.md docs/mk209.md docs/mk210.md \
+    docs/mk211.md docs/mk212.md docs/mk213.md; do
     if [[ ! -f "${rule_doc}" ]]; then
         echo "missing rule documentation: ${rule_doc}" >&2
         exit 1

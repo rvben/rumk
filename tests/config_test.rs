@@ -43,7 +43,7 @@ fn an_empty_config_keeps_the_builtin_default_rule_set() {
         ids,
         [
             "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK201",
-            "MK203", "MK204", "MK205", "MK206", "MK207"
+            "MK203", "MK204", "MK205", "MK206", "MK207", "MK211", "MK212"
         ]
     );
 }
@@ -73,7 +73,7 @@ rules = ["MK202"]
         ids,
         [
             "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK203",
-            "MK204", "MK205", "MK206", "MK207"
+            "MK204", "MK205", "MK206", "MK207", "MK211", "MK212"
         ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/lib/Makefile")));
@@ -114,7 +114,7 @@ enabled = true
         ids,
         [
             "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK202",
-            "MK203", "MK204", "MK205", "MK206", "MK207"
+            "MK203", "MK204", "MK205", "MK206", "MK207", "MK211", "MK212"
         ]
     );
     assert!(config.is_path_ignored(std::path::Path::new("vendor/a.mk")));

@@ -1,9 +1,11 @@
 use std::collections::BTreeSet;
 
+use rumk::diagnostic::Applicability;
 use rumk::fix::apply_fixes;
 use rumk::parser::parse;
 use rumk::rules::best_practices::{
-    DependencyCycle, DuplicateRecipe, MissingPhony, PhonyPlacement, RecursiveMake,
+    DependencyCycle, DirectoryChangeInRecipe, DuplicateRecipe, MissingPhony, PhonyPlacement,
+    RecursiveMake, ShellInRecursiveVariable, ShellStyleVariableReference,
 };
 use rumk::rules::style::LineLength;
 use rumk::rules::syntax::{
@@ -580,6 +582,7 @@ fn fix_corpus() -> Vec<String> {
         "all:\n    echo hi\n".to_string(),
         "all clean:\n\tmake -C sub && gmake test\n".to_string(),
         format!(".PHONY: {}\n", ["target"; 40].join(" ")),
+        "DEST := $PREFIX/share\n".to_string(),
     ]
 }
 
@@ -617,5 +620,199 @@ fn declared_fix_applicability_matches_the_fixes_rules_produce() {
     assert_eq!(
         produced, declared,
         "the corpus must reach every rule that offers a fix, or the check above passes on nothing"
+    );
+}
+
+#[test]
+fn shell_style_reference_names_what_make_actually_reads_and_offers_an_unsafe_fix() {
+    // GNU Make 3.81 expands this to '/share', because '$P' is the empty
+    // one-character variable 'P' and 'REFIX' is literal text.
+    let content = "DEST := $PREFIX/share\n";
+    let rule = ShellStyleVariableReference;
+    let diagnostics = rule.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].rule_id, "MK211");
+    assert_eq!(diagnostics[0].line, 1);
+    assert_eq!(diagnostics[0].column, 9);
+    assert_eq!(
+        diagnostics[0].message,
+        "'$PREFIX' reads the variable 'P' and the literal text 'REFIX'"
+    );
+    assert!(diagnostics[0].fixable);
+    let fix = diagnostics[0].fix.as_ref().unwrap();
+    assert_eq!(
+        fix.applicability,
+        Applicability::Unsafe,
+        "writing the parentheses in makes Make read a variable it was not reading"
+    );
+    assert_eq!(fix.description, "Read 'PREFIX' as one variable");
+
+    let fixed = apply_fixes(content, &diagnostics).content;
+    assert_eq!(fixed, "DEST := $(PREFIX)/share\n");
+    assert!(rule.check(&parse(&fixed), &fixed).is_empty());
+}
+
+#[test]
+fn shell_style_reference_says_nothing_about_a_reference_make_reads_whole() {
+    let content = concat!(
+        "V := one\n",
+        "all: $(V)\n",
+        // '$T' names the whole variable 'T' whether or not the file defines
+        // one, so there is nothing here Make reads differently than it looks.
+        "\techo $@ $< $(V) ${V} $$HOME $V $T\n",
+    );
+
+    assert!(ShellStyleVariableReference
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_style_reference_says_nothing_where_the_file_defines_the_first_character() {
+    // '$Qecho' in a file that gives 'Q' a value reads as '$(Q)echo', which is
+    // what it was written to mean.
+    let content = "Q := @\nall:\n\t$Qecho hi\n";
+
+    assert!(ShellStyleVariableReference
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_style_reference_in_a_recipe_is_reported_without_a_fix() {
+    let content = "all:\n\techo $HOME\n";
+    let diagnostics = ShellStyleVariableReference.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(diagnostics[0].column, 7);
+    assert!(
+        !diagnostics[0].fixable,
+        "'$HOME' in a recipe may mean '$(HOME)' or '$$HOME', which are different edits"
+    );
+}
+
+#[test]
+fn shell_style_reference_says_nothing_about_a_comment() {
+    let content = "# install into $PREFIX\nDEST := build # or $PREFIX\nall:\n\ttrue\n";
+
+    assert!(ShellStyleVariableReference
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_is_reported_when_another_recipe_line_follows_it() {
+    // Make runs each line in its own shell, so '$(MAKE)' runs where Make
+    // started rather than in 'build'.
+    let content = "all:\n\tcd build\n\t$(MAKE)\n";
+    let diagnostics = DirectoryChangeInRecipe.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].rule_id, "MK212");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(diagnostics[0].column, 2);
+    assert_eq!(
+        diagnostics[0].message,
+        "The directory this line changes to is gone when the next line runs"
+    );
+}
+
+#[test]
+fn directory_change_says_nothing_when_the_same_line_uses_it() {
+    let content = "all:\n\tcd build && $(MAKE)\n\tcd docs; ls\n\ttrue\n";
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_says_nothing_on_the_last_line_of_a_recipe() {
+    let content = "all:\n\ttrue\n\tcd build\n";
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_says_nothing_where_one_shell_runs_the_whole_recipe() {
+    let content = ".ONESHELL:\nall:\n\tcd build\n\t$(MAKE)\n";
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_is_reported_in_a_variable_make_expands_at_every_reading() {
+    let content = "VERSION = $(shell git describe --tags)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].rule_id, "MK213");
+    assert_eq!(diagnostics[0].line, 1);
+    assert_eq!(diagnostics[0].column, 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "'VERSION' runs its $(shell ...) again every time it is read"
+    );
+    assert!(!diagnostics[0].fixable);
+}
+
+#[test]
+fn shell_call_says_nothing_where_make_runs_the_command_once() {
+    let content = concat!(
+        "VERSION := $(shell git describe --tags)\n",
+        "COMMIT != git rev-parse HEAD\n",
+        "STAMP ::= $(shell date)\n",
+        "ESCAPED :::= $(shell date)\n",
+        "SHELLED = $$(date)\n",
+        "define ONCE :=\n$(shell date)\nendef\n",
+    );
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_follows_the_flavor_the_variable_being_appended_to_has() {
+    let content = concat!(
+        "EAGER := start\n",
+        "EAGER += $(shell date)\n",
+        "LAZY = start\n",
+        "LAZY += $(shell date)\n",
+    );
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 4);
+    assert!(diagnostics[0].message.starts_with("'LAZY'"));
+}
+
+#[test]
+fn shell_call_says_nothing_about_a_value_that_reads_an_argument() {
+    // A macro taking '$1' has to be expanded at each call to mean anything, so
+    // the shell call inside it is what the macro is for.
+    let content = "to-host = $(strip $(shell cygpath -m $1))\nfrom = $(shell echo $@)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_is_reported_in_a_define_body_make_expands_at_every_reading() {
+    let content = "define REPORT\n$(shell git status --short)\nendef\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "'REPORT' runs its $(shell ...) again every time it is read"
     );
 }

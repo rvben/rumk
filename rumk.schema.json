@@ -49,14 +49,17 @@
     "MK207": { "$ref": "#/$defs/RuleConfig" },
     "MK208": { "$ref": "#/$defs/RuleConfig" },
     "MK209": { "$ref": "#/$defs/RuleConfig" },
-    "MK210": { "$ref": "#/$defs/RuleConfig" }
+    "MK210": { "$ref": "#/$defs/RuleConfig" },
+    "MK211": { "$ref": "#/$defs/RuleConfig" },
+    "MK212": { "$ref": "#/$defs/RuleConfig" },
+    "MK213": { "$ref": "#/$defs/RuleConfig" }
   },
   "additionalProperties": false,
   "$defs": {
     "RuleId": {
       "description": "A Rumk rule identifier. Matching is case-insensitive.",
       "type": "string",
-      "pattern": "^[Mm][Kk](001|002|003|004|005|006|007|101|102|103|201|202|203|204|205|206|207|208|209|210)$"
+      "pattern": "^[Mm][Kk](001|002|003|004|005|006|007|101|102|103|201|202|203|204|205|206|207|208|209|210|211|212|213)$"
     },
     "RuleIdList": {
       "type": "array",
@@ -269,7 +272,10 @@
         "MK207": { "$ref": "#/$defs/LegacyRuleConfig" },
         "MK208": { "$ref": "#/$defs/LegacyRuleConfig" },
         "MK209": { "$ref": "#/$defs/LegacyRuleConfig" },
-        "MK210": { "$ref": "#/$defs/LegacyRuleConfig" }
+        "MK210": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK211": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK212": { "$ref": "#/$defs/LegacyRuleConfig" },
+        "MK213": { "$ref": "#/$defs/LegacyRuleConfig" }
       },
       "additionalProperties": false
     },

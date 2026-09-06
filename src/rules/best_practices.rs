@@ -1,10 +1,13 @@
 use crate::diagnostic::{Applicability, Diagnostic, Edit, Fix, Severity};
+use crate::expansion::{function_name, reference_length};
 use crate::logical::{
-    find_top_level_char, find_top_level_rule_separator, split_top_level_words, LogicalKind,
+    find_top_level_char, find_top_level_rule_separator, split_top_level_words,
+    strip_top_level_comment, LogicalKind,
 };
-use crate::parser::Makefile;
+use crate::parser::{AssignmentOperator, Makefile};
 use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
+use crate::syntax::SyntaxKind;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::phony::{
@@ -861,4 +864,352 @@ impl Rule for DependencyCycle {
             })
             .collect()
     }
+}
+
+pub struct ShellStyleVariableReference;
+
+impl Rule for ShellStyleVariableReference {
+    fn id(&self) -> &'static str {
+        "MK211"
+    }
+
+    fn name(&self) -> &'static str {
+        "Variable reference written the way a shell writes one"
+    }
+
+    fn description(&self) -> &'static str {
+        "GNU Make reads '$VAR' as the one-character variable '$(V)' followed by the literal text 'AR'. A Make variable whose name is longer than one character needs '$(VAR)' or '${VAR}', and a shell variable in a recipe needs '$$VAR'."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::BestPractices
+    }
+
+    fn fixable(&self) -> bool {
+        true
+    }
+
+    /// Writing the parentheses in makes Make read a variable it was not
+    /// reading before, which is the point of the rule and a change in what the
+    /// file does.
+    fn fix_applicability(&self) -> Applicability {
+        Applicability::Unsafe
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        let source = makefile.syntax.source();
+        let defined: BTreeSet<&str> = makefile
+            .assignments
+            .iter()
+            .map(|variable| variable.name.as_str())
+            .collect();
+        makefile
+            .syntax
+            .nodes()
+            .iter()
+            .filter(|node| {
+                !matches!(
+                    node.kind,
+                    SyntaxKind::Blank | SyntaxKind::Comment | SyntaxKind::Endef
+                )
+            })
+            .flat_map(|node| {
+                let content = node.content(source);
+                // Make expands a recipe line whole and hands it to the shell,
+                // so a '#' there starts nothing; anywhere else it starts a
+                // comment, and Make expands nothing after it.
+                let expanded = if matches!(node.kind, SyntaxKind::Recipe | SyntaxKind::DefineBody) {
+                    content
+                } else {
+                    strip_top_level_comment(content)
+                };
+                let line = node.content_span.start.line;
+                let start_column = node.content_span.start.column;
+                shell_style_references(expanded, &defined)
+                    .into_iter()
+                    .map(move |reference| {
+                        let name = &expanded[reference.start + 1..reference.end];
+                        let column = start_column + expanded[..reference.start].chars().count();
+                        let diagnostic = Diagnostic::new(
+                            self.id(),
+                            Severity::Warning,
+                            format!(
+                                "'${name}' reads the variable '{}' and the literal text '{}'",
+                                &name[..1],
+                                &name[1..]
+                            ),
+                            line,
+                            column,
+                        );
+                        // A recipe can mean either the Make variable or the
+                        // shell one, written '$$VAR', and the two are not the
+                        // same edit, so there is nothing to apply for it.
+                        if node.kind == SyntaxKind::Recipe {
+                            return diagnostic;
+                        }
+                        let end = start_column + expanded[..reference.end].chars().count();
+                        diagnostic.with_fix(
+                            Fix::unsafe_fix(format!("Read '{name}' as one variable"))
+                                .add_edit(Edit::new(line, column, line, end, format!("$({name})"))),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+}
+
+/// Byte ranges of the `$` references in `text` that name a variable the way a
+/// shell names one: a `$` followed by more than one character of a name, which
+/// GNU Make reads as the first character alone.
+///
+/// A first character the file gives a value of its own is left alone: `$(Q)`
+/// written `$Qecho` reads exactly as it was meant to, and a file that defines
+/// `Q` is a file that means it.
+fn shell_style_references(text: &str, defined: &BTreeSet<&str>) -> Vec<std::ops::Range<usize>> {
+    let mut references = Vec::new();
+    let mut index = 0;
+    while let Some(offset) = text[index..].find('$') {
+        let dollar = index + offset;
+        let Some(length) = reference_length(text, dollar) else {
+            break;
+        };
+        index = dollar + length;
+        let Some(first) = text[dollar + 1..].chars().next() else {
+            break;
+        };
+        if length != 1 + first.len_utf8() || !is_name_start(first) {
+            continue;
+        }
+        let end = dollar
+            + 1
+            + text[dollar + 1..]
+                .find(|character: char| !is_name_character(character))
+                .unwrap_or(text.len() - dollar - 1);
+        if end - dollar < 3 || defined.contains(&text[dollar + 1..dollar + 1 + first.len_utf8()]) {
+            continue;
+        }
+        references.push(dollar..end);
+        index = end;
+    }
+    references
+}
+
+fn is_name_start(character: char) -> bool {
+    character == '_' || character.is_ascii_alphabetic()
+}
+
+fn is_name_character(character: char) -> bool {
+    character == '_' || character.is_ascii_alphanumeric()
+}
+
+pub struct DirectoryChangeInRecipe;
+
+impl Rule for DirectoryChangeInRecipe {
+    fn id(&self) -> &'static str {
+        "MK212"
+    }
+
+    fn name(&self) -> &'static str {
+        "Directory change lost when the recipe line ends"
+    }
+
+    fn description(&self) -> &'static str {
+        "Make runs every recipe line in its own shell, so a line whose last command is 'cd' leaves the lines after it where Make started. Join the commands on one line with '&&', pass the directory to the command, or declare .ONESHELL."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::BestPractices
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        if makefile.oneshell {
+            return Vec::new();
+        }
+        makefile
+            .rules
+            .iter()
+            .flat_map(|rule| {
+                let last = rule.recipes.len().saturating_sub(1);
+                rule.recipes[..last].iter()
+            })
+            .filter_map(|recipe| {
+                let start = trailing_directory_change(&recipe.command)?;
+                let (line, column) =
+                    position_within(recipe.line, recipe.column, &recipe.command, start);
+                Some(Diagnostic::new(
+                    self.id(),
+                    Severity::Warning,
+                    "The directory this line changes to is gone when the next line runs",
+                    line,
+                    column,
+                ))
+            })
+            .collect()
+    }
+}
+
+/// The byte offset of the `cd` a recipe line ends with, and `None` when the
+/// line runs something after it. The shell the line runs in exits at the end
+/// of the line, taking the directory with it, so only a `cd` nothing follows
+/// is one whose whole effect is lost.
+fn trailing_directory_change(command: &str) -> Option<usize> {
+    let mut command_position = true;
+    let mut last = None;
+    for token in shell_tokens(command) {
+        match token {
+            ShellToken::Separator => command_position = true,
+            ShellToken::Word {
+                text,
+                quoted,
+                start,
+                ..
+            } if command_position => {
+                if is_environment_assignment(&text) {
+                    continue;
+                }
+                last = (!quoted && text == "cd").then_some(start);
+                command_position = matches!(text.as_str(), "if" | "then" | "else" | "do");
+            }
+            ShellToken::Word { .. } => {}
+        }
+    }
+    last
+}
+
+/// Where `offset` falls in a recipe that starts at `line` and `column`,
+/// counting the lines a continued recipe folded together.
+fn position_within(line: usize, column: usize, command: &str, offset: usize) -> (usize, usize) {
+    let before = &command[..offset];
+    match before.rfind('\n') {
+        None => (line, column + before.chars().count()),
+        Some(newline) => (
+            line + before.matches('\n').count(),
+            1 + before[newline + 1..].chars().count(),
+        ),
+    }
+}
+
+pub struct ShellInRecursiveVariable;
+
+impl Rule for ShellInRecursiveVariable {
+    fn id(&self) -> &'static str {
+        "MK213"
+    }
+
+    fn name(&self) -> &'static str {
+        "$(shell ...) in a variable Make expands every time it is read"
+    }
+
+    fn description(&self) -> &'static str {
+        "A recursive variable expands its value again every time it is read, so a '$(shell ...)' in one runs the command once per reading. ':=' and '!=' run it once, where the assignment is."
+    }
+
+    fn category(&self) -> RuleCategory {
+        RuleCategory::BestPractices
+    }
+
+    fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        let mut flavors: BTreeMap<&str, AssignmentOperator> = BTreeMap::new();
+        let mut diagnostics = Vec::new();
+        // A `define` is an assignment whose value is its body, so the bodies
+        // are here too, under the operator their header carries.
+        for variable in &makefile.assignments {
+            let flavor = match variable.operator {
+                // '+=' takes the flavor of the variable it appends to, and
+                // creates a recursive one where there is nothing to append to.
+                AssignmentOperator::Append => *flavors
+                    .get(variable.name.as_str())
+                    .unwrap_or(&AssignmentOperator::Recursive),
+                operator => operator,
+            };
+            flavors.insert(variable.name.as_str(), flavor);
+            if !expands_on_every_reading(flavor) {
+                continue;
+            }
+            if calls_the_shell(&variable.value) && !reads_a_late_value(&variable.value) {
+                diagnostics.push(shell_call_diagnostic(
+                    self.id(),
+                    &variable.name,
+                    variable.line,
+                    variable.column,
+                ));
+            }
+        }
+        diagnostics
+    }
+}
+
+fn shell_call_diagnostic(rule: &'static str, name: &str, line: usize, column: usize) -> Diagnostic {
+    Diagnostic::new(
+        rule,
+        Severity::Warning,
+        format!("'{name}' runs its $(shell ...) again every time it is read"),
+        line,
+        column,
+    )
+}
+
+/// Whether an assignment leaves Make expanding the value again at every
+/// reading. `:::=` expands the value where it is written and escapes what
+/// comes out, so the command behind it runs once.
+fn expands_on_every_reading(operator: AssignmentOperator) -> bool {
+    matches!(
+        operator,
+        AssignmentOperator::Recursive | AssignmentOperator::Conditional
+    )
+}
+
+/// Whether `value` reads something Make knows only later: an argument a
+/// `$(call ...)` passes in, or an automatic variable a rule sets while it runs.
+/// A value like that has to be expanded at every reading to mean anything, so
+/// the shell call inside it is what the value is for.
+fn reads_a_late_value(value: &str) -> bool {
+    let mut index = 0;
+    while let Some(offset) = value[index..].find('$') {
+        let dollar = index + offset;
+        let Some(length) = reference_length(value, dollar) else {
+            break;
+        };
+        let reference = &value[dollar + 1..dollar + length];
+        let name = reference
+            .strip_prefix(['(', '{'])
+            .map_or(reference, |body| &body[..body.len() - 1]);
+        // '$(@D)' and '$(<F)' name the directory and the file of an automatic
+        // variable, so the first character is what decides.
+        if name.len() <= 2 && name != "$" && name.starts_with(is_late_value) {
+            return true;
+        }
+        index = match value[dollar + 1..].chars().next() {
+            None => break,
+            // Reading on from inside a reference finds the ones nested in it.
+            Some('(' | '{') => dollar + 2,
+            Some(character) => dollar + 1 + character.len_utf8(),
+        };
+    }
+    false
+}
+
+fn is_late_value(character: char) -> bool {
+    character.is_ascii_digit() || matches!(character, '@' | '<' | '^' | '?' | '*' | '+' | '|' | '%')
+}
+
+/// Whether `value` holds a `$(shell ...)` call, nested calls included. A `$$`
+/// is the dollar sign itself, so `$$(shell ...)` is a command the shell
+/// substitutes and not a call Make makes.
+fn calls_the_shell(value: &str) -> bool {
+    let mut index = 0;
+    while let Some(offset) = value[index..].find('$') {
+        let dollar = index + offset;
+        let body = dollar + 2;
+        match value[dollar + 1..].chars().next() {
+            Some('(' | '{') if function_name(&value[body..]) == Some("shell") => return true,
+            // Reading on from inside the reference finds the calls nested in it.
+            Some('(' | '{') => index = body,
+            Some('$') => index = dollar + 2,
+            Some(character) => index = dollar + 1 + character.len_utf8(),
+            None => break,
+        }
+    }
+    false
 }
