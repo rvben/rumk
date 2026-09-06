@@ -148,6 +148,38 @@ pub struct UndefinedName {
     pub definitions_read: usize,
 }
 
+/// A definition Make read, and whether it is one a reading before it should
+/// have waited for. A definition that only reads the name back and writes it
+/// again passes along whatever the caller supplied, and one that writes nothing
+/// leaves the name worth exactly what a reading before it already produced, so
+/// neither is a definition anything can be read too early for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Definition {
+    name: String,
+    at: EvaluationLocation,
+    defines_a_value: bool,
+}
+
+/// A name a definition read where Make had given it no value yet, kept with
+/// how much of the project Make had read so a definition further down can be
+/// found once the whole reading is known.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EarlyReading {
+    name: String,
+    definitions_read: usize,
+    at: EvaluationLocation,
+}
+
+/// A name a definition read before the definition that gives it a value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadTooEarly {
+    pub name: String,
+    /// Where the definition that read the name is.
+    pub at: EvaluationLocation,
+    /// Where the definition it was read before is.
+    pub defined: EvaluationLocation,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VariableState {
     value: StoredValue,
@@ -180,12 +212,16 @@ pub struct Evaluator {
     /// twice contributes its definitions twice, because Make reads them again,
     /// and `undefine` takes none of them back: the reading happened whatever
     /// the value is worth afterwards.
-    definitions_read: Vec<(String, EvaluationLocation)>,
+    definitions_read: Vec<Definition>,
     /// Every name the project gives a value of its own, whatever the name is
     /// worth afterwards. A definition that only reads the name back and writes
     /// it again leaves the name out: what it wrote came from wherever the
     /// caller put it, not from the project.
     values_given: BTreeSet<String>,
+    /// Every reading a definition made of a name Make had given no value yet,
+    /// in the order Make read them. Whether a definition arrives too late for
+    /// one of these is answerable only once the whole project is read.
+    early_readings: Vec<EarlyReading>,
 }
 
 impl Evaluator {
@@ -193,6 +229,7 @@ impl Evaluator {
         Self {
             definitions_read: Vec::new(),
             values_given: BTreeSet::new(),
+            early_readings: Vec::new(),
             variables: predefined
                 .iter()
                 .map(|(name, value)| {
@@ -220,15 +257,80 @@ impl Evaluator {
             self.values_given.insert(variable.name.clone());
             return;
         }
-        self.definitions_read
-            .push((variable.name.clone(), location));
+        self.definitions_read.push(Definition {
+            name: variable.name.clone(),
+            at: location,
+            defines_a_value: true,
+        });
+        let definition = self.definitions_read.len() - 1;
         self.store_assignment(variable, location, activity);
         // A definition that only restates the value the name already carried
         // takes that value from wherever the caller put it, so it is not the
         // project giving the name a value.
-        if !self.restates_the_caller(&variable.name) {
+        let restates = self.restates_the_caller(&variable.name);
+        if !restates {
             self.values_given.insert(variable.name.clone());
         }
+        self.definitions_read[definition].defines_a_value =
+            !restates && !self.writes_nothing(&variable.name);
+        self.record_early_readings(&variable.name, location);
+    }
+
+    /// Whether what `name` now holds is nothing at all, so a reading of it
+    /// before this definition produced the same text a reading after it does.
+    fn writes_nothing(&self, name: &str) -> bool {
+        match self.variables.get(name).map(|state| &state.value) {
+            Some(StoredValue::Recursive(value) | StoredValue::Simple(value)) => value.is_empty(),
+            // What Make holds here is known only where the names with no value
+            // are all that kept Rumk from expanding it.
+            Some(StoredValue::Unknown { undefined, .. }) => undefined
+                .as_ref()
+                .is_some_and(|undefined| undefined.value.is_empty()),
+            None => true,
+        }
+    }
+
+    /// Records the names this definition read itself where Make had given them
+    /// no value. A name carried in from a variable the definition read was
+    /// read where that variable was written, and is recorded there, so only a
+    /// name read as many definitions in as Make has now read belongs here.
+    fn record_early_readings(&mut self, name: &str, at: EvaluationLocation) {
+        let here = self.definitions_read.len();
+        let Some(StoredValue::Unknown {
+            undefined: Some(undefined),
+            ..
+        }) = self.variables.get(name).map(|state| &state.value)
+        else {
+            return;
+        };
+        let readings: Vec<EarlyReading> = undefined
+            .variables
+            .iter()
+            .filter(|found| found.definitions_read == here)
+            .map(|found| EarlyReading {
+                name: found.name.clone(),
+                definitions_read: here,
+                at,
+            })
+            .collect();
+        self.early_readings.extend(readings);
+    }
+
+    /// Every name a definition read before the definition that gives it a
+    /// value, in the order Make read them. Answering this needs the whole
+    /// reading, so it holds only once the project is loaded.
+    pub fn read_too_early(&self) -> Vec<ReadTooEarly> {
+        self.early_readings
+            .iter()
+            .filter_map(|reading| {
+                self.definition_after(&reading.name, reading.definitions_read)
+                    .map(|defined| ReadTooEarly {
+                        name: reading.name.clone(),
+                        at: reading.at,
+                        defined,
+                    })
+            })
+            .collect()
     }
 
     fn store_assignment(
@@ -358,10 +460,10 @@ impl Evaluator {
         }
     }
 
-    /// Where GNU Make defines `name` next, having read `definitions_read`
-    /// definitions already, and `None` where it reads no further definition of
-    /// the name. Answering this needs the whole reading, so it holds only once
-    /// the project is loaded.
+    /// Where GNU Make next gives `name` a value, having read
+    /// `definitions_read` definitions already, and `None` where it reads no
+    /// further definition worth waiting for. Answering this needs the whole
+    /// reading, so it holds only once the project is loaded.
     pub fn definition_after(
         &self,
         name: &str,
@@ -370,8 +472,8 @@ impl Evaluator {
         self.definitions_read
             .get(definitions_read..)?
             .iter()
-            .find(|(defined, _)| defined == name)
-            .map(|(_, location)| *location)
+            .find(|definition| definition.name == name && definition.defines_a_value)
+            .map(|definition| definition.at)
     }
 
     pub fn condition(&self, kind: ConditionalKind, expression: &str) -> Truth {

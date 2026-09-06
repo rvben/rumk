@@ -601,6 +601,118 @@ fn undefined_references_ignore_recipe_and_deferred_macro_parameters() {
 }
 
 #[test]
+fn reports_an_assignment_read_before_the_definition_it_needs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // GNU Make expands ':=' where it is written, so OUT is '/app'.
+    std::fs::write(&root, "OUT := $(BUILD)/app\nBUILD := build\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].rule_id, "MK208");
+    assert_eq!(diagnostics[0].severity, Severity::Warning);
+    assert_eq!(diagnostics[0].line, 1);
+    assert_eq!(diagnostics[0].column, 8);
+    assert_eq!(
+        diagnostics[0].message,
+        "Variable 'BUILD' is read before line 2 defines it"
+    );
+}
+
+#[test]
+fn reports_an_append_read_before_the_definition_it_needs() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Appending to a simple variable expands the addition where it is written.
+    std::fs::write(&root, "OUT := start\nOUT += $(BUILD)\nBUILD := build\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert!(diagnostics[0]
+        .message
+        .contains("'BUILD' is read before line 3 defines it"));
+}
+
+#[test]
+fn names_the_file_the_definition_an_assignment_was_read_before_is_in() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let settings = directory.path().join("settings.mk");
+    std::fs::write(&settings, "BUILD := build\n").unwrap();
+    std::fs::write(&root, "OUT := $(BUILD)/app\ninclude settings.mk\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(diagnostics[0].message.contains(&format!(
+        "is read before {}:1 defines it",
+        dunce::canonicalize(&settings).unwrap().display()
+    )));
+}
+
+#[test]
+fn says_nothing_about_a_value_make_expands_only_when_it_is_used() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // A recursive assignment reads BUILD when OUT is used, by which time
+    // Make has read line 2, so 'build/app' is what it holds.
+    std::fs::write(&root, "OUT = $(BUILD)/app\nBUILD := build\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_where_the_definition_below_writes_nothing() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Reading BUILD above line 2 produces exactly what reading it below does.
+    std::fs::write(&root, "OUT := $(BUILD)/app\nBUILD :=\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_where_the_definition_below_only_restates_the_caller() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // A fragment that transforms a value its caller supplies reads like this,
+    // and line 2 gives BUILD nothing the caller did not already give it.
+    std::fs::write(&root, "OUT := $(BUILD)/app\nBUILD := $(BUILD)x\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_name_with_no_definition_make_certainly_reads_only_once() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        &root,
+        "OUT := $(BUILD)/app\nifdef FEATURE\nBUILD := build\nendif\n",
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    // Make may never read line 3, so this is a name with no definition rather
+    // than one read too early, and it is reported once either way.
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].message,
+        "Variable 'BUILD' is referenced but not defined"
+    );
+}
+
+#[test]
 fn reachability_requires_explicit_entries_and_follows_cross_file_edges() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

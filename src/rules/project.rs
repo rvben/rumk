@@ -6,7 +6,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::{BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
 use crate::project::{IncludeEdge, IncludeResolution, Project};
-use crate::project_analysis::ProjectTargetSymbol;
+use crate::project_analysis::{ProjectSemanticIndex, ProjectTargetSymbol, SourceLocation};
 use crate::rules::{Rule, RuleCategory};
 
 pub struct MixedTargetSeparators;
@@ -453,7 +453,7 @@ impl Rule for UndefinedVariableReference {
     }
 
     fn description(&self) -> &'static str {
-        "Static Make variable references in assignments and build-graph declarations should resolve to a project definition, a GNU Make built-in, or a configured predefined variable. Recipes and deferred macro bodies are excluded because they commonly accept external parameters."
+        "Static Make variable references in assignments and build-graph declarations should resolve to a project definition, a GNU Make built-in, or a configured predefined variable, and should resolve by the time Make reads them, because a ':=' assignment takes the value the reference has where it is written. Recipes and deferred macro bodies are excluded because they commonly accept external parameters."
     }
 
     fn category(&self) -> RuleCategory {
@@ -470,7 +470,7 @@ impl Rule for UndefinedVariableReference {
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
         let index = project.analysis();
-        index
+        let mut diagnostics: Vec<Diagnostic> = index
             .references
             .iter()
             .filter(|reference| reference.kind == ReferenceKind::Variable)
@@ -504,8 +504,62 @@ impl Rule for UndefinedVariableReference {
                 )
                 .with_source(project.file(reference.location.source).path.clone())
             })
-            .collect()
+            .collect();
+        diagnostics.extend(read_too_early(self.id(), project));
+        diagnostics
     }
+}
+
+/// What to report about a definition that read a name before the definition
+/// giving it a value. Make expands `:=` where it is written, so the value
+/// further down never reaches it, and the reference contributes nothing.
+///
+/// A definition Make may never read is left out: that a name has no definition
+/// Make certainly reads is the other thing MK208 reports, and reporting both
+/// would say the same mistake twice.
+fn read_too_early(rule: &'static str, project: &Project) -> Vec<Diagnostic> {
+    let index = project.analysis();
+    project
+        .evaluation()
+        .read_too_early()
+        .into_iter()
+        .filter(|reading| {
+            index.is_definitely_active(SourceLocation {
+                source: reading.defined.source,
+                line: reading.defined.line,
+                column: 1,
+            })
+        })
+        .map(|reading| {
+            Diagnostic::new(
+                rule,
+                Severity::Warning,
+                format!(
+                    "Variable '{}' is read before {} defines it",
+                    reading.name,
+                    definition_site(project, reading.at.source, reading.defined)
+                ),
+                reading.at.line,
+                reference_column(index, &reading.name, reading.at),
+            )
+            .with_source(project.file(reading.at.source).path.clone())
+        })
+        .collect()
+}
+
+/// Where the reference to `name` begins on the line the definition starts on,
+/// so the report points at the reference rather than at the line. A reference
+/// on a continued line is reported at the start of the definition.
+fn reference_column(index: &ProjectSemanticIndex, name: &str, at: EvaluationLocation) -> usize {
+    index
+        .references
+        .iter()
+        .find(|reference| {
+            reference.name == name
+                && reference.location.source == at.source
+                && reference.location.line == at.line
+        })
+        .map_or(1, |reference| reference.location.column)
 }
 
 #[derive(Default)]

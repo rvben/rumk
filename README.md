@@ -368,7 +368,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [`MK207`](https://github.com/rvben/rumk/blob/main/docs/mk207.md) - Static Makefile includes must
   not form cycles (**default**)
 - [`MK208`](https://github.com/rvben/rumk/blob/main/docs/mk208.md) - Static graph-level variable
-  references must resolve (opt-in)
+  references must resolve, and by the time Make reads them (opt-in)
 - [`MK209`](https://github.com/rvben/rumk/blob/main/docs/mk209.md) - Targets must be reachable
   from explicitly configured entries (opt-in)
 - [`MK210`](https://github.com/rvben/rumk/blob/main/docs/mk210.md) - Explain include expressions

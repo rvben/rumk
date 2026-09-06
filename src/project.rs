@@ -6,7 +6,9 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
-use crate::eval::{BlockedReason, EvaluationLocation, Evaluator, TraceStep, Truth, UndefinedName};
+use crate::eval::{
+    BlockedReason, EvaluationLocation, Evaluator, ReadTooEarly, TraceStep, Truth, UndefinedName,
+};
 use crate::logical::{ConditionalKind, LogicalKind};
 use crate::parser::{self, Makefile, Variable, VariableScope};
 use crate::project_analysis::ProjectSemanticIndex;
@@ -135,6 +137,12 @@ impl ProjectEvaluation {
     /// or a parent make.
     pub fn gives_a_value(&self, name: &str) -> bool {
         self.evaluator.gives_a_value(name)
+    }
+
+    /// Every name a definition read before the definition that gives it a
+    /// value, in the order Make read them.
+    pub fn read_too_early(&self) -> Vec<ReadTooEarly> {
+        self.evaluator.read_too_early()
     }
 }
 
