@@ -31,11 +31,24 @@ pub enum PhonyPlacement {
 
 pub struct MissingPhony {
     placement: PhonyPlacement,
+    command_targets: BTreeSet<String>,
 }
 
 impl MissingPhony {
     pub fn new(placement: PhonyPlacement) -> Self {
-        Self { placement }
+        Self {
+            placement,
+            command_targets: COMMON_PHONY_TARGETS
+                .iter()
+                .map(|name| (*name).into())
+                .collect(),
+        }
+    }
+
+    /// Add project-specific command names without guessing from shell recipes.
+    pub fn command_targets(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.command_targets.extend(names);
+        self
     }
 }
 
@@ -81,7 +94,7 @@ impl Rule for MissingPhony {
     }
 
     fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
-        let missing = missing_phony_targets(makefile);
+        let missing = missing_phony_targets(makefile, &self.command_targets);
         let Some(first) = missing.first() else {
             return Vec::new();
         };
@@ -120,7 +133,7 @@ impl Rule for MissingPhony {
             .collect();
         let mut missing_by_source = BTreeMap::new();
         for target in index.targets.values().filter(|target| {
-            COMMON_PHONY_TARGETS.contains(&target.name.as_str())
+            self.command_targets.contains(&target.name)
                 && !target.phony
                 && !literal_phonies.contains(&target.name)
         }) {
@@ -186,7 +199,10 @@ impl Rule for MissingPhony {
     }
 }
 
-fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
+fn missing_phony_targets(
+    makefile: &Makefile,
+    command_targets: &BTreeSet<String>,
+) -> Vec<MissingPhonyTarget> {
     let mut seen = BTreeSet::new();
     let mut missing = Vec::new();
     let active_lines: BTreeSet<_> = makefile
@@ -201,7 +217,7 @@ fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
         .iter()
         .flat_map(|rule| {
             rule.targets.iter().filter(|target| {
-                COMMON_PHONY_TARGETS.contains(&target.as_str())
+                command_targets.contains(*target)
                     && active_lines.contains(&rule.line)
                     && produces_named_file(rule, target, |line| active_lines.contains(&line))
             })
@@ -209,7 +225,7 @@ fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
         .collect();
     for rule in &makefile.rules {
         for target in &rule.targets {
-            if COMMON_PHONY_TARGETS.contains(&target.as_str())
+            if command_targets.contains(target)
                 && !makefile.phonies.contains(target)
                 && !file_targets.contains(target)
                 && seen.insert(target.clone())

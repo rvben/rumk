@@ -247,6 +247,12 @@
         {
           "type": "object",
           "properties": {
+            "command-targets": {
+              "description": "Additional literal command target names to check for .PHONY; conventional names remain enabled.",
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "default": []
+            },
             "placement": {
               "description": "Where autofixes place missing .PHONY declarations.",
               "type": "string",

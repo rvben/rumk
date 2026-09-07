@@ -200,7 +200,10 @@ fn rule_option_introspection_uses_public_names_and_defaults() {
     );
     assert_eq!(
         config.rule_options("MK201").unwrap(),
-        [("placement".to_string(), "auto".to_string())]
+        [
+            ("command-targets".to_string(), "[]".to_string()),
+            ("placement".to_string(), "auto".to_string()),
+        ]
     );
     assert!(config.rule_options("MK001").unwrap().is_empty());
     assert!(config.rule_options("MK999").is_none());
@@ -286,6 +289,52 @@ fn missing_phony_placement_rejects_invalid_values() {
 
     assert!(format!("{:#}", Config::from_file(&wrong_type).err().unwrap()).contains("string"));
     assert!(format!("{:#}", Config::from_file(&unknown).err().unwrap()).contains("middle"));
+}
+
+#[test]
+fn project_command_names_extend_conventions_and_round_trip() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("rumk.toml");
+    std::fs::write(
+        &path,
+        "[MK201]\ncommand-targets = ['verify', 'package', 'verify']\n",
+    )
+    .unwrap();
+    let config = Config::from_file(&path).unwrap();
+    let rule = config
+        .rules
+        .iter()
+        .find(|rule| rule.id() == "MK201")
+        .unwrap();
+    let source = "verify clean package:\n\t@echo checked\n";
+    let diagnostics = rule.check(&parse(source), source);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "Targets 'verify', 'clean', 'package' should be declared .PHONY"
+    );
+    assert_eq!(
+        diagnostics[0].fix.as_ref().unwrap().applicability,
+        rumk::diagnostic::Applicability::Unsafe
+    );
+    std::fs::write(&path, config.render(false, false)).unwrap();
+    let restored = Config::from_file(&path).unwrap();
+    assert_eq!(
+        config.get("MK201.command-targets"),
+        restored.get("MK201.command-targets")
+    );
+    for value in [
+        "true",
+        "['']",
+        "['two words']",
+        "['$(NAME)']",
+        "['%.o']",
+        "['a:b']",
+        "[12]",
+    ] {
+        std::fs::write(&path, format!("[MK201]\ncommand-targets = {value}\n")).unwrap();
+        assert!(Config::from_file(&path).is_err(), "{value}");
+    }
 }
 
 #[test]

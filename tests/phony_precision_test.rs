@@ -4,6 +4,35 @@ use rumk::project::{Project, ProjectOptions};
 use rumk::rules::best_practices::MissingPhony;
 use rumk::rules::Rule;
 
+#[test]
+fn configured_commands_keep_include_activity_and_output_safeguards() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let rule = MissingPhony::default().command_targets(["verify".into()]);
+    for (source, included, expected) in [
+        ("verify:\n\t@echo checked\n", "", true),
+        ("include shared.mk\n", "verify:\n\t@echo checked\n", true),
+        (
+            "include shared.mk\nverify:\n\t@echo checked\n",
+            ".PHONY: $(EXTRA) verify\n",
+            false,
+        ),
+        ("ifeq (a,b)\nverify:\n\t@echo checked\nendif\n", "", false),
+        ("verify:\n\t$(CC) input.c -o $@\n", "", false),
+        ("Verify:\n\t@echo checked\n", "", false),
+    ] {
+        std::fs::write(directory.path().join("shared.mk"), included).unwrap();
+        let project =
+            Project::load_with_root_content(&root, source.into(), &ProjectOptions::default())
+                .unwrap();
+        assert_eq!(
+            !rule.check_project(&project).is_empty(),
+            expected,
+            "{source}"
+        );
+    }
+}
+
 fn check(source: &str, included: Option<&str>) -> Vec<rumk::diagnostic::Diagnostic> {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

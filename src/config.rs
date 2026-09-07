@@ -305,6 +305,9 @@ impl Config {
             "placement" if rule_id == "MK201" => {
                 settings.options.get("placement").map(value_string)
             }
+            "command-targets" if rule_id == "MK201" => {
+                settings.options.get("command-targets").map(value_string)
+            }
             "max-lines" if rule_id == "MK104" => {
                 settings.options.get("max-lines").map(value_string)
             }
@@ -587,6 +590,7 @@ fn default_settings() -> BTreeMap<String, RuleSettings> {
                 }
                 "MK201" => {
                     options.insert("placement".to_string(), toml::Value::String("auto".into()));
+                    options.insert("command-targets".into(), toml::Value::Array(Vec::new()));
                 }
                 _ => {}
             }
@@ -870,6 +874,7 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
         ("MK101", "ignore-recipes") => Ok("ignore-recipes"),
         ("MK102" | "MK103", "style") => Ok("style"),
         ("MK201", "placement") => Ok("placement"),
+        ("MK201", "command-targets") => Ok("command-targets"),
         ("MK104", "max-lines") => Ok("max-lines"),
         ("MK215", "required") => Ok("required"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
@@ -912,9 +917,10 @@ fn build_rule(
             settings,
             rules::style::NamingStyle::Lower,
         )?)),
-        "MK201" => Box::new(rules::best_practices::MissingPhony::new(
-            phony_placement_option(rule_id, settings)?,
-        )),
+        "MK201" => Box::new(
+            rules::best_practices::MissingPhony::new(phony_placement_option(rule_id, settings)?)
+                .command_targets(command_targets_option(settings)?),
+        ),
         "MK202" => Box::new(rules::best_practices::HardcodedPath),
         "MK203" => Box::new(rules::best_practices::RecursiveMake),
         "MK204" => Box::new(rules::best_practices::DuplicateRecipe),
@@ -948,21 +954,35 @@ fn build_rule(
     Ok(rule)
 }
 
+fn command_targets_option(settings: &RuleSettings) -> Result<Vec<String>> {
+    let names = match settings.options.get("command-targets") {
+        Some(value) => parse_string_array(value, "MK201.command-targets")?,
+        None => Vec::new(),
+    };
+    validate_target_names(&names, "MK201.command-targets")?;
+    Ok(names)
+}
+
 fn required_targets_option(settings: &RuleSettings) -> Result<Vec<String>> {
     let names = match settings.options.get("required") {
         Some(value) => parse_string_array(value, "MK215.required")?,
         None => vec!["all".into(), "clean".into(), "test".into()],
     };
-    for name in &names {
+    validate_target_names(&names, "MK215.required")?;
+    Ok(names)
+}
+
+fn validate_target_names(names: &[String], option: &str) -> Result<()> {
+    for name in names {
         if name.is_empty()
             || name
                 .chars()
                 .any(|c| c.is_whitespace() || "$%:#;=\\".contains(c))
         {
-            bail!("MK215.required entries must be literal target names without whitespace or Make metacharacters");
+            bail!("{option} entries must be literal target names without whitespace or Make metacharacters");
         }
     }
-    Ok(names)
+    Ok(())
 }
 
 fn integer_option(
