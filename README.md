@@ -390,6 +390,26 @@ cargo build --release
 make check-gnu-fixtures
 ```
 
+Run `make benchmark` (Python 3.9+) for deterministic generated workloads: a
+1,002-file include graph, a 20,000-target Makefile, and 10,000 indentation fixes.
+The runner uses temporary files, restores fix inputs before each run, and reports
+medians after two warmups and seven measured runs. Timings include process startup,
+file access, linting, JSON output, and writes for the fix workload; generation and
+output comparison are excluded. These are warm-cache measurements.
+
+Compare release binaries and save raw timings outside the repository:
+
+```bash
+python3 scripts/benchmark.py --baseline /tmp/rumk-before \
+  --binary target/release/rumk --output /tmp/rumk-benchmarks.json
+```
+
+The runner alternates binary order and requires identical diagnostics and fixed
+contents. Use `--scale 1 --runs 1 --warmups 0` for a quick smoke check. Keep compiler
+settings and machine load comparable; use raw samples to assess noise rather than
+enforcing a universal timing threshold. The include graph caps at 1,002 files to
+stay below Rumk's default project limit.
+
 The product-level compatibility contract is documented in
 [`docs/rumdl-compatibility.md`](docs/rumdl-compatibility.md).
 

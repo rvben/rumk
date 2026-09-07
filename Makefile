@@ -1,6 +1,6 @@
 .PHONY: all build test lint fmt fmt-check clean install run check-examples
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
-.PHONY: release-check help
+.PHONY: release-check benchmark help
 
 # Configuration
 CARGO = cargo
@@ -54,6 +54,12 @@ check-gnu-fixtures:
 check-corpus:
 	$(CARGO) test --test corpus_test
 
+# Requires Python 3.9+. Pass BENCH_ARGS='--baseline /path/to/old/rumk'
+# to verify identical output while comparing two release binaries.
+BENCH_ARGS ?=
+benchmark: build
+	python3 scripts/benchmark.py $(BENCH_ARGS)
+
 # Fuzzing needs nightly Rust and cargo-fuzz (cargo install cargo-fuzz).
 #
 # cargo-fuzz defaults --target to the triple cargo-fuzz itself was built for
@@ -104,6 +110,7 @@ help:
 	@echo "  check-examples - Check example Makefiles"
 	@echo "  check-gnu-fixtures - Verify parser fixtures with GNU Make"
 	@echo "  check-corpus - Verify production-style Makefile projects"
+	@echo "  benchmark - Measure include graphs, large files, and bulk fixes"
 	@echo "  fuzz    - Fuzz every target for FUZZ_TIME seconds (needs nightly)"
 	@echo "  check-fuzz - Type-check the fuzz targets against the library"
 	@echo "  release-check - Run every local release gate and package dry run"
