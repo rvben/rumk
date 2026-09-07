@@ -1,6 +1,8 @@
 use rumk::diagnostic::Severity;
 use rumk::project::{IncludeResolution, Project, ProjectOptions};
-use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony};
+use rumk::rules::best_practices::{
+    DependencyCycle, DirectoryChangeInRecipe, DuplicateRecipe, MissingPhony,
+};
 use rumk::rules::project::{
     IncludeCycle, MissingInclude, MixedTargetSeparators, UndefinedVariableReference,
     UnreachableTarget, UnresolvedIncludeExpression,
@@ -1451,4 +1453,50 @@ fn unresolved_include_reports_unsafe_functions_without_executing_them() {
     assert!(diagnostics[0]
         .message
         .contains("function 'shell' is intentionally never executed"));
+}
+
+#[test]
+fn says_nothing_about_a_directory_change_where_an_included_file_declares_oneshell() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("settings.mk"), ".ONESHELL:\n").unwrap();
+    std::fs::write(&root, "include settings.mk\nall:\n\tcd build\n\tpwd\n").unwrap();
+
+    let diagnostics = DirectoryChangeInRecipe.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_directory_change_in_a_file_included_where_oneshell_holds() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(
+        directory.path().join("rules.mk"),
+        "all:\n\tcd build\n\tpwd\n",
+    )
+    .unwrap();
+    std::fs::write(&root, ".ONESHELL:\ninclude rules.mk\n").unwrap();
+
+    let diagnostics = DirectoryChangeInRecipe.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_directory_change_in_an_included_file_against_that_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let included = directory.path().join("rules.mk");
+    std::fs::write(&included, "all:\n\tcd build\n\tpwd\n").unwrap();
+    std::fs::write(&root, "include rules.mk\n").unwrap();
+
+    let diagnostics = DirectoryChangeInRecipe.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(
+        diagnostics[0].source.as_deref(),
+        Some(dunce::canonicalize(&included).unwrap().as_path())
+    );
 }

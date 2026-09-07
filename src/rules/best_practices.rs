@@ -1062,31 +1062,67 @@ impl Rule for DirectoryChangeInRecipe {
         RuleCategory::BestPractices
     }
 
+    fn project_aware(&self) -> bool {
+        true
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         if makefile.oneshell {
             return Vec::new();
         }
-        makefile
-            .rules
+        directory_changes(makefile)
+            .map(|(line, column)| self.report(line, column))
+            .collect()
+    }
+
+    fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
+        // '.ONESHELL' is one setting for the whole Make run, so a file that
+        // declares it settles how every recipe in the project is run, wherever
+        // the two files sit in the include graph.
+        if project.files().iter().any(|file| file.makefile.oneshell) {
+            return Vec::new();
+        }
+        project
+            .files()
             .iter()
-            .flat_map(|rule| {
-                let last = rule.recipes.len().saturating_sub(1);
-                rule.recipes[..last].iter()
-            })
-            .filter_map(|recipe| {
-                let start = trailing_directory_change(&recipe.command)?;
-                let (line, column) =
-                    position_within(recipe.line, recipe.column, &recipe.command, start);
-                Some(Diagnostic::new(
-                    self.id(),
-                    Severity::Warning,
-                    "The directory this line changes to is gone when the next line runs",
-                    line,
-                    column,
-                ))
+            .flat_map(|file| {
+                directory_changes(&file.makefile)
+                    .map(|(line, column)| self.report(line, column).with_source(file.path.clone()))
             })
             .collect()
     }
+}
+
+impl DirectoryChangeInRecipe {
+    fn report(&self, line: usize, column: usize) -> Diagnostic {
+        Diagnostic::new(
+            self.id(),
+            Severity::Warning,
+            "The directory this line changes to is gone when the next line runs",
+            line,
+            column,
+        )
+    }
+}
+
+/// Where each recipe line that ends on a `cd` another line follows stands.
+fn directory_changes(makefile: &Makefile) -> impl Iterator<Item = (usize, usize)> + '_ {
+    makefile
+        .rules
+        .iter()
+        .flat_map(|rule| {
+            let last = rule.recipes.len().saturating_sub(1);
+            rule.recipes[..last].iter()
+        })
+        .filter_map(|recipe| {
+            let start = trailing_directory_change(&recipe.command)?;
+            Some(position_within(
+                recipe.line,
+                recipe.column,
+                &recipe.command,
+                start,
+            ))
+        })
 }
 
 /// The byte offset of the `cd` a recipe line ends with, and `None` when the
