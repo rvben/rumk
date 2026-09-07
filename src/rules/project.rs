@@ -225,7 +225,7 @@ fn builds(project: &Project, name: &str) -> bool {
     // Only a '%' rule has to be weighed against a mention, and few projects
     // write one.
     let mentioned = if index.targets.contains_key("%") {
-        mentioned_outright(index)
+        mentioned_outright(project)
     } else {
         BTreeSet::new()
     };
@@ -240,18 +240,51 @@ fn builds(project: &Project, name: &str) -> bool {
     ) || budget == 0
 }
 
-/// Every name the project asks for outside a pattern rule.
-fn mentioned_outright(index: &ProjectSemanticIndex) -> BTreeSet<&str> {
-    index
-        .targets
+/// Every name the project asks for outside a pattern rule: what a rule naming
+/// its targets outright asks for, and what an include names. Make has a file of
+/// its own for each of those from the moment it reads the line.
+///
+/// A static pattern rule names its targets outright and states what they ask
+/// for as patterns, which Make fills in from the stem of each target as it
+/// reads the rule, so those are names the project asks for too. A target its
+/// own pattern does not match is an error Make reports, and it takes nothing
+/// from that rule.
+fn mentioned_outright(project: &Project) -> BTreeSet<String> {
+    let index = project.analysis();
+    let mut mentioned: BTreeSet<String> = project
+        .edges()
         .iter()
-        .filter(|(target, _)| !target.contains('%'))
-        .flat_map(|(_, symbol)| &symbol.dependencies)
-        .map(|dependency| dependency.prerequisite.as_str())
-        // A static pattern rule keeps its prerequisite pattern here, and a
-        // pattern names no file.
-        .filter(|prerequisite| !prerequisite.contains('%'))
-        .collect()
+        .map(|edge| edge.expanded.as_deref().unwrap_or(&edge.expression))
+        // An include Rumk could not expand names a file Make knows and Rumk
+        // does not.
+        .filter(|include| !include.contains('$'))
+        .map(str::to_string)
+        .collect();
+    for (target, symbol) in &index.targets {
+        if target.contains('%') {
+            continue;
+        }
+        for declaration in &symbol.declarations {
+            let stem = match declaration.target_pattern.as_deref() {
+                Some(pattern) => match pattern_stem(pattern, target) {
+                    Some(stem) => Some(stem.to_string()),
+                    None => continue,
+                },
+                None => None,
+            };
+            mentioned.extend(
+                symbol
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| dependency.location == declaration.location)
+                    .map(|dependency| match &stem {
+                        Some(stem) => dependency.prerequisite.replace('%', stem),
+                        None => dependency.prerequisite.clone(),
+                    }),
+            );
+        }
+    }
+    mentioned
 }
 
 /// Names the search may look at before it gives up. Chains in a Makefile people
@@ -276,7 +309,7 @@ fn builds_along(
     project: &Project,
     name: &str,
     sought: Sought,
-    mentioned: &BTreeSet<&str>,
+    mentioned: &BTreeSet<String>,
     chain: &mut Vec<String>,
     budget: &mut u32,
 ) -> bool {

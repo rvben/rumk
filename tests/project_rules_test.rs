@@ -461,6 +461,80 @@ fn reports_a_missing_include_whose_step_only_a_pattern_rule_asks_for() {
 }
 
 #[test]
+fn says_nothing_about_a_missing_include_whose_step_a_static_pattern_rule_asks_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // A static pattern rule names its target outright, and Make fills the stem
+    // of that target into what the rule asks for as it reads the line, so
+    // 'config.mid' is a file Make was told about.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nconfig.zz: %.zz: %.mid\n\t@cp $< $@\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_step_a_static_pattern_rule_asks_for_under_another_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The same rule with another target, which fills in another stem: the file
+    // Make was told about is 'other.mid', and nothing was said about
+    // 'config.mid'.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nother.zz: %.zz: %.mid\n\t@cp $< $@\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_another_include_names_the_step_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make has a file of its own for every name it is told to include, and
+    // remakes it like any other, so an include names 'config.mid' as plainly as
+    // a rule asking for it does.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\ninclude config.mid\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_an_optional_include_names_the_step_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make remakes an optional include too, so it names the file the same way.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n-include config.mid\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn says_nothing_about_a_missing_include_a_named_pattern_rule_supplies_that_step_of() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
