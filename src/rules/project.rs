@@ -138,42 +138,51 @@ impl Rule for MissingInclude {
     }
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        project
-            .edges()
-            .iter()
-            .filter(|edge| !edge.optional)
-            .filter_map(|edge| {
-                let include = edge.expanded.as_deref().unwrap_or(&edge.expression);
-                let (severity, detail) = match &edge.resolution {
-                    IncludeResolution::Missing { .. }
-                        if project.analysis().target(include).is_none() =>
-                    {
-                        (
-                            Severity::Warning,
-                            format!("Required include '{include}' was not found"),
-                        )
+        let index = project.analysis();
+        let mut diagnostics = Vec::new();
+        // Make remakes a missing include it has a rule for and then reads every
+        // makefile again from the top, so the reading below such an include is
+        // not the one Make ends on. An optional include is remade too.
+        let mut remade = false;
+        for edge in project.edges() {
+            let include = edge.expanded.as_deref().unwrap_or(&edge.expression);
+            let after_a_remake = remade;
+            remade |= matches!(edge.resolution, IncludeResolution::Missing { .. })
+                && index.target(include).is_some();
+            if edge.optional {
+                continue;
+            }
+            let (severity, detail) = match &edge.resolution {
+                IncludeResolution::Missing { .. } if index.target(include).is_none() => (
+                    Severity::Warning,
+                    format!("Required include '{include}' was not found"),
+                ),
+                IncludeResolution::Unreadable { path, message } => (
+                    Severity::Warning,
+                    format!(
+                        "Required include '{}' could not be read at {}: {message}",
+                        include,
+                        display_path(path)
+                    ),
+                ),
+                IncludeResolution::LimitExceeded => (
+                    Severity::Warning,
+                    format!("Required include '{include}' exceeds the project file limit"),
+                ),
+                IncludeResolution::Dynamic => {
+                    match undefined_include(project, edge, after_a_remake) {
+                        Some(reported) => reported,
+                        None => continue,
                     }
-                    IncludeResolution::Unreadable { path, message } => (
-                        Severity::Warning,
-                        format!(
-                            "Required include '{}' could not be read at {}: {message}",
-                            include,
-                            display_path(path)
-                        ),
-                    ),
-                    IncludeResolution::LimitExceeded => (
-                        Severity::Warning,
-                        format!("Required include '{include}' exceeds the project file limit"),
-                    ),
-                    IncludeResolution::Dynamic => undefined_include(project, edge)?,
-                    _ => return None,
-                };
-                Some(
-                    Diagnostic::new(self.id(), severity, detail, edge.line, 1)
-                        .with_source(project.file(edge.from).path.clone()),
-                )
-            })
-            .collect()
+                }
+                _ => continue,
+            };
+            diagnostics.push(
+                Diagnostic::new(self.id(), severity, detail, edge.line, 1)
+                    .with_source(project.file(edge.from).path.clone()),
+            );
+        }
+        diagnostics
     }
 }
 
@@ -200,7 +209,17 @@ impl Rule for MissingInclude {
 /// defines; Rumk does not, so a name that reads as having no value here may
 /// have had one all along, and a definition below may be the `?=` that never
 /// happens. Such an include is passed over too.
-fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity, String)> {
+///
+/// Nor, finally, does it hold below a missing include Make has a rule for.
+/// Make remakes that file and reads every makefile again from the top, so an
+/// include that finds a file here is read a second time with whatever the
+/// remade file defines. One that finds no file stops Make where it stands,
+/// before any of that, and is reported as it would be anywhere else.
+fn undefined_include(
+    project: &Project,
+    edge: &IncludeEdge,
+    after_a_remake: bool,
+) -> Option<(Severity, String)> {
     if !reads_on_its_own(project) || edge.follows_an_unread_include {
         return None;
     }
@@ -213,6 +232,9 @@ fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity,
         // rather than absent, which is what MK205 is for.
         .filter(|path| index.target(path).is_none())
         .collect();
+    if after_a_remake && missing.is_empty() {
+        return None;
+    }
     let outcome = if undefined.paths.is_empty() {
         "reads no file at all".to_string()
     } else if missing.is_empty() {

@@ -215,6 +215,97 @@ fn reports_a_definition_below_a_conditional_include_that_finds_no_file() {
 }
 
 #[test]
+fn says_nothing_about_a_name_a_file_make_remakes_and_rereads_may_define() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    std::fs::write(directory.path().join("sub/arch-rules.mk"), "X := 2\n").unwrap();
+    // Make remakes generated.mk and starts over, so line 2 is read a second
+    // time, after line 3. Which file it ends on is not what this reading says.
+    std::fs::write(
+        &root,
+        "include generated.mk\ninclude sub/$(P)rules.mk\nP := arch-\ngenerated.mk:\n\t@touch $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_name_an_optional_file_make_remakes_may_define() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    std::fs::write(directory.path().join("sub/arch-rules.mk"), "X := 2\n").unwrap();
+    // Make remakes an optional include it has a rule for as readily as a
+    // required one, and starts over just the same.
+    std::fs::write(
+        &root,
+        "-include generated.mk\ninclude sub/$(P)rules.mk\nP := arch-\ngenerated.mk:\n\t@touch $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_name_read_below_a_missing_include_make_has_no_rule_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    std::fs::write(directory.path().join("sub/arch-rules.mk"), "X := 2\n").unwrap();
+    // Nothing remakes generated.mk, so Make reads the file once and line 2
+    // reads sub/rules.mk for good.
+    std::fs::write(
+        &root,
+        "include generated.mk\ninclude sub/$(P)rules.mk\nP := arch-\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == Severity::Error
+                && diagnostic
+                    .message
+                    .contains("expands 'P' before line 3 defines it")),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_an_include_that_finds_no_file_below_one_make_remakes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Line 2 reads inc/.mk, which is not there and nothing builds, so Make
+    // stops on it before it ever remakes generated.mk and starts over.
+    std::fs::write(
+        &root,
+        "include generated.mk\ninclude inc/$(ARCH).mk\nARCH ?= generic\ngenerated.mk:\n\t@touch $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+    assert!(
+        diagnostics[0].message.contains("cannot find 'inc/.mk'"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn says_nothing_about_a_name_an_include_it_could_not_expand_read_a_file_for() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
