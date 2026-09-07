@@ -215,6 +215,87 @@ fn reports_a_definition_below_a_conditional_include_that_finds_no_file() {
 }
 
 #[test]
+fn says_nothing_about_a_name_a_file_a_pattern_rule_remakes_may_define() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    std::fs::write(directory.path().join("sub/arch-rules.mk"), "X := 2\n").unwrap();
+    // A pattern rule builds generated.mk as readily as a rule naming it.
+    std::fs::write(
+        &root,
+        "include generated.mk\ninclude sub/$(P)rules.mk\nP := arch-\n%.mk:\n\t@touch $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_match_anything_rule_builds() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make remakes a makefile through `%` too, and does not hold it apart.
+    std::fs::write(&root, "include generated.mk\n%:\n\t@touch $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_pattern_rule_builds_from_a_file_on_disk() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("config.mk.in"), "X := 1\n").unwrap();
+    std::fs::write(&root, "include config.mk\n%.mk: %.mk.in\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_pattern_rule_asks_for_a_file_that_is_not_there() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make passes over a pattern it cannot supply the prerequisites for and
+    // says the target has no rule at all.
+    std::fs::write(&root, "include config.mk\n%.mk: %.mk.in\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'config.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn reports_a_missing_include_whose_pattern_rule_carries_no_recipe() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("config.mk.in"), "X := 1\n").unwrap();
+    // A pattern rule with no recipe adds prerequisites; it builds nothing.
+    std::fs::write(&root, "include config.mk\n%.mk: %.mk.in\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'config.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn says_nothing_about_a_name_a_file_make_remakes_and_rereads_may_define() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

@@ -167,6 +167,7 @@ pub struct Project {
     cycles: Vec<IncludeCycle>,
     evaluation: ProjectEvaluation,
     analysis: OnceLock<ProjectSemanticIndex>,
+    working_directory: PathBuf,
 }
 
 impl Project {
@@ -188,7 +189,7 @@ impl Project {
             .clone()
             .or_else(|| path.parent().map(Path::to_path_buf))
             .unwrap_or_else(|| PathBuf::from("."));
-        let mut loader = Loader::new(options, working_directory);
+        let mut loader = Loader::new(options, working_directory.clone());
         let root = loader.insert_file(path, content, makefile);
         loader.paths.insert(loader.files[root.0].path.clone(), root);
         loader.visit(root);
@@ -205,6 +206,7 @@ impl Project {
                 rules: loader.rules,
             },
             analysis: OnceLock::new(),
+            working_directory,
         })
     }
 
@@ -222,6 +224,11 @@ impl Project {
 
     pub fn edges(&self) -> &[IncludeEdge] {
         &self.edges
+    }
+
+    /// The directory Make would read a relative path against.
+    pub fn working_directory(&self) -> &Path {
+        &self.working_directory
     }
 
     pub fn cycles(&self) -> &[IncludeCycle] {

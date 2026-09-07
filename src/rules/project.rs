@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::analysis::{ReferenceContext, ReferenceKind};
 use crate::builtins::is_defined_by_make;
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::eval::{BlockedReason, EvaluationLocation};
+use crate::eval::{pattern_stem, BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
 use crate::paths::display_path;
 use crate::project::{IncludeEdge, IncludeResolution, Project, SourceId};
@@ -138,7 +138,6 @@ impl Rule for MissingInclude {
     }
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        let index = project.analysis();
         let mut diagnostics = Vec::new();
         // Make remakes a missing include it has a rule for and then reads every
         // makefile again from the top, so the reading below such an include is
@@ -148,12 +147,12 @@ impl Rule for MissingInclude {
             let include = edge.expanded.as_deref().unwrap_or(&edge.expression);
             let after_a_remake = remade;
             remade |= matches!(edge.resolution, IncludeResolution::Missing { .. })
-                && index.target(include).is_some();
+                && builds(project, include);
             if edge.optional {
                 continue;
             }
             let (severity, detail) = match &edge.resolution {
-                IncludeResolution::Missing { .. } if index.target(include).is_none() => (
+                IncludeResolution::Missing { .. } if !builds(project, include) => (
                     Severity::Warning,
                     format!("Required include '{include}' was not found"),
                 ),
@@ -210,6 +209,36 @@ impl Rule for MissingInclude {
 /// have had one all along, and a definition below may be the `?=` that never
 /// happens. Such an include is passed over too.
 ///
+/// Whether the project states a way to build `name`.
+///
+/// A rule naming it outright states one whatever its prerequisites are: Make
+/// runs that rule and reports its failure as a failure of the rule. A pattern
+/// rule is different. Make passes over a pattern whose prerequisites it can
+/// neither find nor make, as if the rule were not written, and says the target
+/// has no rule at all, so a pattern counts here only where everything it asks
+/// for is on disk already or is a target in its own right. A pattern with no
+/// recipe builds nothing and never counts.
+fn builds(project: &Project, name: &str) -> bool {
+    let index = project.analysis();
+    if index.target(name).is_some() {
+        return true;
+    }
+    index.targets.iter().any(|(pattern, symbol)| {
+        pattern.contains('%')
+            && symbol
+                .declarations
+                .iter()
+                .any(|declaration| declaration.has_recipe)
+            && pattern_stem(pattern, name).is_some_and(|stem| {
+                symbol.dependencies.iter().all(|dependency| {
+                    let prerequisite = dependency.prerequisite.replace('%', stem);
+                    index.target(&prerequisite).is_some()
+                        || project.working_directory().join(&prerequisite).exists()
+                })
+            })
+    })
+}
+
 /// Nor, finally, does it hold below a missing include Make has a rule for.
 /// Make remakes that file and reads every makefile again from the top, so an
 /// include that finds a file here is read a second time with whatever the
@@ -224,13 +253,12 @@ fn undefined_include(
         return None;
     }
     let undefined = edge.undefined.as_ref()?;
-    let index = project.analysis();
     let missing: Vec<&String> = undefined
         .missing
         .iter()
         // A missing include the project also knows how to build is generated
         // rather than absent, which is what MK205 is for.
-        .filter(|path| index.target(path).is_none())
+        .filter(|path| !builds(project, path))
         .collect();
     if after_a_remake && missing.is_empty() {
         return None;

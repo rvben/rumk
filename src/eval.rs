@@ -1240,7 +1240,7 @@ fn pattern_matches(pattern: &str, word: &str) -> bool {
     pattern_stem(pattern, word).is_some()
 }
 
-fn pattern_stem<'a>(pattern: &str, word: &'a str) -> Option<&'a str> {
+pub(crate) fn pattern_stem<'a>(pattern: &str, word: &'a str) -> Option<&'a str> {
     let Some(percent) = pattern.find('%') else {
         return (pattern == word).then_some("");
     };
