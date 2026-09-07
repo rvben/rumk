@@ -216,6 +216,10 @@ pub struct Evaluator {
     /// and `undefine` takes none of them back: the reading happened whatever
     /// the value is worth afterwards.
     definitions_read: Vec<Definition>,
+    /// Where in `definitions_read` each name's own definitions sit, in the
+    /// order Make read them. A reading looks only at the definitions of the
+    /// name it read, rather than walking every definition below it.
+    definitions_by_name: BTreeMap<String, Vec<usize>>,
     /// Every name the project gives a value of its own, whatever the name is
     /// worth afterwards. A definition that only reads the name back and writes
     /// it again leaves the name out: what it wrote came from wherever the
@@ -231,6 +235,7 @@ impl Evaluator {
     pub fn new(predefined: &BTreeMap<String, String>) -> Self {
         Self {
             definitions_read: Vec::new(),
+            definitions_by_name: BTreeMap::new(),
             values_given: BTreeSet::new(),
             early_readings: Vec::new(),
             variables: predefined
@@ -267,6 +272,10 @@ impl Evaluator {
             certain: activity == Truth::True,
         });
         let definition = self.definitions_read.len() - 1;
+        self.definitions_by_name
+            .entry(variable.name.clone())
+            .or_default()
+            .push(definition);
         self.store_assignment(variable, location, activity);
         // A definition that only restates the value the name already carried
         // takes that value from wherever the caller put it, so it is not the
@@ -514,12 +523,14 @@ impl Evaluator {
         definitions_read: usize,
         accept: impl Fn(&Definition) -> bool,
     ) -> Option<EvaluationLocation> {
-        self.definitions_read
-            .get(definitions_read..)?
+        let own = self.definitions_by_name.get(name)?;
+        // The positions are in the order Make read them, so the ones below this
+        // reading are the tail past the first that is not above it.
+        let below = own.partition_point(|position| *position < definitions_read);
+        own.get(below..)?
             .iter()
-            .find(|definition| {
-                definition.name == name && definition.defines_a_value && accept(definition)
-            })
+            .map(|position| &self.definitions_read[*position])
+            .find(|definition| definition.defines_a_value && accept(definition))
             .map(|definition| definition.at)
     }
 
