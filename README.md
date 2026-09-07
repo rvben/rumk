@@ -114,6 +114,24 @@ Stdin must be valid UTF-8 and cannot be mixed with filesystem paths.
 `check --fix -` is rejected: use JSON edits for lint fixes or `fmt -` for layout.
 This is a command-line integration interface, not a language server.
 
+## SARIF reports
+
+Export diagnostics for code-scanning consumers:
+
+```sh
+rumk check . --output-format sarif --fail-on never > /tmp/rumk.sarif
+```
+
+The SARIF 2.1.0 report includes stable rule IDs, documentation links, severities,
+include-file locations, URI-encoded paths, and explicit Unicode column units.
+Stdin checking supports this format too. It reports fix availability and safety;
+use JSON output for edit payloads. Run from the repository root when preparing
+reports for upload. Rumk creates the report; uploading it is a separate CI step.
+
+The GitHub `upload-sarif` action can populate missing fingerprints from the
+checkout. Direct API uploads may need caller-supplied fingerprints to avoid
+duplicate alerts; see [GitHub's SARIF support documentation](https://docs.github.com/en/code-security/reference/code-scanning/sarif-files/sarif-support).
+
 ## Pre-commit
 
 The repository provides `rumk-fmt` and `rumk-check` hooks. Pre-commit builds the

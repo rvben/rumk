@@ -81,7 +81,10 @@ fn unsaved_root_uses_includes_and_reports_their_real_paths() {
     let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(diagnostics.as_array().unwrap().len(), 1, "{diagnostics}");
     assert_eq!(diagnostics[0]["rule"], "MK214");
-    assert_eq!(diagnostics[0]["file"], "project/tasks.mk");
+    assert_eq!(
+        diagnostics[0]["file"].as_str().unwrap().replace('\\', "/"),
+        "project/tasks.mk"
+    );
     assert_eq!(
         std::fs::read_to_string(root.path().join("project/Makefile")).unwrap(),
         "DISK=untouched\n"

@@ -1,3 +1,5 @@
+mod sarif;
+
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
@@ -222,6 +224,7 @@ enum OutputFormat {
     #[default]
     Text,
     Json,
+    Sarif,
     #[value(name = "github")]
     GitHub,
 }
@@ -1313,6 +1316,29 @@ fn output_reports(
             }
         }
         OutputFormat::Json => output_json(reports)?,
+        OutputFormat::Sarif => {
+            let paths_and_diagnostics: Vec<_> = reports
+                .iter()
+                .flat_map(|report| {
+                    report
+                        .diagnostics
+                        .iter()
+                        .map(|diagnostic| (diagnostic_path(report, diagnostic), diagnostic))
+                })
+                .collect();
+            let findings: Vec<_> = paths_and_diagnostics
+                .iter()
+                .map(|(path, diagnostic)| sarif::Finding { path, diagnostic })
+                .collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&sarif::report(
+                    &findings,
+                    &std::env::current_dir()?,
+                    reports.iter().all(|report| !report.state.unread())
+                ))?
+            );
+        }
         OutputFormat::GitHub => {
             for report in reports {
                 output_github(report);
