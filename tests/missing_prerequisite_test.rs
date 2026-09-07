@@ -152,8 +152,6 @@ fn unrelated_patterns_do_not_hide_missing_inputs() {
 #[test]
 fn matching_patterns_and_builtin_sources_remain_uncertain() {
     for source in [
-        "probe: generated/output.dat\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
-        "probe: generated/output.dat\ngenerated/%.dat:: templates/%.src\n\t@echo generated\n",
         "probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n",
         "probe: output.o\n%.c: templates/%.src\n\t@echo generated\n",
         "VPATH := generated\nprobe: output.o\ngenerated/%.c: templates/%.src\n\t@echo generated\n",
@@ -180,4 +178,60 @@ fn pattern_prerequisites_are_not_checked_as_literal_root_inputs() {
     );
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].line, 1);
+}
+
+#[test]
+fn rejects_matching_producers_with_missing_inputs() {
+    for source in [
+        "probe: generated/output.dat\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+        "probe: generated/output.dat\ngenerated/%.dat:: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n",
+        "probe: generated/output.dat\ngenerated/%.dat: | templates/%.src\n\t@echo generated\n",
+        "probe: generated/output.dat\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: missing/%.src\n\t@echo second\n",
+    ] {
+        let findings = check(source, &[("templates/unrelated.src", "input")]);
+        assert_eq!(findings.len(), 1, "{source}");
+        assert_eq!(findings[0].line, 1);
+    }
+}
+
+#[test]
+fn accepts_viable_alternatives_and_preserves_unsupported_chains() {
+    for (source, files) in [
+        ("probe: generated/output.dat\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n", vec![("templates/output.src", "input")]),
+        ("probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n", vec![("nested/output.src", "input")]),
+        ("VPATH := inputs\nprobe: generated/output.dat\ngenerated/%.dat: templates/%.src\n\t@echo generated\n", vec![("inputs/templates/output.src", "input")]),
+        ("probe: generated/output.dat\ngenerated/%.dat:: templates/%.src\n\t@echo generated\ntemplates/output.src:\n\t@echo source\n", vec![]),
+        ("probe: generated/output.dat\ngenerated/%.dat: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n", vec![]),
+        ("probe: generated/output.dat\ngenerated/%.dat: object.o\n\t@echo generated\n", vec![("object.c", "input")]),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn unsupported_pattern_forms_preserve_uncertainty() {
+    for source in [
+        "probe: generated/output.dat\ngenerated/%.dat: missing/%.src\n",
+        "probe: generated/output.dat\ngenerated/%.dat generated/%.aux: missing/%.src\n\t@echo generated\n",
+        "probe: generated/output.dat\ngenerated/%.dat &: missing/%.src\n\t@echo generated\n",
+        "probe: generated/output.dat\ngenerated/%.dat: *.src\n\t@echo generated\n",
+    ] {
+        assert!(check(source, &[]).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn slashless_patterns_restore_directories_only_for_pattern_inputs() {
+    let source = "probe: generated/output.dat\n%.dat:: shared.txt\n\t@echo generated\n";
+    assert!(check(source, &[("shared.txt", "input")]).is_empty());
+    assert_eq!(check(source, &[("generated/shared.txt", "input")]).len(), 1);
+}
+
+#[test]
+fn broad_direct_pattern_may_build_a_different_builtin_source() {
+    assert!(check(
+        "probe: generated/output.o\ngenerated/%: templates/%.src\n\t@echo generated\n",
+        &[("templates/output.c.src", "input")]
+    )
+    .is_empty());
 }

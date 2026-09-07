@@ -651,7 +651,7 @@
       },
       "matchers": {},
       "safe_fix": "withheld",
-      "expected_rumk_detection": false
+      "expected_rumk_detection": true
     }
   ]
 }

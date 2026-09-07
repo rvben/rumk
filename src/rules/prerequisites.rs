@@ -17,7 +17,7 @@ impl Rule for MissingPrerequisite {
         "MK216"
     }
     fn name(&self) -> &'static str {
-        "Static prerequisite has no visible file or build rule"
+        "Static prerequisite has no visible file or usable build rule"
     }
     fn description(&self) -> &'static str {
         "Reports absent literal prerequisites in complete static projects when no declared or plausible implicit producer is visible. Opt-in; uncertain graphs are left alone."
@@ -86,7 +86,7 @@ impl Rule for MissingPrerequisite {
                     continue;
                 }
                 diagnostics.push(Diagnostic::new(self.id(), Severity::Warning,
-                    format!("Prerequisite '{name}' of target '{}' was not found and has no visible build rule", target.name),
+                    format!("Prerequisite '{name}' of target '{}' was not found and has no usable visible build rule", target.name),
                     edge.location.line, edge.location.column)
                     .with_source(project.file(edge.location.source).path.clone()));
             }
@@ -159,21 +159,37 @@ fn incomplete(project: &Project) -> bool {
     false
 }
 
-// A pattern's prerequisites need not be interpreted to establish that an
-// unrelated pattern cannot produce this input. Conversely, a possible match
-// remains uncertainty: competing recipes, intermediate chains and terminal
-// restrictions require more than this conservative intersection check.
+// Bound declaration and prerequisite work per checked edge. Exhaustion is
+// uncertainty. Nonterminal prerequisites are inspected for possible producers,
+// but their chains are deliberately not expanded recursively.
+const PATTERN_SEARCH_STEPS: usize = 10_000;
+
 fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathBuf]) -> bool {
+    let mut budget = PATTERN_SEARCH_STEPS;
+    pattern_producer(project, name, directories, true, &mut budget)
+}
+
+fn pattern_producer(
+    project: &Project,
+    name: &str,
+    directories: &[PathBuf],
+    inspect_inputs: bool,
+    budget: &mut usize,
+) -> bool {
     project
         .analysis()
         .targets
-        .keys()
-        .filter(|pattern| pattern.contains('%'))
-        .any(|pattern| {
+        .iter()
+        .filter(|(pattern, _)| pattern.contains('%'))
+        .any(|(pattern, symbol)| {
             if pattern.contains(['\\', '$']) {
                 return true;
             }
             directories.iter().any(|directory| {
+                let Some(remaining) = budget.checked_sub(1) else {
+                    return true;
+                };
+                *budget = remaining;
                 let candidate = directory.join(name);
                 let Ok(candidate) = candidate.strip_prefix(project.working_directory()) else {
                     // Absolute/external search paths may use another spelling in
@@ -185,14 +201,42 @@ fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathB
                 };
                 let candidate = normalized(candidate);
                 let pattern = normalized(pattern);
+                let full_candidate = candidate;
                 let candidate = if pattern.contains('/') {
                     candidate
                 } else {
                     // GNU ignores the directory while matching a slashless pattern.
                     candidate.rsplit('/').next().unwrap_or(candidate)
                 };
-                if pattern_stem(pattern, candidate).is_some() {
-                    return true;
+                if let Some(stem) = pattern_stem(pattern, candidate) {
+                    let suffix = pattern
+                        .split_once('%')
+                        .map(|(_, suffix)| suffix)
+                        .unwrap_or("");
+                    // A broad pattern may fail for this target but build a
+                    // differently suffixed source used by a built-in rule.
+                    // Only inspect patterns fixing the complete final extension.
+                    if !inspect_inputs
+                        || stem.is_empty()
+                        || pattern.matches('%').count() != 1
+                        || !suffix.starts_with('.')
+                        || suffix[1..].contains(['.', '/'])
+                    {
+                        return true;
+                    }
+                    let parent = if pattern.contains('/') {
+                        Path::new("")
+                    } else {
+                        Path::new(full_candidate).parent().unwrap_or(Path::new(""))
+                    };
+                    return declaration_may_build(
+                        project,
+                        symbol,
+                        stem,
+                        parent,
+                        directories,
+                        budget,
+                    );
                 }
                 let path = Path::new(candidate);
                 let parent = path.parent().unwrap_or(Path::new(""));
@@ -229,6 +273,69 @@ fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathB
                 })
             })
         })
+}
+
+// Dependencies belong to individual declarations, not to the union of all
+// rules with this target pattern. One possible alternative is sufficient.
+fn declaration_may_build(
+    project: &Project,
+    symbol: &crate::project_analysis::ProjectTargetSymbol,
+    stem: &str,
+    parent: &Path,
+    directories: &[PathBuf],
+    budget: &mut usize,
+) -> bool {
+    symbol.declarations.iter().any(|declaration| {
+        let Some(remaining) = budget.checked_sub(1) else {
+            return true;
+        };
+        *budget = remaining;
+        // Cancellation and grouped/multi-target rules need rule-set
+        // semantics beyond this single-declaration proof.
+        let rules = project
+            .evaluation()
+            .rules(declaration.location.source, declaration.location.line);
+        if !declaration.has_recipe
+            || declaration.grouped
+            || rules.iter().any(|rule| rule.targets.len() != 1)
+        {
+            return true;
+        }
+        symbol
+            .dependencies
+            .iter()
+            .filter(|edge| edge.location == declaration.location)
+            .all(|edge| {
+                let Some(remaining) = budget.checked_sub(1) else {
+                    return true;
+                };
+                *budget = remaining;
+                let input = edge.prerequisite.replacen('%', stem, 1);
+                // Only prerequisite patterns regain the stripped directory;
+                // literal inputs stay relative to the working directory.
+                let input = if edge.prerequisite.contains('%') {
+                    parent.join(input)
+                } else {
+                    PathBuf::from(input)
+                };
+                let Some(input) = input.to_str() else {
+                    return true;
+                };
+                let input = normalized(input);
+                !literal(input)
+                    || project
+                        .analysis()
+                        .targets
+                        .keys()
+                        .any(|key| normalized(key) == input)
+                    || directories
+                        .iter()
+                        .any(|directory| may_exist(&directory.join(input)))
+                    || (!declaration.double_colon
+                        && (plausible_implicit_input(project, input, directories)
+                            || pattern_producer(project, input, directories, false, budget)))
+            })
+    })
 }
 
 fn normalized(mut name: &str) -> &str {
@@ -307,4 +414,37 @@ fn plausible_implicit_input(project: &Project, name: &str, directories: &[PathBu
             Err(error) => error.kind() != std::io::ErrorKind::NotFound,
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::ProjectOptions;
+
+    #[test]
+    fn exhausted_pattern_search_preserves_uncertainty() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = Project::load_with_root_content(
+            &directory.path().join("Makefile"),
+            "probe: generated/output.dat\ngenerated/%.dat: missing/%.src\n\t@echo generated\n"
+                .into(),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        let directories = [directory.path().to_path_buf()];
+        for mut budget in 0..3 {
+            assert!(pattern_producer(
+                &project,
+                "generated/output.dat",
+                &directories,
+                true,
+                &mut budget
+            ));
+        }
+        assert!(!possible_pattern_producer(
+            &project,
+            "generated/output.dat",
+            &directories
+        ));
+    }
 }
