@@ -535,6 +535,113 @@ fn says_nothing_about_a_missing_include_an_optional_include_names_the_step_of() 
 }
 
 #[test]
+fn says_nothing_about_a_missing_include_whose_step_is_asked_for_with_a_leading_dot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make files './config.mid' under the name 'config.mid', so the mention and
+    // the file the chain looks for are the same file.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nall: ./config.mid\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_another_step_is_asked_for_with_a_leading_dot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Dropping the leading './' is the whole of what Make does to a name: this
+    // one still asks for another file.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nall: ./other.mid\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_written_with_a_leading_dot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The include names the file Make builds, under a name Make files the same
+    // way, so the rule for its step is the rule that stands there.
+    std::fs::write(
+        &root,
+        "include ./config.mk\nall:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\nconfig.mid:\n\t@touch $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_whose_step_a_variable_target_pattern_asks_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The static pattern rule states its pattern as a variable, and Make reads
+    // the value before it fills the stem in.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nP := %.zz\nconfig.zz: $(P): %.mid\n\t@cp $< $@\nall:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_variable_target_pattern_asks_for_another_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The same pattern read the same way, filled in from another target.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nP := %.zz\nother.zz: $(P): %.mid\n\t@cp $< $@\nall:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_whose_step_may_be_a_name_rumk_cannot_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Rumk does not run the shell, so it does not know which file this include
+    // names, and the name may be the one the chain needs. Make would stop here;
+    // Rumk says nothing rather than report what it cannot read.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n-include $(shell echo other.mk)\nall:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn says_nothing_about_a_missing_include_a_named_pattern_rule_supplies_that_step_of() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

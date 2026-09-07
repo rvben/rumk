@@ -227,7 +227,7 @@ fn builds(project: &Project, name: &str) -> bool {
     let mentioned = if index.targets.contains_key("%") {
         mentioned_outright(project)
     } else {
-        BTreeSet::new()
+        Mentions::These(BTreeSet::new())
     };
     let mut budget = BUILD_SEARCH_STEPS;
     builds_along(
@@ -246,30 +246,38 @@ fn builds(project: &Project, name: &str) -> bool {
 ///
 /// A static pattern rule names its targets outright and states what they ask
 /// for as patterns, which Make fills in from the stem of each target as it
-/// reads the rule, so those are names the project asks for too. A target its
-/// own pattern does not match is an error Make reports, and it takes nothing
-/// from that rule.
-fn mentioned_outright(project: &Project) -> BTreeSet<String> {
+/// reads the rule, so those are names the project asks for too. Its pattern may
+/// itself be written as a variable, and Rumk reads the value. A target its own
+/// pattern does not match is an error Make reports, and it takes nothing from
+/// that rule.
+///
+/// A name Rumk cannot read at all leaves the whole set unknown, since the file
+/// Make was told about may be exactly the one being sought.
+fn mentioned_outright(project: &Project) -> Mentions {
     let index = project.analysis();
-    let mut mentioned: BTreeSet<String> = project
-        .edges()
-        .iter()
-        .map(|edge| edge.expanded.as_deref().unwrap_or(&edge.expression))
-        // An include Rumk could not expand names a file Make knows and Rumk
-        // does not.
-        .filter(|include| !include.contains('$'))
-        .map(str::to_string)
-        .collect();
+    let mut mentioned = BTreeSet::new();
+    for edge in project.edges() {
+        match edge.expanded.as_deref() {
+            Some(path) => mentioned.insert(as_make_files_it(path).to_string()),
+            None if edge.expression.contains('$') => return Mentions::Unread,
+            None => mentioned.insert(as_make_files_it(&edge.expression).to_string()),
+        };
+    }
     for (target, symbol) in &index.targets {
         if target.contains('%') {
             continue;
         }
         for declaration in &symbol.declarations {
             let stem = match declaration.target_pattern.as_deref() {
-                Some(pattern) => match pattern_stem(pattern, target) {
-                    Some(stem) => Some(stem.to_string()),
-                    None => continue,
-                },
+                Some(pattern) => {
+                    let Some(pattern) = project.evaluation().expand(pattern).value else {
+                        return Mentions::Unread;
+                    };
+                    match pattern_stem(&pattern, target) {
+                        Some(stem) => Some(stem.to_string()),
+                        None => continue,
+                    }
+                }
                 None => None,
             };
             mentioned.extend(
@@ -280,11 +288,40 @@ fn mentioned_outright(project: &Project) -> BTreeSet<String> {
                     .map(|dependency| match &stem {
                         Some(stem) => dependency.prerequisite.replace('%', stem),
                         None => dependency.prerequisite.clone(),
-                    }),
+                    })
+                    .map(|prerequisite| as_make_files_it(&prerequisite).to_string()),
             );
         }
     }
-    mentioned
+    Mentions::These(mentioned)
+}
+
+/// The names the project asks for outside its pattern rules, or `Unread` where
+/// one of them could not be read and any name may be among them.
+enum Mentions {
+    Unread,
+    These(BTreeSet<String>),
+}
+
+impl Mentions {
+    fn holds(&self, name: &str) -> bool {
+        match self {
+            Mentions::Unread => true,
+            Mentions::These(names) => names.contains(as_make_files_it(name)),
+        }
+    }
+}
+
+/// The name under which Make files a path. Make drops a leading `./` and the
+/// slashes after it, however many times it is written, so `.//config.mk` is
+/// `config.mk`. It leaves the rest alone: `sub/../config.mk` is a name of its
+/// own, and a file Make asks for under that name it does not ask for under any
+/// other.
+fn as_make_files_it(mut name: &str) -> &str {
+    while let Some(rest) = name.strip_prefix("./") {
+        name = rest.trim_start_matches('/');
+    }
+    name
 }
 
 /// Names the search may look at before it gives up. Chains in a Makefile people
@@ -309,7 +346,7 @@ fn builds_along(
     project: &Project,
     name: &str,
     sought: Sought,
-    mentioned: &BTreeSet<String>,
+    mentioned: &Mentions,
     chain: &mut Vec<String>,
     budget: &mut u32,
 ) -> bool {
@@ -317,11 +354,14 @@ fn builds_along(
         return false;
     };
     *budget = remaining;
+    // Make files a name without the './' it may be written with, and matches a
+    // pattern against the name it filed.
+    let name = as_make_files_it(name);
     let index = project.analysis();
     if index.target(name).is_some() {
         return true;
     }
-    let told_about = sought == Sought::Outright || mentioned.contains(name);
+    let told_about = sought == Sought::Outright || mentioned.holds(name);
     index.targets.iter().any(|(pattern, symbol)| {
         pattern.contains('%')
             && !chain.contains(pattern)
