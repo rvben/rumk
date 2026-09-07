@@ -337,7 +337,7 @@ struct JsonFix<'a> {
     /// whether a run applies it without being asked.
     applicability: &'static str,
     range: JsonRange,
-    replacement: &'a str,
+    replacement: std::borrow::Cow<'a, str>,
 }
 
 #[derive(Serialize)]
@@ -1391,28 +1391,9 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
                 // A byte range is only meaningful in the content it was
                 // measured against, so a diagnostic another file carries is
                 // reported without the edit that would fix it.
-                let json_fix = diagnostic
-                    .fix
-                    .as_ref()
-                    .filter(|_| file == report.path)
-                    .and_then(|fix| Some((fix.applicability, fix.edits.first()?)))
-                    .and_then(|(applicability, edit)| {
-                        // Offsets name bytes in the file, which begins with the
-                        // byte order mark Make reads past.
-                        let mark = if report.byte_order_mark {
-                            source::BYTE_ORDER_MARK.len()
-                        } else {
-                            0
-                        };
-                        fix::edit_byte_range(&report.content, edit).map(|(start, end)| JsonFix {
-                            applicability: applicability.as_str(),
-                            range: JsonRange {
-                                start: start + mark,
-                                end: end + mark,
-                            },
-                            replacement: &edit.replacement,
-                        })
-                    });
+                let json_fix = (file == report.path)
+                    .then(|| json_fix(report, diagnostic))
+                    .flatten();
                 JsonDiagnostic {
                     file,
                     line: diagnostic.line,
@@ -1430,6 +1411,48 @@ fn output_json(reports: &[FileReport]) -> Result<()> {
         .collect::<Vec<_>>();
     println!("{}", serde_json::to_string_pretty(&diagnostics)?);
     Ok(())
+}
+
+/// Keep the existing single-range JSON contract while representing a fix's
+/// entire edit set. Text between edits is copied unchanged into the replacement.
+fn json_fix<'a>(report: &FileReport, diagnostic: &'a Diagnostic) -> Option<JsonFix<'a>> {
+    let offered = diagnostic.fix.as_ref()?;
+    let first = offered.edits.first()?;
+    let (mut start, mut end) = fix::edit_byte_range(&report.content, first)?;
+    let replacement = if offered.edits.len() == 1 {
+        std::borrow::Cow::Borrowed(first.replacement.as_str())
+    } else {
+        for edit in &offered.edits[1..] {
+            let (edit_start, edit_end) = fix::edit_byte_range(&report.content, edit)?;
+            start = start.min(edit_start);
+            end = end.max(edit_end);
+        }
+        // The regular fix engine rejects overlaps and invalid ranges as a whole.
+        // A withheld unsafe fix still has an exportable payload. This computes
+        // that payload only; the caller must still honor its applicability.
+        let mut exportable = diagnostic.clone();
+        exportable.fixable = true;
+        let applied = fix::apply_fixes(&report.content, std::slice::from_ref(&exportable));
+        if applied.fixed.is_empty() {
+            return None;
+        }
+        let unchanged_suffix = report.content.len() - end;
+        let replacement_end = applied.content.len().checked_sub(unchanged_suffix)?;
+        std::borrow::Cow::Owned(applied.content.get(start..replacement_end)?.to_string())
+    };
+    let mark = if report.byte_order_mark {
+        source::BYTE_ORDER_MARK.len()
+    } else {
+        0
+    };
+    Some(JsonFix {
+        applicability: offered.applicability.as_str(),
+        range: JsonRange {
+            start: start + mark,
+            end: end + mark,
+        },
+        replacement,
+    })
 }
 
 fn output_github(report: &FileReport) {

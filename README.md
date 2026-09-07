@@ -106,7 +106,9 @@ or when `--quiet`/`--silent` is set. It preserves a UTF-8 BOM, line endings, and
 significant whitespace. The named file and its includes are never written.
 `fmt - --check` returns 1 when formatting is needed; `--diff` previews changes.
 Checking retains the normal diagnostic formats and `--fail-on` policy, without
-a summary. JSON fixes contain byte ranges suitable for editor edits.
+a summary. Each JSON fix contains one byte range and a replacement covering all
+of that fix's edits. Apply it atomically to the exact checked buffer and honor its
+`applicability` (`safe` or `unsafe`).
 
 Without `--stdin-filename`, the buffer is treated as `Makefile` in the current
 directory. Explicit `--config` and `--no-config` override automatic discovery.

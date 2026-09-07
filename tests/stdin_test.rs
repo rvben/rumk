@@ -274,3 +274,58 @@ fn buffer_edits_use_original_byte_offsets_and_obey_suppressions() {
     );
     assert_eq!(unfixable.stdout, b"CC=cc\n");
 }
+
+#[test]
+fn json_exports_multi_edit_fixes_as_one_complete_replacement() {
+    let root = tempfile::tempdir().unwrap();
+    for input in [
+        "all:\n\tmake -C one && echo 'é😀' && make -C two\n",
+        "\u{feff}all:\r\n\tmake -C one && echo 'é😀' && make -C two\r\n",
+    ] {
+        let output = run(
+            root.path(),
+            &[
+                "check",
+                "-",
+                "--no-config",
+                "--enable",
+                "MK203",
+                "--output-format",
+                "json",
+            ],
+            input.as_bytes(),
+        );
+        assert_eq!(output.status.code(), Some(1));
+        let diagnostics: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(diagnostics.as_array().unwrap().len(), 1);
+        let edit = &diagnostics[0]["fix"];
+        assert_eq!(edit["applicability"], "unsafe");
+        let mut patched = input.to_string();
+        patched.replace_range(
+            edit["range"]["start"].as_u64().unwrap() as usize
+                ..edit["range"]["end"].as_u64().unwrap() as usize,
+            edit["replacement"].as_str().unwrap(),
+        );
+        let expected = input.replace("make -C", "$(MAKE) -C");
+        assert_eq!(patched, expected, "JSON must carry every edit of the fix");
+        std::fs::write(root.path().join("Makefile"), input).unwrap();
+        let fixed = run(
+            root.path(),
+            &[
+                "check",
+                "Makefile",
+                "--no-config",
+                "--enable",
+                "MK203",
+                "--fix",
+                "--unsafe-fixes",
+            ],
+            b"",
+        );
+        assert!(fixed.status.success(), "{fixed:?}");
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("Makefile")).unwrap(),
+            patched
+        );
+    }
+}
