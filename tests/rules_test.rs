@@ -1059,3 +1059,82 @@ fn shell_call_says_nothing_about_a_flavor_a_target_specific_assignment_gave() {
         .check(&parse(content), content)
         .is_empty());
 }
+
+#[test]
+fn shell_call_is_reported_in_a_target_specific_variable_make_expands_again() {
+    // 'all: X = ...' binds 'X' while Make builds 'all', and binds it
+    // recursively, so every reading of '$(X)' in that recipe runs the command.
+    let content = "all: X = $(shell date)\nall:\n\t@echo $(X) $(X)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+    assert!(diagnostics[0].message.starts_with("'X'"));
+}
+
+#[test]
+fn shell_call_reads_a_target_specific_append_as_appending_to_that_target_alone() {
+    // A target-specific '+=' appends to the target-specific value, not to the
+    // file-wide one, so the ':=' below leaves it nothing to take a flavor from.
+    let global = "X := base\nall: X += $(shell date)\nall:\n\t@echo $(X)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(global), global);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+
+    // A target-specific ':=' for the same target is one it does take.
+    let local = "all: X := base\nall: X += $(shell date)\nall:\n\t@echo $(X)\n";
+    assert!(ShellInRecursiveVariable
+        .check(&parse(local), local)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_says_nothing_about_a_conditional_assignment_the_file_wide_value_answers() {
+    // A target-specific '?=' reads the file-wide value as a value, so it does
+    // nothing and runs no command.
+    let content = "X := base\nall: X ?= $(shell date)\nall:\n\t@echo $(X)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_is_reported_where_undefine_gave_the_conditional_assignment_something_to_do() {
+    // 'undefine' leaves nothing behind, so the '?=' assigns after all and makes
+    // a recursive variable.
+    let content = "X := base\nundefine X\nX ?= $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+
+    // The same for an append: there is nothing left to append to, so Make
+    // creates a recursive variable.
+    let appended = "X := base\noverride undefine X\nX += $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(appended), appended);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+}
+
+#[test]
+fn shell_call_says_nothing_where_undefine_is_one_make_may_not_read() {
+    // Make may or may not reach this 'undefine', so 'X' may still hold the
+    // simple value, and the append may still be expanded once.
+    let content = "X := base\nifdef CI\nundefine X\nendif\nX += $(shell date)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_reads_an_escaped_space_as_part_of_the_word_after_it() {
+    // The escaped space belongs to the word holding the '#', so the '#' starts
+    // no comment and the 'cd' after it is a command the shell runs.
+    let content = "all:\n\techo \\ # ; cd /tmp\n\tpwd\n";
+    let diagnostics = DirectoryChangeInRecipe.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+}

@@ -1138,11 +1138,21 @@ fn without_shell_comments(command: &str) -> String {
             }
             continue;
         }
+        // An escaped character is part of the word it sits in, whatever it is,
+        // so an escaped space starts no new word and the '#' after one is text.
         if escaped {
             escaped = false;
-        } else if character == '\\' && quote != Some('\'') {
+            result.push(character);
+            word_start = false;
+            continue;
+        }
+        if character == '\\' && quote != Some('\'') {
             escaped = true;
-        } else if let Some(active) = quote {
+            result.push(character);
+            word_start = false;
+            continue;
+        }
+        if let Some(active) = quote {
             if character == active {
                 quote = None;
             }
@@ -1192,40 +1202,56 @@ impl Rule for ShellInRecursiveVariable {
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
-        let mut bindings: BTreeMap<&str, Binding> = BTreeMap::new();
+        // A binding under the empty scope is the file-wide one; the others are
+        // the ones a target-specific assignment makes, under the targets it
+        // names.
+        let mut bindings: BTreeMap<(&[String], &str), Binding> = BTreeMap::new();
         let mut diagnostics = Vec::new();
+        let mut undefined = undefined_names(makefile).into_iter().peekable();
         // A `define` is an assignment whose value is its body, so the bodies
         // are here too, under the operator their header carries.
         for variable in &makefile.assignments {
+            while undefined
+                .peek()
+                .is_some_and(|(line, ..)| *line <= variable.line)
+            {
+                let (_, reach, name) = undefined.next().expect("peek found an entry");
+                forget(&mut bindings, reach, name);
+            }
             // An assignment in a branch whose literal condition fails is one
             // Make never makes: it runs no command, and it gives the name no
             // flavor for a later '+=' to take.
             if variable.reach == Reach::Never {
                 continue;
             }
-            // A target-specific assignment binds the name only while Make
-            // builds that target, and leaves the file-wide one as it was.
-            if variable.scope != VariableScope::Global {
-                continue;
-            }
-            let existing = bindings.get(variable.name.as_str()).copied();
+            let scope: &[String] = match &variable.scope {
+                VariableScope::Global => &[],
+                VariableScope::TargetSpecific(targets) => targets,
+            };
+            let name = variable.name.as_str();
+            let own = bindings.get(&(scope, name)).copied();
             // '?=' does nothing at all where the name already has a value: it
             // runs no command and leaves the flavor the earlier assignment set.
+            // A target-specific one reads the file-wide value as a value too.
             if variable.operator == AssignmentOperator::Conditional
-                && existing.is_some_and(|binding| binding.definite)
+                && own
+                    .or_else(|| bindings.get(&(&[][..], name)).copied())
+                    .is_some_and(|binding| binding.definite)
             {
                 continue;
             }
             let flavor = match variable.operator {
                 // '+=' takes the flavor of the variable it appends to, and
                 // creates a recursive one where there is nothing to append to.
+                // A target-specific append appends to the target-specific
+                // value alone, so the file-wide flavor is not one to take.
                 AssignmentOperator::Append => {
-                    existing.map_or(Flavor::Deferred, |binding| binding.flavor)
+                    own.map_or(Flavor::Deferred, |binding| binding.flavor)
                 }
                 operator => flavor_of(operator),
             };
             bindings.insert(
-                variable.name.as_str(),
+                (scope, name),
                 Binding {
                     flavor,
                     definite: variable.reach == Reach::Always,
@@ -1244,6 +1270,65 @@ impl Rule for ShellInRecursiveVariable {
             }
         }
         diagnostics
+    }
+}
+
+/// Every name an `undefine` takes the value of, in source order: the line it is
+/// on, how sure Make is to read it, and the name. A name Rumk cannot read
+/// literally, such as `undefine $(NAME)`, stands for any name at all and comes
+/// back as `None`.
+fn undefined_names(makefile: &Makefile) -> Vec<(usize, Reach, Option<&str>)> {
+    makefile
+        .logical
+        .statements()
+        .iter()
+        .filter(|statement| statement.kind == LogicalKind::Directive)
+        .filter(|statement| statement.reach != Reach::Never)
+        .filter_map(|statement| {
+            let mut words = strip_top_level_comment(statement.text()).split_whitespace();
+            let first = words.next()?;
+            let keyword = if first == "override" {
+                words.next()?
+            } else {
+                first
+            };
+            if keyword != "undefine" {
+                return None;
+            }
+            let name = words.next()?;
+            Some((
+                statement.start_line,
+                statement.reach,
+                (!name.contains('$')).then_some(name),
+            ))
+        })
+        .collect()
+}
+
+/// Takes an `undefine`d name out of `bindings`. Make leaves nothing behind, so
+/// a later `+=` has nothing to append to and a later `?=` does something again.
+/// Where the file only may reach the `undefine`, the name may still hold a
+/// value, so the flavor stands and only the certainty goes.
+fn forget<'a>(
+    bindings: &mut BTreeMap<(&'a [String], &'a str), Binding>,
+    reach: Reach,
+    name: Option<&'a str>,
+) {
+    match (reach, name) {
+        (Reach::Always, Some(name)) => {
+            bindings.remove(&(&[][..], name));
+        }
+        (Reach::Always, None) => bindings.clear(),
+        (_, Some(name)) => {
+            if let Some(binding) = bindings.get_mut(&(&[][..], name)) {
+                binding.definite = false;
+            }
+        }
+        (_, None) => {
+            for binding in bindings.values_mut() {
+                binding.definite = false;
+            }
+        }
     }
 }
 
