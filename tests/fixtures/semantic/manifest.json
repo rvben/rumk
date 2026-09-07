@@ -64,7 +64,7 @@
       "name": "missing-prerequisite",
       "title": "A prerequisite typo stops the build",
       "dialect": "GNU Make",
-      "rule": null,
+      "rule": "MK216",
       "files": {
         "source.txt": "input\n"
       },
@@ -85,7 +85,7 @@
       },
       "matchers": {},
       "safe_fix": "withheld",
-      "expected_rumk_detection": false
+      "expected_rumk_detection": true
     },
     {
       "name": "recursive-dry-run",
@@ -287,6 +287,214 @@
         "unmake": ": PHONY[^:]*:",
         "mbake": "Consider adding \\.PHONY declaration.*verify"
       },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
+    },
+    {
+      "name": "order-only-prerequisite",
+      "title": "A missing order-only input stops the build",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "input.txt": "input"
+      },
+      "working_files": {},
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "probe: | missing.txt\n\t@echo built\n",
+      "working": "probe: | input.txt\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "generated-prerequisite",
+      "title": "A generated input needs a declared producer",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {},
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "probe: generated.txt\n\t@echo built\n",
+      "working": "probe: generated.txt\n\t@echo built\ngenerated.txt:\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "vpath-prerequisite",
+      "title": "Search directories contain the input or leave it missing",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "sources/input.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "VPATH := sources\nprobe: input.txt\n\t@echo built\n",
+      "working": "VPATH := sources\nprobe: input.txt\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "builtin-prerequisite",
+      "title": "A built-in compiler rule needs a source file",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "input.c": "int value;\n"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": true,
+      "broken": "probe: input.o\n\t@echo built\n",
+      "working": "probe: input.o\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "pattern-prerequisite",
+      "title": "An implicit rule cannot use a nonexistent source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "output.src": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "probe: output.dat\n\t@echo built\n%.dat: %.src\n\t@echo generated\n",
+      "working": "probe: output.dat\n\t@echo built\n%.dat: %.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
+    },
+    {
+      "name": "dynamic-prerequisite",
+      "title": "A shell-generated prerequisite can still name a missing file",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "input.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "INPUT := $(shell printf input.txt)\nprobe: $(INPUT)\n\t@echo built\n",
+      "working": "INPUT := $(shell printf input.txt)\nprobe: $(INPUT)\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
+    },
+    {
+      "name": "selective-vpath-prerequisite",
+      "title": "Selective vpath may or may not locate the input",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "sources/input.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "builtin_rules": false,
+      "broken": "vpath %.txt sources\nprobe: input.txt\n\t@echo built\n",
+      "working": "vpath %.txt sources\nprobe: input.txt\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": false
     }

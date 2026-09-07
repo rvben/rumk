@@ -1,7 +1,7 @@
 # Behavior-verified linter benchmark
 
-`scripts/semantic-benchmark.py` measures ten pairs of authored broken and working
-Makefiles. Labels describe observable GNU Make behavior before examining linter
+`scripts/semantic-benchmark.py` measures seventeen pairs of authored broken and
+working Makefiles. Labels describe observable GNU Make behavior before examining linter
 output: overwritten recipes, discarded cycles, missing prerequisites, recursive
 dry runs, lost directories, ignored failures, early expansion, invalid indentation,
 and two same-named-file collisions. The manifest contains both source variants,
@@ -27,11 +27,14 @@ with a restricted environment and a timeout. Fixtures are trusted executable
 test code: review source changes accordingly. Do not add destructive recipes,
 network calls, uncontrolled Make functions, or recursive include loops.
 
-All cases use Rumk defaults plus opt-in MK208, with an explicit configuration.
+All cases use Rumk defaults plus opt-in MK208 and MK216, with an explicit
+configuration.
 Checkmake has an empty required-target list; unmake uses static checks, never
 dry-run validation; mbake uses `format --check`, never `--validate`. The GNU
-fixtures are not a test of POSIX compliance. Make runs with `-rR`, so these probes
-do not establish built-in implicit-rule coverage.
+fixtures are not a test of POSIX compliance. Make runs with `-rR` except for the
+explicitly labeled built-in compiler pair,
+which enables built-ins and uses `-n` to inspect commands without compiling.
+This exercises one built-in family, not the complete implicit-rule catalogue.
 
 ## Reading results
 
@@ -65,10 +68,11 @@ For explicit project intent, run a separate measurement with
 **every** Rumk case. Report that profile separately from the default-name score;
 it is not automatic detection of arbitrary command intent.
 
-Ordinary missing prerequisites remain outside the current rule set. A correct
-general check must account for built-in and user implicit rules, generated files,
-search paths, and dynamic graphs. The benchmark keeps this miss visible rather
-than expanding the required-include rule beyond its contract.
+MK216 now covers simple missing prerequisites, generated declarations, static
+VPATH, and absent built-in compiler inputs. It remains opt-in. User-pattern,
+dynamic-expression, and selective-vpath defects remain deliberately uncovered
+in the manifest; see [its boundaries](mk216.md). The seven added pairs change
+the denominator, so compare the original ten separately when assessing progress.
 
 Run the offline regression gate with `make check-semantic` (GNU Make and Python
 3.9+). CI runs these tests along with the existing auditor tests. Generated HTML

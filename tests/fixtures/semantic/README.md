@@ -14,8 +14,9 @@ the raw diagnostic and both variants.
 
 The duplicate-recipe control intentionally repeats a target with just one
 recipe, which GNU Make accepts. The custom command uses a real same-named file;
-it needs declared project intent for Rumk to recommend `.PHONY`. The prerequisite
-typo deliberately remains uncovered.
+it needs declared project intent for Rumk to recommend `.PHONY`. The simple prerequisite typo is covered by opt-in MK216. Added pairs retain
+misses behind user patterns, dynamic expressions, and selective vpath. The
+built-in compiler pair runs GNU Make with built-ins enabled under `-n`.
 
 Keep recipes harmless and deterministic. Review fixture changes like executable
 code. See [methodology](../../../docs/semantic-benchmark.md) for scoring, tool

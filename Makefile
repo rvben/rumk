@@ -56,6 +56,7 @@ check-comparison:
 
 check-semantic:
 	$(CARGO) build --bin rumk
+	$(CARGO) test --test missing_prerequisite_test
 	python3 -m unittest discover -s scripts -p 'test_semantic_benchmark.py'
 
 check-corpus:

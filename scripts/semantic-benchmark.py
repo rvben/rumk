@@ -41,6 +41,8 @@ def invoke(command, directory, timeout=20):
 
 def populate(directory, case, variant, command_targets=()):
     files = dict(case["files"], Makefile=case[variant])
+    if variant == "working":
+        files.update(case.get("working_files", {}))
     files.update({"bake.toml": "[formatter]\n", "checkmake.ini": "[minphony]\nrequired =\n"})
     files["rumk.toml"] = '[MK201]\ncommand-targets = ' + json.dumps(list(command_targets)) + '\n'
     for name, content in files.items():
@@ -66,7 +68,7 @@ def contract_matches(result, contract):
 
 
 def oracle(make, directory, case):
-    return invoke([make, "--no-print-directory", "-rR", "-f", "Makefile",
+    return invoke([make, "--no-print-directory", *([] if case.get("builtin_rules") else ["-rR"]), "-f", "Makefile",
                    "MAKE=" + make, *case["args"]], directory)
 
 
@@ -86,8 +88,8 @@ def diagnostic_match(tool, result, case):
 
 def commands(tool, binary):
     return {
-        # A single profile for every case; MK208 is the only added opt-in rule.
-        "rumk": [binary, "--config", "rumk.toml", "check", "--extend-enable", "MK208",
+        # A single profile for every case; MK208 and MK216 are added opt-in rules.
+        "rumk": [binary, "--config", "rumk.toml", "check", "--extend-enable", "MK208,MK216",
                  "--output-format", "json", "Makefile"],
         "checkmake": [binary, "--config", "checkmake.ini", "--output", "json", "Makefile"],
         "unmake": [binary, "Makefile"],
@@ -141,7 +143,7 @@ def benchmark(binaries, make, runs, command_targets=()):
               "gnu_make": identity(make), "results": [], "failures": [],
               "command_targets": list(command_targets),
               "skipped": sorted(set(COMPARE.PINS) - set(binaries)),
-              "method": "Authored paired GNU defects; one fixed rumk defaults+MK208 profile. Named-defect matching only; unmatched warnings are unscored. No population precision/recall or overall ranking. Checkmake has no required-target policy. Timings include startup; alternating order; fresh copies; warm cache. Fixes use default safe mode (mbake: formatter). Executable hashes do not pin interpreter dependencies."}
+              "method": "Authored paired GNU defects; one fixed rumk defaults+MK208+MK216 profile. Named-defect matching only; unmatched warnings are unscored. No population precision/recall or overall ranking. Checkmake has no required-target policy. Timings include startup; alternating order; fresh copies; warm cache. Fixes use default safe mode (mbake: formatter). Executable hashes do not pin interpreter dependencies."}
     if "GNU Make" not in report["gnu_make"]["version"]:
         raise ValueError("The semantic oracle requires GNU Make")
     for tool, pin in COMPARE.PINS.items():
