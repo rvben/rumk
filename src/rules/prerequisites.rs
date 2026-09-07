@@ -1,6 +1,6 @@
 //! A deliberately incomplete proof of missing ordinary prerequisites.
 //! Unknown build mechanisms cost coverage, never an invented error.
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::{Diagnostic, Severity};
@@ -32,28 +32,48 @@ impl Rule for MissingPrerequisite {
         Vec::new()
     }
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
-        let index = project.analysis();
-        let root = &project.file(project.root()).path;
-        if !matches!(
-            root.file_name().and_then(|name| name.to_str()),
-            Some("Makefile" | "makefile" | "GNUmakefile")
-        ) || index.has_structural_issues()
-            || incomplete(project)
-        {
-            return Vec::new();
-        }
-        // The CLI may supply the bare relative path "Makefile". Its parent is
-        // the empty path, which joins files correctly but read_dir rejects.
-        let mut directories = vec![project.working_directory().join(".")];
-        match project.evaluation().expand("$(VPATH)").value {
-            Some(value) => {
-                // Drive letters and escaped separators need platform-specific parsing.
-                if value.contains(['\\', ';'])
-                    || value.contains(":/")
-                    || (cfg!(windows) && value.contains(':'))
-                {
-                    return Vec::new();
-                }
+        analyze(project, None)
+    }
+}
+
+/// Read-only MK216 coverage, independent of whether the rule is enabled.
+/// Edges are the evaluated semantic inventory, not every possible runtime edge.
+#[derive(Debug, Default, serde::Serialize)]
+pub struct Coverage {
+    pub root_blockers: BTreeMap<&'static str, usize>,
+    pub outcomes: BTreeMap<&'static str, usize>,
+    pub edges: Vec<CoverageEdge>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CoverageEdge {
+    pub target: String,
+    pub prerequisite: String,
+    pub source: PathBuf,
+    pub line: usize,
+    pub order_only: bool,
+    pub outcome: &'static str,
+}
+
+/// Uses exactly the same decisions as the diagnostic rule; never executes Make.
+pub fn coverage(project: &Project) -> Coverage {
+    let mut coverage = Coverage::default();
+    analyze(project, Some(&mut coverage));
+    coverage
+}
+
+fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagnostic> {
+    let index = project.analysis();
+    let mut blockers = root_blockers(project);
+    let mut directories = vec![project.working_directory().join(".")];
+    match project.evaluation().expand("$(VPATH)").value {
+        Some(value) => {
+            if value.contains(['\\', ';'])
+                || value.contains(":/")
+                || (cfg!(windows) && value.contains(':'))
+            {
+                *blockers.entry("unsupported_vpath").or_default() += 1;
+            } else {
                 directories.extend(
                     value
                         .split(|c: char| c == ':' || c.is_whitespace())
@@ -61,59 +81,115 @@ impl Rule for MissingPrerequisite {
                         .map(|part| project.working_directory().join(part)),
                 );
             }
-            None if index.variables.contains_key("VPATH") => return Vec::new(),
-            None => {}
         }
-        let mut seen = BTreeSet::new();
-        let mut diagnostics = Vec::new();
-        for target in index
-            .targets
-            .values()
-            .filter(|target| !target.special && !target.name.contains('%'))
-        {
-            for edge in &target.dependencies {
-                let name = normalized(&edge.prerequisite);
-                if !index.is_definitely_active(edge.location)
-                    || !literal(name)
-                    || index.targets.keys().any(|key| normalized(key) == name)
-                    || directories
-                        .iter()
-                        .any(|directory| may_exist(&directory.join(name)))
-                    || plausible_implicit_input(project, name, &directories)
-                    || possible_pattern_producer(project, name, &directories)
-                    || !seen.insert((edge.location, name.to_string()))
-                {
-                    continue;
-                }
-                diagnostics.push(Diagnostic::new(self.id(), Severity::Warning,
+        None if index.variables.contains_key("VPATH") => {
+            *blockers.entry("unresolved_vpath").or_default() += 1;
+        }
+        None => {}
+    }
+    if coverage.is_none() && !blockers.is_empty() {
+        return Vec::new();
+    }
+    let mut seen = BTreeSet::new();
+    let mut diagnostics = Vec::new();
+    for target in index.targets.values() {
+        for edge in &target.dependencies {
+            let name = normalized(&edge.prerequisite);
+            let outcome = if target.special {
+                "special_target"
+            } else if target.name.contains('%') {
+                "pattern_declaration"
+            } else if !blockers.is_empty() {
+                "root_excluded"
+            } else if !index.is_definitely_active(edge.location) {
+                "inactive_or_unknown_edge"
+            } else if !literal(name) {
+                "unsupported_name"
+            } else if index.targets.keys().any(|key| normalized(key) == name) {
+                "declared_target"
+            } else if directories
+                .iter()
+                .any(|directory| may_exist(&directory.join(name)))
+            {
+                "file_or_io_uncertainty"
+            } else if plausible_implicit_input(project, name, &directories) {
+                "possible_builtin_input"
+            } else if possible_pattern_producer(project, name, &directories) {
+                "possible_pattern_producer"
+            } else if !seen.insert((edge.location, name.to_string())) {
+                "duplicate_finding"
+            } else {
+                "missing"
+            };
+            if let Some(report) = coverage.as_deref_mut() {
+                *report.outcomes.entry(outcome).or_default() += 1;
+                report.edges.push(CoverageEdge {
+                    target: target.name.clone(),
+                    prerequisite: name.into(),
+                    source: project.file(edge.location.source).path.clone(),
+                    line: edge.location.line,
+                    order_only: edge.order_only,
+                    outcome,
+                });
+            }
+            if outcome == "missing" {
+                diagnostics.push(Diagnostic::new("MK216", Severity::Warning,
                     format!("Prerequisite '{name}' of target '{}' was not found and has no usable visible build rule", target.name),
                     edge.location.line, edge.location.column)
                     .with_source(project.file(edge.location.source).path.clone()));
             }
         }
-        diagnostics
     }
+    if let Some(report) = coverage {
+        report.root_blockers = blockers;
+    }
+    diagnostics
 }
 
-fn incomplete(project: &Project) -> bool {
-    if project.edges().iter().any(|edge| {
-        !matches!(
-            edge.resolution,
-            IncludeResolution::Resolved(_) | IncludeResolution::Inactive
-        )
-    }) {
-        return true;
+// Count all independent exclusions, rather than only the first early return.
+// Counts are occurrences; a root can have several blockers simultaneously.
+fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
+    let mut reasons = BTreeMap::new();
+    let mut add = |reason| *reasons.entry(reason).or_default() += 1;
+    if !matches!(
+        project
+            .file(project.root())
+            .path
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("Makefile" | "makefile" | "GNUmakefile")
+    ) {
+        add("fragment_root");
     }
     let index = project.analysis();
-    if index.targets.iter().any(|(name, symbol)| {
-        matches!(name.as_str(), ".DEFAULT" | ".SECONDEXPANSION")
-            || (name.starts_with('.') && !name.contains('%') && name[1..].contains('.'))
-            || symbol
-                .declarations
-                .iter()
-                .any(|declaration| declaration.target_pattern.is_some())
-    }) {
-        return true;
+    if index.has_structural_issues() {
+        add("structural_issues");
+    }
+    for edge in project.edges() {
+        if !matches!(
+            edge.resolution,
+            IncludeResolution::Resolved(_) | IncludeResolution::Inactive
+        ) {
+            add("unresolved_include");
+        }
+    }
+    for (name, symbol) in &index.targets {
+        if name == ".DEFAULT" {
+            add("default_recipe");
+        }
+        if name == ".SECONDEXPANSION" {
+            add("secondary_expansion");
+        }
+        if name.starts_with('.') && !name.contains('%') && name[1..].contains('.') {
+            add("suffix_rule");
+        }
+        if symbol
+            .declarations
+            .iter()
+            .any(|declaration| declaration.target_pattern.is_some())
+        {
+            add("static_pattern_rule");
+        }
     }
     for file in project.files() {
         for statement in file.makefile.logical.statements() {
@@ -122,23 +198,33 @@ fn incomplete(project: &Project) -> bool {
                 continue;
             }
             if activity == Truth::Unknown {
-                return true;
+                add("unknown_activity");
             }
             let text = statement.text().trim_start();
-            if matches!(statement.kind, LogicalKind::Unknown)
-                || text.split_whitespace().next() == Some("vpath")
-                || text.contains("$(eval")
-                || text.contains("${eval")
-                || text.contains("$(shell")
-                || text.contains("${shell")
-                || text.contains("$(file")
-                || text.contains("${file")
-                || (statement.kind == LogicalKind::Assignment && text.contains("!="))
-                || (statement.kind == LogicalKind::Assignment
-                    && text.contains('$')
-                    && project.evaluation().expand(text).value.is_none())
-            {
-                return true;
+            if matches!(statement.kind, LogicalKind::Unknown) {
+                add("opaque_syntax");
+            }
+            if text.split_whitespace().next() == Some("vpath") {
+                add("selective_vpath");
+            }
+            for (function, reason) in [
+                ("eval", "eval_function"),
+                ("shell", "shell_function"),
+                ("file", "file_function"),
+            ] {
+                if text.contains(&format!("$({function}"))
+                    || text.contains(&format!("${{{function}"))
+                {
+                    add(reason);
+                }
+            }
+            if statement.kind == LogicalKind::Assignment {
+                if text.contains("!=") {
+                    add("shell_assignment");
+                }
+                if text.contains('$') && project.evaluation().expand(text).value.is_none() {
+                    add("unresolved_assignment");
+                }
             }
             if statement.kind == LogicalKind::Rule {
                 let rules = project.evaluation().rules(file.id, statement.start_line);
@@ -151,12 +237,12 @@ fn incomplete(project: &Project) -> bool {
                             .any(|name| name.contains('$'))
                     })
                 {
-                    return true;
+                    add("unresolved_rule");
                 }
             }
         }
     }
-    false
+    reasons
 }
 
 // Bound declaration and prerequisite work per checked edge. Exhaustion is

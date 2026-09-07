@@ -54,7 +54,7 @@ jobs:
 
       - name: Verify corpus audits and GNU behavior benchmark
         run: |
-          cargo build --locked --bin rumk
+          cargo build --locked --bin rumk --example prerequisite-coverage
           python3 -m unittest discover -s scripts -p 'test_*.py'
 
   test:
