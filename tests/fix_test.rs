@@ -77,3 +77,47 @@ fn edit_columns_are_character_based_for_utf8_input() {
 
     assert_eq!(apply_fixes(content, &[diagnostic]).content, "éy\n");
 }
+
+#[test]
+fn edits_preserve_gaps_and_order_insertions_at_shared_boundaries() {
+    let content = "éx\r\nkeep\r\nlast";
+    let edits = [
+        Edit::new(1, 2, 1, 3, "longer"),
+        Edit::new(1, 2, 1, 2, "first"),
+        Edit::new(1, 2, 1, 2, "second"),
+        Edit::new(3, 1, 3, 5, ""),
+        Edit::new(3, 5, 3, 5, "end"),
+    ];
+    let diagnostics: Vec<_> = edits
+        .into_iter()
+        .map(|edit| {
+            Diagnostic::new("TEST", Severity::Warning, "edit", 1, 1)
+                .with_fix(Fix::new("edit").add_edit(edit))
+        })
+        .collect();
+    let applied = apply_fixes(content, &diagnostics);
+    assert_eq!(applied.content, "ésecondfirstlonger\r\nkeep\r\nend");
+    assert_eq!(applied.fixed, [0, 1, 2, 3, 4]);
+}
+
+#[test]
+fn edit_positions_handle_eof_and_reject_invalid_ranges() {
+    use rumk::fix::edit_byte_range;
+
+    for (content, edit, expected) in [
+        ("", Edit::new(1, 1, 1, 1, "x"), Some((0, 0))),
+        ("é\r\n", Edit::new(1, 2, 2, 1, ""), Some((2, 4))),
+        ("a\n", Edit::new(2, 1, 2, 1, "x"), Some((2, 2))),
+        ("a", Edit::new(1, 99, 1, 100, "x"), Some((1, 1))),
+        ("a", Edit::new(0, 1, 1, 1, ""), None),
+        ("a", Edit::new(1, 0, 1, 1, ""), None),
+        ("a", Edit::new(1, 1, 2, 1, ""), None),
+        ("a", Edit::new(1, 2, 1, 1, ""), None),
+    ] {
+        assert_eq!(
+            edit_byte_range(content, &edit),
+            expected,
+            "{content:?}: {edit:?}"
+        );
+    }
+}

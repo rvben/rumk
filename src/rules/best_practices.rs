@@ -366,7 +366,7 @@ fn phony_declarations(makefile: &Makefile) -> Vec<PhonyDeclaration> {
         .filter(|statement| statement.kind == LogicalKind::Rule)
         .filter(|statement| {
             !makefile
-                .analysis()
+                .conditional_analysis()
                 .is_conditional_line(statement.start_line)
         })
         .filter_map(|statement| {
@@ -732,6 +732,9 @@ impl Rule for DuplicateRecipe {
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        if makefile.rules.is_empty() {
+            return Vec::new();
+        }
         let index = makefile.analysis();
         if !index.structural_issues.is_empty() {
             return Vec::new();
@@ -815,6 +818,9 @@ impl Rule for DependencyCycle {
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        if makefile.rules.is_empty() {
+            return Vec::new();
+        }
         let index = makefile.analysis();
         index
             .dependency_cycles()

@@ -127,7 +127,9 @@ impl SemanticIndex {
         index.index_variables(makefile);
         index.index_targets(makefile);
         index.index_includes(makefile);
-        index.index_conditionals(makefile);
+        let conditionals = makefile.conditional_analysis();
+        index.conditional_blocks = conditionals.conditional_blocks.clone();
+        index.structural_issues = conditionals.structural_issues.clone();
         index.references = extract_references(makefile);
         index
     }
@@ -283,89 +285,6 @@ impl SemanticIndex {
                     },
                 }));
         }
-    }
-
-    fn index_conditionals(&mut self, makefile: &Makefile) {
-        #[derive(Debug)]
-        struct OpenBlock {
-            kind: ConditionalKind,
-            line: usize,
-            branch_lines: Vec<usize>,
-            else_line: Option<usize>,
-        }
-
-        let mut stack: Vec<OpenBlock> = Vec::new();
-        for conditional in &makefile.conditionals {
-            match conditional.kind {
-                kind @ (ConditionalKind::Ifdef
-                | ConditionalKind::Ifndef
-                | ConditionalKind::Ifeq
-                | ConditionalKind::Ifneq) => stack.push(OpenBlock {
-                    kind,
-                    line: conditional.line,
-                    branch_lines: Vec::new(),
-                    else_line: None,
-                }),
-                ConditionalKind::Else => match stack.last_mut() {
-                    Some(block)
-                        if block.else_line.is_none()
-                            && is_else_if_expression(&conditional.expression) =>
-                    {
-                        block.branch_lines.push(conditional.line);
-                    }
-                    Some(block) if block.else_line.is_none() => {
-                        block.branch_lines.push(conditional.line);
-                        block.else_line = Some(conditional.line);
-                    }
-                    Some(_) => self.structural_issues.push(StructuralIssue {
-                        kind: StructuralIssueKind::DuplicateElse,
-                        location: Location {
-                            line: conditional.line,
-                            column: 1,
-                        },
-                    }),
-                    None => self.structural_issues.push(StructuralIssue {
-                        kind: StructuralIssueKind::UnexpectedElse,
-                        location: Location {
-                            line: conditional.line,
-                            column: 1,
-                        },
-                    }),
-                },
-                ConditionalKind::Endif => {
-                    if let Some(block) = stack.pop() {
-                        self.conditional_blocks.push(ConditionalBlock {
-                            kind: block.kind,
-                            start_line: block.line,
-                            branch_lines: block.branch_lines,
-                            else_line: block.else_line,
-                            end_line: conditional.end_line,
-                        });
-                    } else {
-                        self.structural_issues.push(StructuralIssue {
-                            kind: StructuralIssueKind::UnexpectedEndif,
-                            location: Location {
-                                line: conditional.line,
-                                column: 1,
-                            },
-                        });
-                    }
-                }
-            }
-        }
-
-        for block in stack {
-            self.structural_issues.push(StructuralIssue {
-                kind: StructuralIssueKind::UnterminatedConditional,
-                location: Location {
-                    line: block.line,
-                    column: 1,
-                },
-            });
-        }
-        self.conditional_blocks
-            .sort_by_key(|block| block.start_line);
-        self.structural_issues.sort_by_key(|issue| issue.location);
     }
 }
 
@@ -669,5 +588,105 @@ impl<'a> LineIndex<'a> {
             line: line_index + 1,
             column: self.source[self.starts[line_index]..offset].chars().count() + 1,
         }
+    }
+}
+
+/// Conditional structure, independent of variable and target analysis.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConditionalIndex {
+    pub conditional_blocks: Vec<ConditionalBlock>,
+    pub structural_issues: Vec<StructuralIssue>,
+}
+
+impl ConditionalIndex {
+    pub fn is_conditional_line(&self, line: usize) -> bool {
+        self.conditional_blocks
+            .iter()
+            .any(|block| block.start_line < line && line < block.end_line)
+    }
+    pub(crate) fn build(makefile: &Makefile) -> Self {
+        let mut index = Self::default();
+        #[derive(Debug)]
+        struct OpenBlock {
+            kind: ConditionalKind,
+            line: usize,
+            branch_lines: Vec<usize>,
+            else_line: Option<usize>,
+        }
+
+        let mut stack: Vec<OpenBlock> = Vec::new();
+        for conditional in &makefile.conditionals {
+            match conditional.kind {
+                kind @ (ConditionalKind::Ifdef
+                | ConditionalKind::Ifndef
+                | ConditionalKind::Ifeq
+                | ConditionalKind::Ifneq) => stack.push(OpenBlock {
+                    kind,
+                    line: conditional.line,
+                    branch_lines: Vec::new(),
+                    else_line: None,
+                }),
+                ConditionalKind::Else => match stack.last_mut() {
+                    Some(block)
+                        if block.else_line.is_none()
+                            && is_else_if_expression(&conditional.expression) =>
+                    {
+                        block.branch_lines.push(conditional.line);
+                    }
+                    Some(block) if block.else_line.is_none() => {
+                        block.branch_lines.push(conditional.line);
+                        block.else_line = Some(conditional.line);
+                    }
+                    Some(_) => index.structural_issues.push(StructuralIssue {
+                        kind: StructuralIssueKind::DuplicateElse,
+                        location: Location {
+                            line: conditional.line,
+                            column: 1,
+                        },
+                    }),
+                    None => index.structural_issues.push(StructuralIssue {
+                        kind: StructuralIssueKind::UnexpectedElse,
+                        location: Location {
+                            line: conditional.line,
+                            column: 1,
+                        },
+                    }),
+                },
+                ConditionalKind::Endif => {
+                    if let Some(block) = stack.pop() {
+                        index.conditional_blocks.push(ConditionalBlock {
+                            kind: block.kind,
+                            start_line: block.line,
+                            branch_lines: block.branch_lines,
+                            else_line: block.else_line,
+                            end_line: conditional.end_line,
+                        });
+                    } else {
+                        index.structural_issues.push(StructuralIssue {
+                            kind: StructuralIssueKind::UnexpectedEndif,
+                            location: Location {
+                                line: conditional.line,
+                                column: 1,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+
+        for block in stack {
+            index.structural_issues.push(StructuralIssue {
+                kind: StructuralIssueKind::UnterminatedConditional,
+                location: Location {
+                    line: block.line,
+                    column: 1,
+                },
+            });
+        }
+        index
+            .conditional_blocks
+            .sort_by_key(|block| block.start_line);
+        index.structural_issues.sort_by_key(|issue| issue.location);
+        index
     }
 }

@@ -182,8 +182,17 @@ impl Project {
         content: String,
         options: &ProjectOptions,
     ) -> Result<Self> {
-        let path = canonical_or_normalized(path)?;
         let makefile = parser::parse(&content);
+        Self::load_with_root_makefile(path, content, makefile, options)
+    }
+
+    pub(crate) fn load_with_root_makefile(
+        path: &Path,
+        content: String,
+        makefile: Makefile,
+        options: &ProjectOptions,
+    ) -> Result<Self> {
+        let path = canonical_or_normalized(path)?;
         let working_directory = options
             .working_directory
             .clone()

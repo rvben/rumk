@@ -3,7 +3,7 @@ use std::fmt;
 use std::ops::Range;
 use std::sync::OnceLock;
 
-use crate::analysis::SemanticIndex;
+use crate::analysis::{ConditionalIndex, SemanticIndex};
 use crate::binding::value_expands_later;
 use crate::expansion::{contains_reference, find_unterminated_reference, CommentHandling};
 use crate::logical::{
@@ -33,6 +33,7 @@ pub struct Makefile {
     /// The rest of the model is still built around them.
     pub syntax_errors: Vec<SyntaxError>,
     analysis: OnceLock<SemanticIndex>,
+    conditional_analysis: OnceLock<ConditionalIndex>,
 }
 
 #[derive(Debug, Clone)]
@@ -265,6 +266,12 @@ pub fn parse(content: &str) -> Makefile {
 }
 
 impl Makefile {
+    /// Returns conditional structure without building the variable and target indexes.
+    pub fn conditional_analysis(&self) -> &ConditionalIndex {
+        self.conditional_analysis
+            .get_or_init(|| ConditionalIndex::build(self))
+    }
+
     /// Returns the semantic index, building it once on first use.
     pub fn analysis(&self) -> &SemanticIndex {
         self.analysis.get_or_init(|| SemanticIndex::build(self))
@@ -301,6 +308,7 @@ impl Parser {
                 oneshell: false,
                 syntax_errors: Vec::new(),
                 analysis: OnceLock::new(),
+                conditional_analysis: OnceLock::new(),
             },
             last_rule: None,
             reach: Reach::Always,

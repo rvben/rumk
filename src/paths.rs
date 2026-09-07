@@ -1,24 +1,42 @@
 //! Paths as the reader of a diagnostic sees them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// How a path reads beside the directory Rumk was run from. A file inside that
-/// directory is named the way the reader would type it, and one outside it
-/// keeps the name it has. Every path Rumk prints goes through here, so the file
-/// a message points at and the file it names inside its own text read alike.
+/// Formats resolved paths relative to one invocation's working directory.
+/// Keeping this state local also supports library callers that change directories.
+pub struct PathDisplay {
+    current_dir: Option<PathBuf>,
+}
+
+impl Default for PathDisplay {
+    fn default() -> Self {
+        Self {
+            current_dir: std::env::current_dir()
+                .ok()
+                .and_then(|path| dunce::canonicalize(path).ok()),
+        }
+    }
+}
+
+impl PathDisplay {
+    /// `path` is already resolved, or the original path if resolution failed.
+    pub fn resolved(&self, path: &Path) -> String {
+        let relative = self
+            .current_dir
+            .as_deref()
+            .and_then(|current_dir| path.strip_prefix(current_dir).ok())
+            .unwrap_or(path);
+        relative
+            .strip_prefix(".")
+            .unwrap_or(relative)
+            .display()
+            .to_string()
+    }
+}
+
+/// Resolves and formats a path for callers without an existing file identity.
 pub fn display_path(path: &Path) -> String {
-    let current_dir = std::env::current_dir()
-        .ok()
-        .and_then(|path| dunce::canonicalize(path).ok());
-    let canonical_path = dunce::canonicalize(path).ok();
-    let comparable_path = canonical_path.as_deref().unwrap_or(path);
-    let relative = current_dir
-        .as_deref()
-        .and_then(|current_dir| comparable_path.strip_prefix(current_dir).ok())
-        .unwrap_or(comparable_path);
-    relative
-        .strip_prefix(".")
-        .unwrap_or(relative)
-        .display()
-        .to_string()
+    let display = PathDisplay::default();
+    let canonical = dunce::canonicalize(path).ok();
+    display.resolved(canonical.as_deref().unwrap_or(path))
 }

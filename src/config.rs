@@ -213,6 +213,9 @@ impl Config {
     }
 
     pub fn is_path_ignored(&self, path: &Path) -> bool {
+        if self.global.include.is_empty() && self.global.exclude.is_empty() {
+            return false;
+        }
         let normalized = self.relative_to_project(path);
         if !self.global.include.is_empty()
             && !self
@@ -231,6 +234,9 @@ impl Config {
     }
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
+        if self.global.exclude.is_empty() {
+            return false;
+        }
         let normalized = self.relative_to_project(path);
         self.global
             .exclude
@@ -242,6 +248,9 @@ impl Config {
     /// a directory Rumk cannot read is judged by: `vendor/**` says every file
     /// under it is excluded, while `vendor` excludes only that one path.
     pub fn excludes_everything_below(&self, path: &Path) -> bool {
+        if self.global.exclude.is_empty() {
+            return false;
+        }
         let normalized = self.relative_to_project(path);
         self.global.exclude.iter().any(|pattern| {
             pattern
@@ -273,9 +282,13 @@ impl Config {
     }
 
     pub fn is_rule_ignored_for_path(&self, path: &Path, rule_id: &str) -> bool {
-        let relative = self.relative_to_project(path);
+        let mut relative = None;
         self.per_file_ignores.iter().any(|(pattern, rules)| {
-            glob_matches(pattern, &relative) && rules.iter().any(|rule| rule == rule_id)
+            rules.iter().any(|rule| rule == rule_id)
+                && glob_matches(
+                    pattern,
+                    relative.get_or_insert_with(|| self.relative_to_project(path)),
+                )
         })
     }
 
@@ -474,16 +487,15 @@ impl Config {
         let config_root = self.project_root();
         let current_dir = std::env::current_dir().ok();
         let root = config_root.or(current_dir.as_deref());
+        if let Some(relative) = root.and_then(|root| path.strip_prefix(root).ok()) {
+            return normalize_path(relative);
+        }
         let canonical_path = dunce::canonicalize(path).ok();
         let canonical_root = root.and_then(|root| dunce::canonicalize(root).ok());
-        let relative = root
-            .and_then(|root| path.strip_prefix(root).ok())
-            .or_else(|| {
-                canonical_path
-                    .as_deref()?
-                    .strip_prefix(canonical_root.as_deref()?)
-                    .ok()
-            })
+        let relative = canonical_path
+            .as_deref()
+            .zip(canonical_root.as_deref())
+            .and_then(|(path, root)| path.strip_prefix(root).ok())
             .unwrap_or(path);
         normalize_path(relative)
     }

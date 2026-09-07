@@ -34,6 +34,9 @@ impl Rule for MixedTargetSeparators {
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
+        if makefile.rules.is_empty() {
+            return Vec::new();
+        }
         let index = makefile.analysis();
         if !index.structural_issues.is_empty() {
             return Vec::new();

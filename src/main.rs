@@ -5,12 +5,12 @@ use ignore::WalkBuilder;
 use rumk::config::Config;
 use rumk::diagnostic::{Applicability, Diagnostic, Severity};
 use rumk::lint::{self, LintContext};
-use rumk::paths::display_path;
+use rumk::paths::{display_path, PathDisplay};
 use rumk::project::Project;
 use rumk::{fix, inline_config, rules, source};
 use serde::Serialize;
 use similar::TextDiff;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -509,22 +509,31 @@ fn run_files(
     if project_roots.is_empty() && files.len() == 1 {
         project_roots.insert(files[0].clone());
     }
+    let files: BTreeMap<_, _> = files
+        .into_iter()
+        .map(|path| {
+            let resolved = path_identity(&path);
+            (path, resolved)
+        })
+        .collect();
+    let covered_files = files.values().cloned().collect();
+    let display = PathDisplay::default();
     let mut included_files = BTreeSet::new();
-    // Which files a Makefile includes decides only which pass reports the
-    // project-aware rules, and formatting runs none of them, so it does not
-    // read the include graph to find out.
+    let mut root_reports = BTreeMap::new();
     if !operation.formats() && config.rules.iter().any(|rule| rule.project_aware()) {
         for root in &project_roots {
-            // A root that cannot be read is reported when the file itself is
-            // processed; it just contributes no included files here. A root
-            // that is only invalid UTF-8 is loaded from the same lossy decode
-            // that lints it, so the files it includes stay contextual.
-            let Ok(source) = read_makefile(root) else {
+            let resolved = files
+                .get(root)
+                .cloned()
+                .unwrap_or_else(|| path_identity(root));
+            let Ok(source) = read_makefile(&resolved) else {
                 continue;
             };
-            let Ok(project) =
-                Project::load_with_root_content(root, source.text, &config.project_options(root))
-            else {
+            let Ok(project) = Project::load_with_root_content(
+                root,
+                source.text.clone(),
+                &config.project_options(root),
+            ) else {
                 continue;
             };
             included_files.extend(
@@ -534,26 +543,47 @@ fn run_files(
                     .filter(|file| file.id != project.root())
                     .map(|file| file.path.clone()),
             );
+            // Checks can finish each root now and release its parsed graph.
+            // Fixes retain file order and reload after earlier files may change.
+            if matches!(operation, Operation::Check) && files.contains_key(root) {
+                let context = LintContext {
+                    config,
+                    path: root,
+                    project_root: true,
+                    contextual: true,
+                    layout_only: false,
+                    covered_files: &covered_files,
+                };
+                let report = process_file(
+                    &context,
+                    operation,
+                    &resolved,
+                    Some((source, project)),
+                    args.silent,
+                    &display,
+                )?;
+                root_reports.insert(root.clone(), report);
+            }
         }
     }
-    let covered_files = files.iter().map(|path| path_identity(path)).collect();
-    let mut reports = files
-        .iter()
-        .filter_map(|path| {
+    let mut reports = Vec::new();
+    for (path, resolved) in &files {
+        let report = if let Some(report) = root_reports.remove(path) {
+            report
+        } else {
             let project_root = project_roots.contains(path);
-            let contextual = project_root || included_files.contains(&path_identity(path));
-            process_file(
-                path,
+            let context = LintContext {
                 config,
-                operation,
+                path,
                 project_root,
-                contextual,
-                &covered_files,
-                args.silent,
-            )
-            .transpose()
-        })
-        .collect::<Result<Vec<_>>>()?;
+                contextual: project_root || included_files.contains(resolved),
+                layout_only: operation.formats(),
+                covered_files: &covered_files,
+            };
+            process_file(&context, operation, resolved, None, args.silent, &display)?
+        };
+        reports.extend(report);
+    }
     reports.extend(unreadable_paths.into_iter().filter_map(|(path, error)| {
         let message = error.to_string();
         let failure = rules::ReadFailure::Unreadable {
@@ -751,24 +781,25 @@ fn error_path(error: &ignore::Error) -> Option<PathBuf> {
 }
 
 fn process_file(
-    path: &Path,
-    config: &Config,
+    context: &LintContext<'_>,
     operation: Operation,
-    project_root: bool,
-    contextual: bool,
-    covered_files: &BTreeSet<PathBuf>,
+    resolved: &Path,
+    prepared: Option<(MakefileSource, Project)>,
     silent: bool,
+    display: &PathDisplay,
 ) -> Result<Option<FileReport>> {
-    // A symlink names the file to read and to rewrite, so the link is followed
-    // once: the read and the write address the same file even if the link is
-    // pointed elsewhere in between, and a rewrite replaces the file rather than
-    // the link that names it.
-    let resolved = path_identity(path);
+    let path = context.path;
+    let config = context.config;
+    // Read and write the same resolved path, including when the argument is a symlink.
+    let (source, project) = match prepared {
+        Some((source, project)) => (Ok(source), Some(project)),
+        None => (read_makefile(resolved), None),
+    };
     let MakefileSource {
         text: original,
         byte_order_mark,
         failure,
-    } = match read_makefile(&resolved) {
+    } = match source {
         Ok(source) => source,
         Err(error) => {
             let message = error.to_string();
@@ -779,16 +810,11 @@ fn process_file(
             return Ok(unreadable_report(path, config, &failure, &message, silent));
         }
     };
-    let context = LintContext {
-        config,
-        path,
-        project_root,
-        contextual,
-        layout_only: operation.formats(),
-        covered_files,
-    };
-    let mut initial_diagnostics = lint::lint(&original, &context)
-        .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    let mut initial_diagnostics = match &project {
+        Some(project) => lint::lint_project(project, context),
+        None => lint::lint(&original, context),
+    }
+    .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
     if let Some(failure) = &failure {
         // A lossy decode is never written back, so nothing in it is fixable.
         for diagnostic in &mut initial_diagnostics {
@@ -811,7 +837,7 @@ fn process_file(
     let mut diff = None;
 
     if operation.applies_fixes() && failure.is_none() {
-        let fixed = lint::fix(&content, diagnostics, &context)?;
+        let fixed = lint::fix(&content, diagnostics, context)?;
         content = fixed.content;
         diagnostics = fixed.diagnostics;
         fixed_diagnostics = fixed.applied;
@@ -826,13 +852,13 @@ fn process_file(
                 &with_byte_order_mark(&content, byte_order_mark),
             ));
             if operation.writes() {
-                atomic_write(&resolved, &with_byte_order_mark(&content, byte_order_mark))?;
+                atomic_write(resolved, &with_byte_order_mark(&content, byte_order_mark))?;
             }
         }
     }
 
     Ok(Some(FileReport {
-        path: display_path(path),
+        path: display.resolved(resolved),
         diagnostics,
         initial_diagnostics,
         fixed_diagnostics,

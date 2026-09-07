@@ -728,7 +728,7 @@ impl Evaluator {
         let mut output = String::new();
         let mut result = Expansion::known("");
         let mut characters = input.char_indices().peekable();
-        while let Some((index, character)) = characters.next() {
+        while let Some((_, character)) = characters.next() {
             if character != '$' {
                 output.push(character);
                 continue;
@@ -763,7 +763,6 @@ impl Evaluator {
             } else {
                 result.merge_unknown(expansion);
             }
-            let _ = index;
         }
         if result.value.is_some() {
             result.value = Some(output);
@@ -909,7 +908,8 @@ impl Evaluator {
             replacement
         };
         combined.value = Some(
-            words(&source)
+            source
+                .split_whitespace()
                 .map(|word| pattern_replace(&pattern, &replacement, word))
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -998,28 +998,38 @@ impl Evaluator {
                     from => text.replace(from, argument(&expanded, 1)),
                 }
             }
-            "patsubst" => words(argument(&expanded, 2))
+            "patsubst" => argument(&expanded, 2)
+                .split_whitespace()
                 .map(|word| pattern_replace(argument(&expanded, 0), argument(&expanded, 1), word))
                 .collect::<Vec<_>>()
                 .join(" "),
-            "addprefix" => words(argument(&expanded, 1))
+            "addprefix" => argument(&expanded, 1)
+                .split_whitespace()
                 .map(|word| format!("{}{word}", argument(&expanded, 0)))
                 .collect::<Vec<_>>()
                 .join(" "),
-            "addsuffix" => words(argument(&expanded, 1))
+            "addsuffix" => argument(&expanded, 1)
+                .split_whitespace()
                 .map(|word| format!("{word}{}", argument(&expanded, 0)))
                 .collect::<Vec<_>>()
                 .join(" "),
             "sort" => {
-                let sorted = words(argument(&expanded, 0)).collect::<BTreeSet<_>>();
+                let sorted = argument(&expanded, 0)
+                    .split_whitespace()
+                    .collect::<BTreeSet<_>>();
                 sorted.into_iter().collect::<Vec<_>>().join(" ")
             }
-            "words" => words(argument(&expanded, 0)).count().to_string(),
-            "firstword" => words(argument(&expanded, 0))
+            "words" => argument(&expanded, 0)
+                .split_whitespace()
+                .count()
+                .to_string(),
+            "firstword" => argument(&expanded, 0)
+                .split_whitespace()
                 .next()
                 .unwrap_or_default()
                 .to_string(),
-            "lastword" => words(argument(&expanded, 0))
+            "lastword" => argument(&expanded, 0)
+                .split_whitespace()
                 .last()
                 .unwrap_or_default()
                 .to_string(),
@@ -1027,7 +1037,8 @@ impl Evaluator {
                 let Some(index) = positive_index(argument(&expanded, 0)) else {
                     return Expansion::unknown(BlockedReason::MalformedExpansion);
                 };
-                words(argument(&expanded, 1))
+                argument(&expanded, 1)
+                    .split_whitespace()
                     .nth(index - 1)
                     .unwrap_or_default()
                     .to_string()
@@ -1042,26 +1053,31 @@ impl Evaluator {
                 if end < start {
                     String::new()
                 } else {
-                    words(argument(&expanded, 2))
+                    argument(&expanded, 2)
+                        .split_whitespace()
                         .skip(start - 1)
                         .take(end - start + 1)
                         .collect::<Vec<_>>()
                         .join(" ")
                 }
             }
-            "dir" => words(argument(&expanded, 0))
+            "dir" => argument(&expanded, 0)
+                .split_whitespace()
                 .map(directory_part)
                 .collect::<Vec<_>>()
                 .join(" "),
-            "notdir" => words(argument(&expanded, 0))
+            "notdir" => argument(&expanded, 0)
+                .split_whitespace()
                 .map(file_part)
                 .collect::<Vec<_>>()
                 .join(" "),
-            "suffix" => words(argument(&expanded, 0))
+            "suffix" => argument(&expanded, 0)
+                .split_whitespace()
                 .filter_map(file_suffix)
                 .collect::<Vec<_>>()
                 .join(" "),
-            "basename" => words(argument(&expanded, 0))
+            "basename" => argument(&expanded, 0)
+                .split_whitespace()
                 .map(file_basename)
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -1075,8 +1091,11 @@ impl Evaluator {
             }
             "filter" | "filter-out" => {
                 let keep_matches = name == "filter";
-                let patterns = words(argument(&expanded, 0)).collect::<Vec<_>>();
-                words(argument(&expanded, 1))
+                let patterns = argument(&expanded, 0)
+                    .split_whitespace()
+                    .collect::<Vec<_>>();
+                argument(&expanded, 1)
+                    .split_whitespace()
                     .filter(|word| {
                         patterns
                             .iter()
@@ -1179,12 +1198,12 @@ fn argument(arguments: &[String], index: usize) -> &str {
     arguments.get(index).map_or("", String::as_str)
 }
 
-fn words(value: &str) -> impl Iterator<Item = &str> {
-    value.split_whitespace()
-}
-
 fn collapse_whitespace(value: &str) -> String {
-    words(value).collect::<Vec<_>>().join(" ")
+    let mut output = String::with_capacity(value.len());
+    for word in value.split_whitespace() {
+        append_with_space(&mut output, word);
+    }
+    output
 }
 
 fn positive_index(value: &str) -> Option<usize> {
@@ -1215,18 +1234,21 @@ fn file_basename(value: &str) -> &str {
 }
 
 fn join_words(left: &str, right: &str) -> String {
-    let left = words(left).collect::<Vec<_>>();
-    let right = words(right).collect::<Vec<_>>();
-    (0..left.len().max(right.len()))
-        .map(|index| {
-            format!(
-                "{}{}",
-                left.get(index).copied().unwrap_or(""),
-                right.get(index).copied().unwrap_or("")
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
+    let mut output = String::with_capacity(left.len() + right.len());
+    let mut left = left.split_whitespace();
+    let mut right = right.split_whitespace();
+    loop {
+        let pair = (left.next(), right.next());
+        if pair == (None, None) {
+            break;
+        }
+        if !output.is_empty() {
+            output.push(' ');
+        }
+        output.push_str(pair.0.unwrap_or(""));
+        output.push_str(pair.1.unwrap_or(""));
+    }
+    output
 }
 
 fn pattern_replace(pattern: &str, replacement: &str, word: &str) -> String {

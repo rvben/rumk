@@ -176,7 +176,7 @@ impl Rule for ConditionalStructure {
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         makefile
-            .analysis()
+            .conditional_analysis()
             .structural_issues
             .iter()
             .map(|issue| {

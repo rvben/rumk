@@ -556,8 +556,10 @@ pub(crate) struct RuleSeparator {
 }
 
 pub(crate) fn find_top_level_assignment(line: &str) -> Option<(usize, &'static str)> {
+    if !line.contains('=') {
+        return None;
+    }
     top_level_indices(line)
-        .into_iter()
         .filter_map(|position| {
             ASSIGNMENT_OPERATORS
                 .iter()
@@ -568,6 +570,9 @@ pub(crate) fn find_top_level_assignment(line: &str) -> Option<(usize, &'static s
 }
 
 pub(crate) fn find_top_level_rule_separator(line: &str) -> Option<RuleSeparator> {
+    if !line.contains(':') {
+        return None;
+    }
     for position in top_level_indices(line) {
         let suffix = &line[position..];
         let (length, grouped, double_colon) = if suffix.starts_with("&::") {
@@ -592,9 +597,11 @@ pub(crate) fn find_top_level_rule_separator(line: &str) -> Option<RuleSeparator>
 }
 
 pub(crate) fn find_top_level_char(line: &str, needle: char) -> Option<usize> {
-    top_level_indices(line)
-        .into_iter()
-        .find(|position| line[*position..].starts_with(needle))
+    let first = line.find(needle)?;
+    if !matches!(needle, '\\' | '$') && !line[..first].contains(['\\', '$']) {
+        return Some(first);
+    }
+    top_level_indices(line).find(|position| line[*position..].starts_with(needle))
 }
 
 /// Splits a line at whitespace outside references. A reference is kept
@@ -713,28 +720,27 @@ pub(crate) fn split_include_words(line: &str) -> Vec<String> {
 /// expansions and are not backslash-escaped. Every `$` opens a reference,
 /// so `$:` and `$#` hold no separator, and nothing after an unterminated
 /// reference is at the top level.
-fn top_level_indices(line: &str) -> Vec<usize> {
-    let mut indices = Vec::new();
-    let mut escaped = false;
-    let mut skip_to = 0;
-
-    for (index, character) in line.char_indices() {
-        if index < skip_to {
-            continue;
+fn top_level_indices(line: &str) -> impl Iterator<Item = usize> + '_ {
+    let mut characters = line.char_indices();
+    let mut base = 0;
+    std::iter::from_fn(move || {
+        while let Some((offset, character)) = characters.next() {
+            let index = base + offset;
+            match character {
+                '\\' => {
+                    characters.next();
+                }
+                '$' => {
+                    let Some(length) = reference_length(line, index) else {
+                        characters = "".char_indices();
+                        return None;
+                    };
+                    base = index + length;
+                    characters = line[base..].char_indices();
+                }
+                _ => return Some(index),
+            }
         }
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match character {
-            '\\' => escaped = true,
-            '$' => match reference_length(line, index) {
-                Some(length) => skip_to = index + length,
-                None => break,
-            },
-            _ => indices.push(index),
-        }
-    }
-
-    indices
+        None
+    })
 }

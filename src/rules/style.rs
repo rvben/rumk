@@ -120,7 +120,9 @@ fn phony_wrap_fix(
             && statement.start_line == line_number
             && statement.end_line == line_number
     })?;
-    if makefile.analysis().is_conditional_line(line_number)
+    if makefile
+        .conditional_analysis()
+        .is_conditional_line(line_number)
         || source_line != source_line.trim_start()
     {
         return None;

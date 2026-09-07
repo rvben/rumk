@@ -1753,3 +1753,28 @@ fn a_message_names_a_file_the_way_the_location_beside_it_is_named() {
         "{report}"
     );
 }
+
+#[test]
+fn local_rules_still_check_unselected_includes() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("Makefile"), "include shared.mk\n").unwrap();
+    std::fs::write(directory.path().join("shared.mk"), "all:\n    echo test\n").unwrap();
+    let output = rumk()
+        .current_dir(directory.path())
+        .args([
+            "check",
+            "Makefile",
+            "--enable",
+            "MK001",
+            "--output-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostics: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(diagnostics.as_array().unwrap().len(), 1);
+    assert_eq!(diagnostics[0]["file"], "shared.mk");
+    assert_eq!(diagnostics[0]["rule"], "MK001");
+    assert_eq!(diagnostics[0]["fixable"], false);
+}

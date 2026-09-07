@@ -32,12 +32,8 @@ fn configuration_schema_rule_id_pattern_covers_exactly_the_known_rules() {
     let schema: Value = serde_json::from_str(include_str!("../rumk.schema.json")).unwrap();
     let pattern = schema["$defs"]["RuleId"]["pattern"].as_str().unwrap();
 
-    for rule_id in RULE_IDS {
-        assert!(
-            pattern.contains(&rule_id[2..]),
-            "schema pattern is missing {rule_id}"
-        );
-    }
+    let suffixes = RULE_IDS.iter().map(|rule| &rule[2..]).collect::<Vec<_>>();
+    assert_eq!(pattern, format!("^[Mm][Kk]({})$", suffixes.join("|")));
 }
 
 /// A configuration key Rumk reads but the schema does not describe is invisible

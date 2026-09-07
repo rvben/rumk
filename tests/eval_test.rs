@@ -351,10 +351,21 @@ fn expands_word_path_and_join_functions() {
             .as_known(),
         Some("src/main archive.tar README")
     );
-    assert_eq!(
-        evaluator.expand("$(join a b c,.1 .2)").as_known(),
-        Some("a.1 b.2 c")
-    );
+    for (expression, expected) in [
+        ("$(join a b c,.1 .2)", "a.1 b.2 c"),
+        ("$(join a,.1 .2)", "a.1 .2"),
+        ("$(join , .1 .2)", ".1 .2"),
+        ("$(join a b,)", "a b"),
+        ("$(join ,)", ""),
+        ("$(strip   a\tb  )", "a b"),
+        ("$(strip   )", ""),
+    ] {
+        assert_eq!(
+            evaluator.expand(expression).as_known(),
+            Some(expected),
+            "{expression}"
+        );
+    }
 }
 
 #[test]
