@@ -652,6 +652,153 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": true
+    },
+    {
+      "name": "single-step-pattern",
+      "title": "A matching pattern requires its source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "templates/output.src": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+      "working": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "pattern-order-only",
+      "title": "A matching pattern requires its order-only source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "templates/output.src": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: | templates/%.src\n\t@echo generated\n",
+      "working": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: | templates/%.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "unviable-pattern-alternatives",
+      "title": "Every competing producer lacks an input",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "templates/output.src": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n",
+      "working": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "slashless-terminal-pattern",
+      "title": "A slashless terminal pattern searches the target directory",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {},
+      "working_files": {
+        "generated/output.src": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\n%.dat:: %.src\n\t@echo generated\n",
+      "working": "probe: generated/output.dat\n\t@echo built\n%.dat:: %.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "slashless-literal-input",
+      "title": "A slashless pattern keeps literal inputs at the build root",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "generated/shared.txt": "wrong directory"
+      },
+      "working_files": {
+        "shared.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\n%.dat:: shared.txt\n\t@echo generated\n",
+      "working": "probe: generated/output.dat\n\t@echo built\n%.dat:: shared.txt\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
     }
   ]
 }

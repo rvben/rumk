@@ -80,5 +80,8 @@ and JSON reports stay local and must not be committed.
 
 The five pattern pairs exercise unrelated missing inputs alongside viable direct,
 intermediate, terminal, and competing producers, plus a terminal-chain defect
-that remains deliberately undiagnosed. Compare shared cases separately when
-comparing reports with different denominators.
+that MK216 now diagnoses. Five further pairs cover missing single-step sources,
+order-only sources, competing failed producers, and slashless terminal rules with
+pattern and literal inputs. A separate GNU regression verifies that a broad
+pattern can generate a built-in compiler input even when its direct match fails.
+Compare shared cases separately when comparing reports with different denominators.

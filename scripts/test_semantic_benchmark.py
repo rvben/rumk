@@ -78,6 +78,23 @@ class SemanticIntegrationTest(unittest.TestCase):
                     self.assertTrue(fix["original_contract_preserved"])
                     self.assertFalse(fix["changed"])
 
+    def test_broad_pattern_can_feed_a_builtin_after_direct_match_fails(self):
+        case = {
+            "rule": "MK216", "matchers": {}, "builtin_rules": True,
+            "args": ["-n", "probe"],
+            "files": {"templates/output.c.src": "input"},
+            "working": "probe: generated/output.o\n\t@echo built\ngenerated/%: templates/%.src\n\t@echo generated\n",
+        }
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            SEMANTIC.populate(directory, case, "working")
+            result = SEMANTIC.oracle(self.make, directory, case)
+            self.assertTrue(SEMANTIC.contract_matches(result, {
+                "exit_code": 0, "stdout_contains": "generated/output.c",
+            }), result)
+            result = SEMANTIC.invoke(SEMANTIC.commands("rumk", str(self.binary)), directory)
+            self.assertFalse(SEMANTIC.diagnostic_match("rumk", result, case))
+
     def test_explicit_command_intent_repairs_collision_only_with_unsafe_opt_in(self):
         case = next(c for c in json.loads(SEMANTIC.MANIFEST.read_text())["cases"]
                     if c["name"] == "custom-phony-collision")

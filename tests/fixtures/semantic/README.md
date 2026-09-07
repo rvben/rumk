@@ -24,4 +24,6 @@ profiles, fix validation, and reproduction commands.
 
 Pattern pairs run GNU Make under `-n -rR`. Four prove that viable producers do
 not prevent reporting an unrelated missing input. The fifth proves that a
-terminal rule cannot chain a missing intermediate and records MK216 abstaining.
+terminal rule cannot chain a missing intermediate and records MK216 detecting it.
+Additional pairs check direct pattern inputs, order-only inputs, failed competing
+producers, and directory restoration for slashless terminal patterns.
