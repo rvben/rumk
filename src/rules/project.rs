@@ -5,6 +5,7 @@ use crate::builtins::is_defined_by_make;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::{BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
+use crate::paths::display_path;
 use crate::project::{IncludeEdge, IncludeResolution, Project, SourceId};
 use crate::project_analysis::{ProjectSemanticIndex, ProjectTargetSymbol};
 use crate::rules::{Rule, RuleCategory};
@@ -157,7 +158,7 @@ impl Rule for MissingInclude {
                         format!(
                             "Required include '{}' could not be read at {}: {message}",
                             include,
-                            path.display()
+                            display_path(path)
                         ),
                     ),
                     IncludeResolution::LimitExceeded => (
@@ -291,7 +292,11 @@ fn definition_site(
     if at.source == from {
         format!("line {}", at.line)
     } else {
-        format!("{}:{}", project.file(at.source).path.display(), at.line)
+        format!(
+            "{}:{}",
+            display_path(&project.file(at.source).path),
+            at.line
+        )
     }
 }
 
@@ -331,7 +336,7 @@ impl Rule for IncludeCycle {
                 let names = cycle
                     .sources
                     .iter()
-                    .map(|source| project.file(*source).path.display().to_string())
+                    .map(|source| display_path(&project.file(*source).path))
                     .collect::<Vec<_>>()
                     .join(" -> ");
                 Some(
@@ -398,7 +403,7 @@ impl Rule for UnresolvedIncludeExpression {
                         Some(origin) => format!(
                             "{} at {}:{}",
                             step.variable,
-                            project.file(origin.source).path.display(),
+                            display_path(&project.file(origin.source).path),
                             origin.line
                         ),
                         None => format!("{} from predefined variables", step.variable),

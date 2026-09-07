@@ -10,6 +10,7 @@ pub mod inline_config;
 pub mod lint;
 pub mod logical;
 pub mod parser;
+pub mod paths;
 pub mod project;
 pub mod project_analysis;
 pub mod rules;

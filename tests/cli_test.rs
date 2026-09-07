@@ -1715,3 +1715,41 @@ fn inline_suppressions_cover_the_utf8_warning() {
     assert_eq!(output.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&output.stdout).contains("No issues found in 1 file"));
 }
+
+#[test]
+fn a_message_names_a_file_the_way_the_location_beside_it_is_named() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("inc")).unwrap();
+    std::fs::write(
+        directory.path().join("inc/frag.mk"),
+        "include $(CONFIG)/x.mk\n",
+    )
+    .unwrap();
+    std::fs::write(directory.path().join("inc/defs.mk"), "CONFIG := inc\n").unwrap();
+    std::fs::write(directory.path().join("inc/x.mk"), "X := 1\n").unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "include inc/frag.mk\ninclude inc/defs.mk\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "."])
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let report = stdout
+        .lines()
+        .find(|line| line.contains("[MK206]"))
+        .unwrap_or_default();
+    assert!(
+        report.contains("before inc/defs.mk:1 defines it"),
+        "{report}"
+    );
+    assert!(
+        !report.contains(&directory.path().display().to_string()),
+        "{report}"
+    );
+}

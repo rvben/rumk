@@ -5,6 +5,7 @@ use ignore::WalkBuilder;
 use rumk::config::Config;
 use rumk::diagnostic::{Applicability, Diagnostic, Severity};
 use rumk::lint::{self, LintContext};
+use rumk::paths::display_path;
 use rumk::project::Project;
 use rumk::{fix, inline_config, rules, source};
 use serde::Serialize;
@@ -1032,23 +1033,6 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
         .map_err(|error| error.error)
         .with_context(|| format!("Failed to atomically replace Makefile: {}", path.display()))?;
     Ok(())
-}
-
-fn display_path(path: &Path) -> String {
-    let current_dir = std::env::current_dir()
-        .ok()
-        .and_then(|path| dunce::canonicalize(path).ok());
-    let canonical_path = dunce::canonicalize(path).ok();
-    let comparable_path = canonical_path.as_deref().unwrap_or(path);
-    let relative = current_dir
-        .as_deref()
-        .and_then(|current_dir| comparable_path.strip_prefix(current_dir).ok())
-        .unwrap_or(comparable_path);
-    relative
-        .strip_prefix(".")
-        .unwrap_or(relative)
-        .display()
-        .to_string()
 }
 
 fn path_identity(path: &Path) -> PathBuf {
