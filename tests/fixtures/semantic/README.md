@@ -21,3 +21,7 @@ built-in compiler pair runs GNU Make with built-ins enabled under `-n`.
 Keep recipes harmless and deterministic. Review fixture changes like executable
 code. See [methodology](../../../docs/semantic-benchmark.md) for scoring, tool
 profiles, fix validation, and reproduction commands.
+
+Pattern pairs run GNU Make under `-n -rR`. Four prove that viable producers do
+not prevent reporting an unrelated missing input. The fifth proves that a
+terminal rule cannot chain a missing intermediate and records MK216 abstaining.

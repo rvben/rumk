@@ -1,6 +1,6 @@
 # Behavior-verified linter benchmark
 
-`scripts/semantic-benchmark.py` measures seventeen pairs of authored broken and
+`scripts/semantic-benchmark.py` measures twenty-two pairs of authored broken and
 working Makefiles. Labels describe observable GNU Make behavior before examining linter
 output: overwritten recipes, discarded cycles, missing prerequisites, recursive
 dry runs, lost directories, ignored failures, early expansion, invalid indentation,
@@ -71,9 +71,14 @@ it is not automatic detection of arbitrary command intent.
 MK216 now covers simple missing prerequisites, generated declarations, static
 VPATH, and absent built-in compiler inputs. It remains opt-in. User-pattern,
 dynamic-expression, and selective-vpath defects remain deliberately uncovered
-in the manifest; see [its boundaries](mk216.md). The seven added pairs change
+in the manifest; see [its boundaries](mk216.md). The additional pairs change
 the denominator, so compare the original ten separately when assessing progress.
 
 Run the offline regression gate with `make check-semantic` (GNU Make and Python
 3.9+). CI runs these tests along with the existing auditor tests. Generated HTML
 and JSON reports stay local and must not be committed.
+
+The five pattern pairs exercise unrelated missing inputs alongside viable direct,
+intermediate, terminal, and competing producers, plus a terminal-chain defect
+that remains deliberately undiagnosed. Compare shared cases separately when
+comparing reports with different denominators.

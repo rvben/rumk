@@ -497,6 +497,161 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": false
+    },
+    {
+      "name": "isolated-pattern",
+      "title": "A pattern in another directory must not hide a missing input",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "templates/output.src": "input"
+      },
+      "working_files": {
+        "missing.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+      "working": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "intermediate-pattern",
+      "title": "An intermediate chain must not hide an unrelated missing input",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "templates/output.src": "input"
+      },
+      "working_files": {
+        "missing.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n",
+      "working": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "terminal-pattern",
+      "title": "A terminal producer with an existing source leaves unrelated inputs checkable",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "templates/output.src": "input"
+      },
+      "working_files": {
+        "missing.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat:: templates/%.src\n\t@echo generated\n",
+      "working": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat:: templates/%.src\n\t@echo generated\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "competing-patterns",
+      "title": "A viable competing producer leaves unrelated inputs checkable",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "templates/output.src": "input"
+      },
+      "working_files": {
+        "missing.txt": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n",
+      "working": "probe: generated/output.dat missing.txt\n\t@echo built\ngenerated/%.dat: absent/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "terminal-chain-abstention",
+      "title": "A terminal pattern cannot chain an undeclared intermediate",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "templates/output.src": "input"
+      },
+      "working_files": {
+        "intermediate/output.mid": "input"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat:: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n",
+      "working": "probe: generated/output.dat\n\t@echo built\ngenerated/%.dat:: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo intermediate\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
     }
   ]
 }
