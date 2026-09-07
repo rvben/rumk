@@ -125,6 +125,38 @@ fn reports_an_include_read_before_the_variable_it_expands_is_defined() {
 }
 
 #[test]
+fn says_nothing_about_an_include_in_a_file_make_does_not_read_on_its_own() {
+    let directory = tempfile::tempdir().unwrap();
+    let fragment = directory.path().join("frag.mk");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/x.mk"), "VALUE := yes\n").unwrap();
+    // Whatever includes this may have given DIR a value already, in which case
+    // line 2 only restates it and Make reads 'sub/x.mk' the way the file reads.
+    std::fs::write(&fragment, "include $(DIR)/x.mk\nDIR := sub\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&fragment));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_an_include_whose_variable_no_caller_could_have_supplied() {
+    let directory = tempfile::tempdir().unwrap();
+    let fragment = directory.path().join("frag.mk");
+    // A fragment naming a file that is simply absent is reported whatever a
+    // caller supplies, because no variable stands between the two.
+    std::fs::write(&fragment, "include missing.mk\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&fragment));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].message,
+        "Required include 'missing.mk' was not found"
+    );
+}
+
+#[test]
 fn reports_an_include_that_reads_nothing_because_its_variable_is_defined_below_it() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

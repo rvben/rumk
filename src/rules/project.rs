@@ -188,7 +188,15 @@ impl Rule for MissingInclude {
 /// project gives no value of its own is not reported at all: a caller supplies
 /// it, and so does a definition that only reads the name back and writes it
 /// again.
+///
+/// None of that holds for a project whose root is a file Make does not read on
+/// its own, because whatever includes it has already run: a name defined below
+/// the include may hold the caller's value there, and one the file never
+/// defines certainly does. Such a root is passed over rather than reported.
 fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity, String)> {
+    if !reads_on_its_own(project) {
+        return None;
+    }
     let undefined = edge.undefined.as_ref()?;
     let index = project.analysis();
     let missing: Vec<&String> = undefined
@@ -253,6 +261,18 @@ fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity,
             ),
         )),
     }
+}
+
+/// Whether the file the project is read from is one Make picks up by itself,
+/// which is the only kind that carries no caller. Every other name is a
+/// fragment as far as Rumk can tell, whether or not anything includes it.
+fn reads_on_its_own(project: &Project) -> bool {
+    project
+        .file(project.root())
+        .path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| matches!(name, "Makefile" | "makefile" | "GNUmakefile"))
 }
 
 /// Names where a definition is, as read from `from`: a line number for the
