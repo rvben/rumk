@@ -188,30 +188,6 @@ impl Rule for MissingInclude {
     }
 }
 
-/// What to report about an include whose expression names variables that have
-/// no value where Make reads it, and `None` when Make reads it the way the
-/// file reads.
-///
-/// A variable the project gives a value further down makes the include an
-/// error however Make ends up reading it: the file itself says which value was
-/// meant, and Make uses none of it. A variable the project defines but has
-/// taken back, or gives a value only where Make does not go, is reported only
-/// where Make then finds no file to read, and as a warning. A variable the
-/// project gives no value of its own is not reported at all: a caller supplies
-/// it, and so does a definition that only reads the name back and writes it
-/// again.
-///
-/// None of that holds for a project whose root is a file Make does not read on
-/// its own, because whatever includes it has already run: a name defined below
-/// the include may hold the caller's value there, and one the file never
-/// defines certainly does. Such a root is passed over rather than reported.
-///
-/// Nor does it hold below an include Rumk did not read, such as one named
-/// through `$(wildcard ...)`. Make read that file and holds whatever it
-/// defines; Rumk does not, so a name that reads as having no value here may
-/// have had one all along, and a definition below may be the `?=` that never
-/// happens. Such an include is passed over too.
-///
 /// Whether the project states a way to build `name`.
 ///
 /// A rule naming it outright states one whatever its prerequisites are: Make
@@ -363,6 +339,30 @@ fn builds_along(
     })
 }
 
+/// What to report about an include whose expression names variables that have
+/// no value where Make reads it, and `None` when Make reads it the way the
+/// file reads.
+///
+/// A variable the project gives a value further down makes the include an
+/// error however Make ends up reading it: the file itself says which value was
+/// meant, and Make uses none of it. A variable the project defines but has
+/// taken back, or gives a value only where Make does not go, is reported only
+/// where Make then finds no file to read, and as a warning. A variable the
+/// project gives no value of its own is not reported at all: a caller supplies
+/// it, and so does a definition that only reads the name back and writes it
+/// again.
+///
+/// None of that holds for a project whose root is a file Make does not read on
+/// its own, because whatever includes it has already run: a name defined below
+/// the include may hold the caller's value there, and one the file never
+/// defines certainly does. Such a root is passed over rather than reported.
+///
+/// Nor does it hold below an include Rumk did not read, such as one named
+/// through `$(wildcard ...)`. Make read that file and holds whatever it
+/// defines; Rumk does not, so a name that reads as having no value here may
+/// have had one all along, and a definition below may be the `?=` that never
+/// happens. Such an include is passed over too.
+///
 /// Nor, finally, does it hold below a missing include Make has a rule for.
 /// Make remakes that file and reads every makefile again from the top, so an
 /// include that finds a file here is read a second time with whatever the
