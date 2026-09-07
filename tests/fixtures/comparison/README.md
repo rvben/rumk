@@ -5,6 +5,12 @@ Small, authored regression fixtures shared by `comparison_corpus_test.rs` and
 projects. The separate `tests/fixtures/corpus` suite covers production-style
 multi-file projects. No competitor source code is embedded here.
 
+The `mixed-phony`, `compiled-command-name`, and `compiler-output-lookalike`
+cases are authored reductions from reviewing the pinned upstream sample. They
+check that explicit phony declarations and real compiler outputs are not confused
+with missing command-target declarations. `tests/phony_precision_test.rs` covers
+includes, inactive branches, output lookalikes, and GNU Make behavior as well.
+
 `manifest.json` states the purpose, dialect, selected rumk rules, and exact
 expected rule/file/line tuples. Every defect has valid lookalikes. The runner
 uses temporary copies, records input hashes and commands, and rejects input
@@ -14,7 +20,7 @@ invokes Make; never include destructive recipes or side-effecting Make functions
 Run the offline regression suite:
 
 ```sh
-cargo test --test comparison_corpus_test --test formatting_test --test policy_test
+cargo test --test comparison_corpus_test --test formatting_test --test policy_test --test phony_precision_test
 ```
 
 Run all four tools after installing the pinned versions explicitly:

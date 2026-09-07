@@ -98,12 +98,44 @@ impl Rule for MissingPhony {
 
     fn check_project(&self, project: &Project) -> Vec<Diagnostic> {
         let index = project.analysis();
+        // A dynamic neighbor can keep the project evaluator from resolving a
+        // whole .PHONY declaration. Its literal names still express intent;
+        // do not recommend adding those same names again. This only withholds
+        // a heuristic warning, without claiming a definite fact in the graph.
+        let literal_phonies: BTreeSet<_> = project
+            .files()
+            .iter()
+            .flat_map(|file| {
+                file.makefile
+                    .logical
+                    .statements()
+                    .iter()
+                    .filter(|statement| {
+                        statement.kind == LogicalKind::Rule
+                            && project.evaluation().activity(file.id, statement.start_line)
+                                == crate::eval::Truth::True
+                    })
+                    .flat_map(|statement| literal_phony_names(statement.text()))
+            })
+            .collect();
         let mut missing_by_source = BTreeMap::new();
-        for target in index
-            .targets
-            .values()
-            .filter(|target| COMMON_PHONY_TARGETS.contains(&target.name.as_str()) && !target.phony)
-        {
+        for target in index.targets.values().filter(|target| {
+            COMMON_PHONY_TARGETS.contains(&target.name.as_str())
+                && !target.phony
+                && !literal_phonies.contains(&target.name)
+        }) {
+            if target.declarations.iter().any(|declaration| {
+                let file = project.file(declaration.location.source);
+                file.makefile.rules.iter().any(|rule| {
+                    rule.line == declaration.location.line
+                        && produces_named_file(rule, &target.name, |line| {
+                            project.evaluation().activity(file.id, line)
+                                != crate::eval::Truth::False
+                        })
+                })
+            }) {
+                continue;
+            }
             if let Some(declaration) = target
                 .declarations
                 .iter()
@@ -157,10 +189,29 @@ impl Rule for MissingPhony {
 fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
     let mut seen = BTreeSet::new();
     let mut missing = Vec::new();
+    let active_lines: BTreeSet<_> = makefile
+        .logical
+        .statements()
+        .iter()
+        .filter(|statement| statement.reach != Reach::Never)
+        .map(|statement| statement.start_line)
+        .collect();
+    let file_targets: BTreeSet<_> = makefile
+        .rules
+        .iter()
+        .flat_map(|rule| {
+            rule.targets.iter().filter(|target| {
+                COMMON_PHONY_TARGETS.contains(&target.as_str())
+                    && active_lines.contains(&rule.line)
+                    && produces_named_file(rule, target, |line| active_lines.contains(&line))
+            })
+        })
+        .collect();
     for rule in &makefile.rules {
         for target in &rule.targets {
             if COMMON_PHONY_TARGETS.contains(&target.as_str())
                 && !makefile.phonies.contains(target)
+                && !file_targets.contains(target)
                 && seen.insert(target.clone())
             {
                 missing.push(MissingPhonyTarget {
@@ -172,6 +223,71 @@ fn missing_phony_targets(makefile: &Makefile) -> Vec<MissingPhonyTarget> {
         }
     }
     missing
+}
+
+fn literal_phony_names(text: &str) -> Vec<String> {
+    let Some(separator) = find_top_level_rule_separator(text) else {
+        return Vec::new();
+    };
+    if text[..separator.position].trim() != ".PHONY" {
+        return Vec::new();
+    }
+    let body = &text[separator.position + separator.length..];
+    let end = inline_recipe_separator(body).unwrap_or(body.len());
+    split_top_level_words(strip_top_level_comment(&body[..end]))
+        .into_iter()
+        .filter(|name| !name.contains('$'))
+        .collect()
+}
+
+/// A conventional name can also be a real executable (for example `test`).
+/// Recognize direct compiler output intent rather than declaring that file
+/// phony. This deliberately does not interpret arbitrary shell programs.
+fn produces_named_file(
+    rule: &crate::parser::Rule,
+    target: &str,
+    active: impl Fn(usize) -> bool,
+) -> bool {
+    rule.recipes.iter().any(|recipe| {
+        if !active(recipe.line) {
+            return false;
+        }
+        let tokens = shell_tokens(&recipe.command);
+        let mut words = Vec::new();
+        for token in &tokens {
+            match token {
+                ShellToken::Word { text, .. } => words.push(text.as_str()),
+                ShellToken::Separator => return false,
+            }
+        }
+        if !words.first().is_some_and(|word| {
+            matches!(
+                *word,
+                "$(CC)"
+                    | "${CC}"
+                    | "$(CXX)"
+                    | "${CXX}"
+                    | "cc"
+                    | "gcc"
+                    | "clang"
+                    | "c++"
+                    | "g++"
+                    | "clang++"
+            )
+        }) {
+            return false;
+        }
+        let mut output = None;
+        let mut arguments = words.into_iter().skip(1);
+        while let Some(argument) = arguments.next() {
+            if argument == "-o" {
+                output = arguments.next();
+            } else if let Some(name) = argument.strip_prefix("-o") {
+                output = Some(name);
+            }
+        }
+        output.is_some_and(|name| name == target || matches!(name, "$@" | "$(@)" | "${@}"))
+    })
 }
 
 fn missing_names(targets: &[MissingPhonyTarget]) -> Vec<String> {

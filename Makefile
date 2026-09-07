@@ -52,7 +52,7 @@ check-gnu-fixtures:
 	$(CARGO) test --test gnu_make_test
 
 check-comparison:
-	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test
+	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test --test phony_precision_test
 
 check-corpus:
 	$(CARGO) test --test corpus_test

@@ -307,6 +307,48 @@
           "file": "Makefile"
         }
       ]
+    },
+    {
+      "name": "mixed-phony",
+      "category": "reviewed-phony-precision",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK201"
+      ],
+      "expected": []
+    },
+    {
+      "name": "compiled-command-name",
+      "category": "reviewed-phony-precision",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK201"
+      ],
+      "expected": [
+        {
+          "rule": "MK201",
+          "line": 3,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "compiler-output-lookalike",
+      "category": "reviewed-phony-precision",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK201"
+      ],
+      "expected": [
+        {
+          "rule": "MK201",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
     }
   ]
 }

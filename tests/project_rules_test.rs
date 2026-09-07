@@ -588,6 +588,41 @@ fn says_nothing_about_a_missing_include_written_with_a_leading_dot() {
 }
 
 #[test]
+fn says_nothing_about_a_missing_include_whose_step_another_include_names_with_a_leading_dot() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The include names the same file the chain looks for, written the other
+    // way round.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\ninclude ./config.mid\nall:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_whose_step_is_asked_for_past_several_slashes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make drops the slashes that follow the './' along with it.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nall: .//config.mid\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn says_nothing_about_a_missing_include_whose_step_a_variable_target_pattern_asks_for() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

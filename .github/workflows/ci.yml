@@ -132,7 +132,7 @@ jobs:
         run: make --version
 
       - name: Verify controlled and production-style fixtures
-        run: cargo test --locked --test gnu_make_test --test corpus_test --test comparison_corpus_test --test formatting_test --test policy_test
+        run: cargo test --locked --test gnu_make_test --test corpus_test --test comparison_corpus_test --test formatting_test --test policy_test --test phony_precision_test
 
   msrv:
     name: Minimum supported Rust
