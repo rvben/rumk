@@ -193,8 +193,14 @@ impl Rule for MissingInclude {
 /// its own, because whatever includes it has already run: a name defined below
 /// the include may hold the caller's value there, and one the file never
 /// defines certainly does. Such a root is passed over rather than reported.
+///
+/// Nor does it hold below an include Rumk did not read, such as one named
+/// through `$(wildcard ...)`. Make read that file and holds whatever it
+/// defines; Rumk does not, so a name that reads as having no value here may
+/// have had one all along, and a definition below may be the `?=` that never
+/// happens. Such an include is passed over too.
 fn undefined_include(project: &Project, edge: &IncludeEdge) -> Option<(Severity, String)> {
-    if !reads_on_its_own(project) {
+    if !reads_on_its_own(project) || edge.follows_an_unread_include {
         return None;
     }
     let undefined = edge.undefined.as_ref()?;

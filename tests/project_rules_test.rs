@@ -1,5 +1,5 @@
 use rumk::diagnostic::Severity;
-use rumk::project::{Project, ProjectOptions};
+use rumk::project::{IncludeResolution, Project, ProjectOptions};
 use rumk::rules::best_practices::{DependencyCycle, DuplicateRecipe, MissingPhony};
 use rumk::rules::project::{
     IncludeCycle, MissingInclude, MixedTargetSeparators, UndefinedVariableReference,
@@ -122,6 +122,116 @@ fn reports_an_include_read_before_the_variable_it_expands_is_defined() {
         .message
         .contains("expands 'DIR' before line 2 defines it"));
     assert!(diagnostics[0].message.contains("cannot find '/x.mk'"));
+}
+
+#[test]
+fn says_nothing_about_a_name_an_include_rumk_could_not_read_may_have_defined() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("conf")).unwrap();
+    std::fs::create_dir(directory.path().join("arch")).unwrap();
+    std::fs::write(directory.path().join("conf/a.mk"), "P := arch\n").unwrap();
+    std::fs::write(directory.path().join("arch/rules.mk"), "X := 1\n").unwrap();
+    // Make reads conf/a.mk on line 1 and holds P from there, so line 2 reads
+    // 'arch/rules.mk' and the '?=' on line 3 does nothing at all. Rumk does not
+    // follow a '$(wildcard ...)' include, so it holds none of that.
+    std::fs::write(
+        &root,
+        "include $(wildcard conf/*.mk)\ninclude $(P)/rules.mk\nP ?= fallback\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+/// Strips every permission from `path` and reports whether that made it
+/// unreadable; root reads a file regardless of its mode, and then there is
+/// nothing to test.
+#[cfg(unix)]
+fn make_unreadable(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o000)).unwrap();
+    std::fs::read(path).is_err()
+}
+
+#[cfg(unix)]
+#[test]
+fn says_nothing_about_a_name_an_include_rumk_could_not_open_may_have_defined() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    let locked = directory.path().join("conf.mk");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    std::fs::write(&locked, "P := sub\n").unwrap();
+    if !make_unreadable(&locked) {
+        return;
+    }
+    // What conf.mk defines is a question Rumk cannot answer, so neither is what
+    // P is worth on line 2.
+    std::fs::write(&root, "include conf.mk\ninclude $(P)/rules.mk\nP ?= x\n").unwrap();
+
+    let project = load(&root);
+    let diagnostics = MissingInclude.check_project(&project);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0].message.contains("could not be read"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn says_nothing_about_a_name_an_include_past_the_file_limit_may_have_defined() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("conf.mk"), "P := sub\n").unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    // Make reads conf.mk whatever limit Rumk works under, so what P is worth
+    // on line 2 is not something the files Rumk read can settle.
+    std::fs::write(&root, "include conf.mk\ninclude $(P)/rules.mk\nP ?= x\n").unwrap();
+    let options = ProjectOptions {
+        max_files: 1,
+        ..ProjectOptions::default()
+    };
+
+    let project = Project::load(&root, &options).unwrap();
+
+    assert!(project
+        .edges()
+        .iter()
+        .any(|edge| edge.resolution == IncludeResolution::LimitExceeded));
+    let diagnostics = MissingInclude.check_project(&project);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(
+        diagnostics[0].message,
+        "Required include 'conf.mk' exceeds the project file limit"
+    );
+}
+
+#[test]
+fn reports_an_include_above_the_one_rumk_could_not_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    // The include Rumk cannot read is below the one being judged, so it defines
+    // nothing Make holds on line 1 and says nothing about what P is worth there.
+    std::fs::write(
+        &root,
+        "include $(P)/rules.mk\ninclude $(wildcard conf/*.mk)\nP := sub\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+    assert!(diagnostics[0]
+        .message
+        .contains("expands 'P' before line 3 defines it"));
 }
 
 #[test]

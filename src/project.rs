@@ -50,6 +50,11 @@ pub struct IncludeEdge {
     /// What Make reads when the expression only stayed unexpanded because
     /// variables in it have no value there.
     pub undefined: Option<UndefinedExpansion>,
+    /// Whether Make had already reached an include Rumk did not read by the
+    /// time it reached this one. Whatever that file defines, Make holds here
+    /// and Rumk does not, so a name with no value in the files Rumk read may
+    /// have one in the file it skipped.
+    pub follows_an_unread_include: bool,
 }
 
 /// What GNU Make reads for an include whose expression names variables that
@@ -269,6 +274,10 @@ struct Loader<'a> {
     default_goal: DefaultGoal,
     active_phonies: BTreeSet<String>,
     rules: BTreeMap<(SourceId, usize), Vec<EvaluatedRule>>,
+    /// Whether Make has reached an include Rumk did not read. Set in the order
+    /// Make reads, so an include below one of those cannot be judged on what
+    /// the files Rumk read say a name is worth.
+    unread_include: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -283,6 +292,7 @@ impl<'a> Loader<'a> {
         Self {
             options,
             working_directory,
+            unread_include: false,
             files: Vec::new(),
             paths: BTreeMap::new(),
             edges: Vec::new(),
@@ -495,6 +505,7 @@ impl<'a> Loader<'a> {
                 line,
                 resolution: IncludeResolution::Inactive,
                 undefined: None,
+                follows_an_unread_include: self.unread_include,
             });
             return;
         }
@@ -519,7 +530,11 @@ impl<'a> Loader<'a> {
                 line,
                 resolution: IncludeResolution::Dynamic,
                 undefined,
+                follows_an_unread_include: self.unread_include,
             });
+            // An include Make may not even read says nothing about what Make
+            // holds below it, so only one Make certainly reads is a gap.
+            self.unread_include |= activity == Truth::True;
             return;
         };
         for expanded in include_paths(value) {
@@ -532,9 +547,16 @@ impl<'a> Loader<'a> {
                 blocked: expansion.blocked.clone(),
                 optional,
                 line,
-                resolution,
+                resolution: resolution.clone(),
                 undefined: None,
+                follows_an_unread_include: self.unread_include,
             });
+            // A file Make reads and Rumk cannot is the same gap as one Rumk
+            // never named: whatever it defines, Make holds from here on.
+            self.unread_include |= matches!(
+                resolution,
+                IncludeResolution::Unreadable { .. } | IncludeResolution::LimitExceeded
+            );
             if let Some(discovered) = discovered {
                 self.visit(discovered);
             }
