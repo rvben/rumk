@@ -1,8 +1,8 @@
 use crate::diagnostic::{Applicability, Diagnostic, Edit, Fix, Severity};
-use crate::expansion::{function_name, reference_length};
+use crate::expansion::{function_name, reference_length, unexpanded_arguments};
 use crate::logical::{
     find_top_level_char, find_top_level_rule_separator, split_top_level_words,
-    strip_top_level_comment, LogicalKind,
+    strip_top_level_comment, LogicalKind, Reach,
 };
 use crate::parser::{AssignmentOperator, Makefile};
 use crate::project::Project;
@@ -903,6 +903,7 @@ impl Rule for ShellStyleVariableReference {
             .iter()
             .map(|variable| variable.name.as_str())
             .collect();
+        let recipe_lines = recipe_lines(makefile);
         makefile
             .syntax
             .nodes()
@@ -915,15 +916,16 @@ impl Rule for ShellStyleVariableReference {
             })
             .flat_map(|node| {
                 let content = node.content(source);
+                let line = node.content_span.start.line;
                 // Make expands a recipe line whole and hands it to the shell,
                 // so a '#' there starts nothing; anywhere else it starts a
                 // comment, and Make expands nothing after it.
-                let expanded = if matches!(node.kind, SyntaxKind::Recipe | SyntaxKind::DefineBody) {
+                let in_recipe = recipe_lines.contains(&line);
+                let expanded = if in_recipe || node.kind == SyntaxKind::DefineBody {
                     content
                 } else {
                     strip_top_level_comment(content)
                 };
-                let line = node.content_span.start.line;
                 let start_column = node.content_span.start.column;
                 shell_style_references(expanded, &defined)
                     .into_iter()
@@ -944,7 +946,7 @@ impl Rule for ShellStyleVariableReference {
                         // A recipe can mean either the Make variable or the
                         // shell one, written '$$VAR', and the two are not the
                         // same edit, so there is nothing to apply for it.
-                        if node.kind == SyntaxKind::Recipe {
+                        if in_recipe {
                             return diagnostic;
                         }
                         let end = start_column + expanded[..reference.end].chars().count();
@@ -957,6 +959,19 @@ impl Rule for ShellStyleVariableReference {
             })
             .collect()
     }
+}
+
+/// Every line GNU Make reads as part of a recipe, the lines a backslash
+/// continues it onto included. A continuation line needs no recipe prefix of
+/// its own, so the line's own indentation does not say whether it is one.
+fn recipe_lines(makefile: &Makefile) -> BTreeSet<usize> {
+    makefile
+        .logical
+        .statements()
+        .iter()
+        .filter(|statement| statement.kind == LogicalKind::Recipe)
+        .flat_map(|statement| statement.start_line..=statement.end_line)
+        .collect()
 }
 
 /// Byte ranges of the `$` references in `text` that name a variable the way a
@@ -974,11 +989,20 @@ fn shell_style_references(text: &str, defined: &BTreeSet<&str>) -> Vec<std::ops:
         let Some(length) = reference_length(text, dollar) else {
             break;
         };
-        index = dollar + length;
         let Some(first) = text[dollar + 1..].chars().next() else {
             break;
         };
         if length != 1 + first.len_utf8() || !is_name_start(first) {
+            // A '$(' or '${' opens a call whose arguments hold references of
+            // their own, and Make expands those too, so the reading carries on
+            // inside it rather than past it. Anything else, '$$' included, is
+            // one reference and is stepped over whole.
+            index = dollar
+                + if matches!(first, '(' | '{') {
+                    1 + first.len_utf8()
+                } else {
+                    length
+                };
             continue;
         }
         let end = dollar
@@ -987,6 +1011,7 @@ fn shell_style_references(text: &str, defined: &BTreeSet<&str>) -> Vec<std::ops:
                 .find(|character: char| !is_name_character(character))
                 .unwrap_or(text.len() - dollar - 1);
         if end - dollar < 3 || defined.contains(&text[dollar + 1..dollar + 1 + first.len_utf8()]) {
+            index = dollar + length;
             continue;
         }
         references.push(dollar..end);
@@ -1068,8 +1093,12 @@ fn trailing_directory_change(command: &str) -> Option<usize> {
                 if is_environment_assignment(&text) {
                     continue;
                 }
-                last = (!quoted && text == "cd").then_some(start);
-                command_position = matches!(text.as_str(), "if" | "then" | "else" | "do");
+                // Quoting a command name does not change which command runs,
+                // so '"cd"' is the same 'cd'. It does take a word out of the
+                // shell's reserved words, so a quoted 'if' is a command.
+                last = (text == "cd").then_some(start);
+                command_position =
+                    !quoted && matches!(text.as_str(), "if" | "then" | "else" | "do");
             }
             ShellToken::Word { .. } => {}
         }
@@ -1115,6 +1144,12 @@ impl Rule for ShellInRecursiveVariable {
         // A `define` is an assignment whose value is its body, so the bodies
         // are here too, under the operator their header carries.
         for variable in &makefile.assignments {
+            // An assignment in a branch whose literal condition fails is one
+            // Make never makes: it runs no command, and it gives the name no
+            // flavor for a later '+=' to take.
+            if variable.reach == Reach::Never {
+                continue;
+            }
             let flavor = match variable.operator {
                 // '+=' takes the flavor of the variable it appends to, and
                 // creates a recursive one where there is nothing to append to.
@@ -1194,14 +1229,21 @@ fn is_late_value(character: char) -> bool {
     character.is_ascii_digit() || matches!(character, '@' | '<' | '^' | '?' | '*' | '+' | '|' | '%')
 }
 
-/// Whether `value` holds a `$(shell ...)` call, nested calls included. A `$$`
-/// is the dollar sign itself, so `$$(shell ...)` is a command the shell
-/// substitutes and not a call Make makes.
+/// Whether `value` holds a `$(shell ...)` call Make expands, nested calls
+/// included. A `$$` is the dollar sign itself, so `$$(shell ...)` is a command
+/// the shell substitutes and not a call Make makes, and a call in the branch a
+/// literal argument rules out, such as the first of `$(if ,a,b)`, is one Make
+/// never expands.
 fn calls_the_shell(value: &str) -> bool {
+    let skipped = unexpanded_arguments(value);
     let mut index = 0;
     while let Some(offset) = value[index..].find('$') {
         let dollar = index + offset;
         let body = dollar + 2;
+        if let Some(range) = skipped.iter().find(|range| range.contains(&dollar)) {
+            index = range.end;
+            continue;
+        }
         match value[dollar + 1..].chars().next() {
             Some('(' | '{') if function_name(&value[body..]) == Some("shell") => return true,
             // Reading on from inside the reference finds the calls nested in it.

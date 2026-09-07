@@ -816,3 +816,125 @@ fn shell_call_is_reported_in_a_define_body_make_expands_at_every_reading() {
         "'REPORT' runs its $(shell ...) again every time it is read"
     );
 }
+
+#[test]
+fn shell_style_reference_is_found_inside_the_call_that_holds_it() {
+    // Make expands the arguments of a call too, so '$AR' inside '$(dir ...)'
+    // is read as '$(A)' followed by 'R' just as it is anywhere else.
+    let content = "FOO := $(dir $AR)\nall:\n\t@echo $(shell echo $BUILD)\n";
+    let diagnostics = ShellStyleVariableReference.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert_eq!((diagnostics[0].line, diagnostics[0].column), (1, 14));
+    assert_eq!(
+        diagnostics[0].message,
+        "'$AR' reads the variable 'A' and the literal text 'R'"
+    );
+    assert_eq!((diagnostics[1].line, diagnostics[1].column), (3, 21));
+    assert!(!diagnostics[1].fixable);
+}
+
+#[test]
+fn shell_style_reference_offers_no_fix_on_a_line_that_continues_a_recipe() {
+    // Make needs no recipe prefix on a continuation line, so the indentation
+    // does not say whether the line is part of the recipe. This one is: Make
+    // runs 'echo hi AR arg' as a single command.
+    let content = "all:\n\t@echo hi \\\n$VAR arg\n";
+    let diagnostics = ShellStyleVariableReference.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+    assert!(
+        !diagnostics[0].fixable,
+        "the line is inside a recipe, where '$(VAR)' and '$$VAR' are different edits"
+    );
+}
+
+#[test]
+fn directory_change_reads_a_quoted_command_name_as_the_command() {
+    // Quoting a command name does not change which command the shell runs.
+    let content = "all:\n\t\"cd\" build\n\tls\n";
+    let diagnostics = DirectoryChangeInRecipe.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+}
+
+#[test]
+fn directory_change_says_nothing_where_a_quoted_keyword_makes_it_an_argument() {
+    // Quoting does take a word out of the shell's reserved words, so '"if"' is
+    // a command named 'if' and the 'cd' after it is an argument to it. No
+    // directory changes on this line.
+    let content = "all:\n\t\"if\" cd\n\tls\n";
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_says_nothing_where_the_line_ends_a_subshell_a_loop_or_a_test() {
+    let content = concat!(
+        "all:\n",
+        "\tif cd sub; then true; fi\n",
+        "\tfor d in a b; do cd $$d; done\n",
+        "\t(cd sub && build)\n",
+        "\ttrue\n",
+    );
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_says_nothing_about_a_branch_make_never_reads() {
+    // Make skips the branch, so the command never runs, not even once.
+    let content = "ifeq (1,0)\nZ = $(shell echo z)\nendif\nall:\n\t@echo ok\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_ignores_the_flavor_a_branch_make_never_reads_would_have_given() {
+    // Make never assigns 'Z' in the skipped branch, so the '+=' below appends
+    // to nothing and creates a recursive variable.
+    let content = "ifeq (1,0)\nZ := base\nendif\nZ += $(shell echo side-effect)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 4);
+    assert!(diagnostics[0].message.starts_with("'Z'"));
+}
+
+#[test]
+fn shell_call_says_nothing_about_an_argument_a_literal_condition_rules_out() {
+    // '$(if ,a,b)' has an empty condition, so Make expands only 'b'.
+    let content = "J = $(if ,$(shell echo skipped),no)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_is_reported_in_a_conditional_assignment() {
+    // '?=' gives the variable a recursive value; there is no immediate form.
+    let content = "STAMP ?= $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+}
+
+#[test]
+fn shell_call_is_reported_where_an_append_has_nothing_to_append_to() {
+    // '+=' creates a recursive variable where the name has no value yet.
+    let content = "FRESH += $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+}
