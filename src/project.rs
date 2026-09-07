@@ -7,7 +7,8 @@ use std::sync::OnceLock;
 use anyhow::{Context, Result};
 
 use crate::eval::{
-    BlockedReason, EvaluationLocation, Evaluator, ReadTooEarly, TraceStep, Truth, UndefinedName,
+    BlockedReason, EvaluationLocation, Evaluator, Expansion, ReadTooEarly, TraceStep, Truth,
+    UndefinedName,
 };
 use crate::logical::{ConditionalKind, LogicalKind};
 use crate::parser::{self, Makefile, Variable, VariableScope};
@@ -520,6 +521,7 @@ impl<'a> Loader<'a> {
             let undefined = (activity == Truth::True)
                 .then(|| self.undefined_expansion(expression))
                 .flatten();
+            let gap = self.reads_a_file_rumk_does_not(expression, &expansion);
             self.edges.push(IncludeEdge {
                 from: source,
                 expression: expression.to_string(),
@@ -532,9 +534,7 @@ impl<'a> Loader<'a> {
                 undefined,
                 follows_an_unread_include: self.unread_include,
             });
-            // An include Make may not even read says nothing about what Make
-            // holds below it, so only one Make certainly reads is a gap.
-            self.unread_include |= activity == Truth::True;
+            self.unread_include |= gap;
             return;
         };
         for expanded in include_paths(value) {
@@ -561,6 +561,35 @@ impl<'a> Loader<'a> {
                 self.visit(discovered);
             }
         }
+    }
+
+    /// Whether Make can hold something from an include Rumk did not follow.
+    /// Rumk reads none of the files such an include names, so whatever Make
+    /// took from it, Make holds below and Rumk does not. Only where Rumk can
+    /// name every file Make would read there and finds none of them did Make
+    /// certainly take nothing: an include under a condition Make decides while
+    /// it reads counts either way, since Make may take the branch.
+    fn reads_a_file_rumk_does_not(&self, expression: &str, expansion: &Expansion) -> bool {
+        let Some(value) = expansion.value.as_deref() else {
+            // An expression left unexpanded by anything but a name without a
+            // value names files Rumk cannot, such as a `$(wildcard ...)` or a
+            // `$(shell ...)` pattern.
+            let Some(undefined) = self.undefined_expansion(expression) else {
+                return true;
+            };
+            return undefined
+                .paths
+                .iter()
+                .any(|path| !undefined.missing.contains(path));
+        };
+        include_paths(value).iter().any(|path| {
+            // A pattern is matched against the working directory, so which
+            // files it names is not a question Rumk answers about one path.
+            is_dynamic_path(path)
+                || include_candidates(&self.working_directory, path, self.options)
+                    .iter()
+                    .any(|candidate| candidate.is_file())
+        })
     }
 
     /// Which files GNU Make reads for an include expression Rumk could only

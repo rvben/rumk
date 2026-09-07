@@ -146,6 +146,94 @@ fn says_nothing_about_a_name_an_include_rumk_could_not_read_may_have_defined() {
     assert!(diagnostics.is_empty(), "{diagnostics:?}");
 }
 
+#[test]
+fn says_nothing_about_a_name_an_include_under_a_condition_may_have_defined() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("conf")).unwrap();
+    std::fs::create_dir(directory.path().join("arch")).unwrap();
+    std::fs::write(directory.path().join("conf/a.mk"), "P := arch\n").unwrap();
+    std::fs::write(directory.path().join("arch/rules.mk"), "X := 1\n").unwrap();
+    // Make decides the condition while it reads, so it may hold whatever
+    // conf/a.mk defines by the time it reaches line 4.
+    std::fs::write(
+        &root,
+        "ifdef Q\ninclude $(wildcard conf/*.mk)\nendif\ninclude $(P)/rules.mk\nP ?= fallback\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_name_a_conditional_include_rumk_did_not_follow_defines() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("conf.mk"), "P := sub\n").unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    // Rumk can name the file line 2 reads and finds it, but does not follow an
+    // include Make may not reach, so what P holds on line 4 is not settled.
+    std::fs::write(
+        &root,
+        "ifdef Q\ninclude conf.mk\nendif\ninclude $(P)/rules.mk\nP ?= fallback\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_definition_below_a_conditional_include_that_finds_no_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    // Rumk names the file line 2 would read and finds nothing there, so Make
+    // takes nothing from it whether or not it reaches the line, and P has no
+    // value on line 4 in either reading.
+    std::fs::write(
+        &root,
+        "ifdef Q\n-include local.mk\nendif\ninclude $(P)/rules.mk\nP := sub\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].severity, Severity::Error);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("expands 'P' before line 5 defines it"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn says_nothing_about_a_name_an_include_it_could_not_expand_read_a_file_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(directory.path().join("conf.mk"), "P := sub\n").unwrap();
+    std::fs::write(directory.path().join("sub/rules.mk"), "X := 1\n").unwrap();
+    // D contributes nothing, so Make reads conf.mk on line 1 and holds what it
+    // defines. Rumk reports that reading rather than following it.
+    std::fs::write(
+        &root,
+        "include $(D)conf.mk\ninclude $(P)/rules.mk\nP ?= fallback\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
 /// Strips every permission from `path` and reports whether that made it
 /// unreadable; root reads a file regardless of its mode, and then there is
 /// nothing to test.
