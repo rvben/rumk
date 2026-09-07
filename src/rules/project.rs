@@ -6,7 +6,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::{BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
 use crate::project::{IncludeEdge, IncludeResolution, Project};
-use crate::project_analysis::{ProjectSemanticIndex, ProjectTargetSymbol, SourceLocation};
+use crate::project_analysis::{ProjectSemanticIndex, ProjectTargetSymbol};
 use crate::rules::{Rule, RuleCategory};
 
 pub struct MixedTargetSeparators;
@@ -514,22 +514,18 @@ impl Rule for UndefinedVariableReference {
 /// giving it a value. Make expands `:=` where it is written, so the value
 /// further down never reaches it, and the reference contributes nothing.
 ///
-/// A definition Make may never read is left out: that a name has no definition
-/// Make certainly reads is the other thing MK208 reports, and reporting both
-/// would say the same mistake twice.
+/// A definition Make may never read is passed over rather than reported: that a
+/// name has no definition Make certainly reads is the other thing MK208 reports,
+/// and reporting both would say the same mistake twice. Passing over such a
+/// definition rather than dropping the reading is what makes the reading before
+/// `ifdef CI` / `EXTRA := -g` / `endif` / `EXTRA := -O2` report the definition
+/// on the last line, which Make does certainly read.
 fn read_too_early(rule: &'static str, project: &Project) -> Vec<Diagnostic> {
     let index = project.analysis();
     project
         .evaluation()
         .read_too_early()
         .into_iter()
-        .filter(|reading| {
-            index.is_definitely_active(SourceLocation {
-                source: reading.defined.source,
-                line: reading.defined.line,
-                column: 1,
-            })
-        })
         .map(|reading| {
             Diagnostic::new(
                 rule,

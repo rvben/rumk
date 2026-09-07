@@ -158,6 +158,9 @@ struct Definition {
     name: String,
     at: EvaluationLocation,
     defines_a_value: bool,
+    /// Whether Make certainly reads it, rather than reaching it only through a
+    /// branch whose condition Make decides while it reads.
+    certain: bool,
 }
 
 /// A name a definition read where Make had given it no value yet, kept with
@@ -261,6 +264,7 @@ impl Evaluator {
             name: variable.name.clone(),
             at: location,
             defines_a_value: true,
+            certain: activity == Truth::True,
         });
         let definition = self.definitions_read.len() - 1;
         self.store_assignment(variable, location, activity);
@@ -271,8 +275,13 @@ impl Evaluator {
         if !restates {
             self.values_given.insert(variable.name.clone());
         }
+        // An assignment Make may not read is held indeterminate for that reason
+        // alone, so what it writes back is a question only for the ones Make
+        // certainly reads.
+        let indeterminate =
+            activity == Truth::True && self.restates_an_indeterminate_value(&variable.name);
         self.definitions_read[definition].defines_a_value =
-            !restates && !self.writes_nothing(&variable.name);
+            !restates && !self.writes_nothing(&variable.name) && !indeterminate;
         self.record_early_readings(&variable.name, location);
     }
 
@@ -316,14 +325,14 @@ impl Evaluator {
         self.early_readings.extend(readings);
     }
 
-    /// Every name a definition read before the definition that gives it a
-    /// value, in the order Make read them. Answering this needs the whole
-    /// reading, so it holds only once the project is loaded.
+    /// Every name a definition read before a definition Make certainly reaches
+    /// gives it a value, in the order Make read them. Answering this needs the
+    /// whole reading, so it holds only once the project is loaded.
     pub fn read_too_early(&self) -> Vec<ReadTooEarly> {
         self.early_readings
             .iter()
             .filter_map(|reading| {
-                self.definition_after(&reading.name, reading.definitions_read)
+                self.certain_definition_after(&reading.name, reading.definitions_read)
                     .map(|defined| ReadTooEarly {
                         name: reading.name.clone(),
                         at: reading.at,
@@ -410,6 +419,21 @@ impl Evaluator {
         }
     }
 
+    /// Whether what `name` now holds is a value Rumk could not work out because
+    /// a branch Make decides while it reads had already left that same name
+    /// indeterminate. `EXT := $(strip $(EXT))` under such a branch may write
+    /// back exactly what the caller supplied, so nothing can be said to have
+    /// been read too early for it.
+    fn restates_an_indeterminate_value(&self, name: &str) -> bool {
+        matches!(
+            self.variables.get(name).map(|state| &state.value),
+            Some(StoredValue::Unknown {
+                reason: BlockedReason::IndeterminateAssignment(blocked),
+                ..
+            }) if blocked == name
+        )
+    }
+
     /// Whether what `name` now holds rests on that same name having had no
     /// value where it was written: the definition read the name back, so the
     /// value it wrote is the one the name arrived with.
@@ -469,10 +493,33 @@ impl Evaluator {
         name: &str,
         definitions_read: usize,
     ) -> Option<EvaluationLocation> {
+        self.find_definition_after(name, definitions_read, |_| true)
+    }
+
+    /// Where GNU Make certainly gives `name` a value after `definitions_read`,
+    /// passing over the definitions it reaches only through a branch whose
+    /// condition it decides while it reads. Those say nothing about whether a
+    /// reading before them was too early, because Make may reach none of them.
+    pub fn certain_definition_after(
+        &self,
+        name: &str,
+        definitions_read: usize,
+    ) -> Option<EvaluationLocation> {
+        self.find_definition_after(name, definitions_read, |definition| definition.certain)
+    }
+
+    fn find_definition_after(
+        &self,
+        name: &str,
+        definitions_read: usize,
+        accept: impl Fn(&Definition) -> bool,
+    ) -> Option<EvaluationLocation> {
         self.definitions_read
             .get(definitions_read..)?
             .iter()
-            .find(|definition| definition.name == name && definition.defines_a_value)
+            .find(|definition| {
+                definition.name == name && definition.defines_a_value && accept(definition)
+            })
             .map(|definition| definition.at)
     }
 

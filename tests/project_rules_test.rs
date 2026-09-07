@@ -713,6 +713,70 @@ fn reports_a_name_with_no_definition_make_certainly_reads_only_once() {
 }
 
 #[test]
+fn says_nothing_where_a_branch_leaves_the_definition_below_restating_the_caller() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Line 3 leaves EXT indeterminate, so what line 5 writes is unknown: it may
+    // be exactly the value the caller supplied, which is what line 1 reads.
+    std::fs::write(
+        &root,
+        "BAD := $(strip $(EXT))\nifdef BAD\nEXT := other\nendif\nEXT := $(strip $(EXT))\n",
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_definition_a_branch_left_indeterminate_through_another_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Line 3 leaves Y indeterminate, but line 5 writes X from Y rather than from
+    // X, so it gives X a value line 1 could not have read.
+    std::fs::write(&root, "A := $(X)\nifdef Q\nY := one\nendif\nX := $(Y)\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    // Y itself has no definition Make certainly reads, which is the other thing
+    // the rule reports.
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 5);
+    assert_eq!(
+        diagnostics[0].message,
+        "Variable 'Y' is referenced but not defined"
+    );
+    assert_eq!(diagnostics[1].line, 1);
+    assert_eq!(
+        diagnostics[1].message,
+        "Variable 'X' is read before line 5 defines it"
+    );
+}
+
+#[test]
+fn names_the_definition_make_certainly_reads_past_one_it_may_not() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make may never read line 3, but it certainly reads line 5, so OUT is
+    // '/app' whichever way the condition goes.
+    std::fs::write(
+        &root,
+        "OUT := $(BUILD)/app\nifdef FEATURE\nBUILD := debug\nendif\nBUILD := build\n",
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+    assert_eq!(
+        diagnostics[0].message,
+        "Variable 'BUILD' is read before line 5 defines it"
+    );
+}
+
+#[test]
 fn reachability_requires_explicit_entries_and_follows_cross_file_edges() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
