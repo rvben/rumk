@@ -1813,3 +1813,58 @@ fn large_directory_checks_match_serial_batches() {
     assert_eq!(parallel.len(), 160);
     assert_eq!(parallel, serial);
 }
+
+#[test]
+fn external_variable_config_applies_to_disk_and_stdin_without_hiding_typos() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("rumk.toml"),
+        "[MK208]\nenabled=true\nexternal-variables=['TESTS']\n",
+    )
+    .unwrap();
+    let source = "FLAGS = $(TESTS) $(TSET)\n";
+    std::fs::write(directory.path().join("Makefile"), source).unwrap();
+    let disk = rumk()
+        .current_dir(directory.path())
+        .args(["check", "Makefile", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let mut child = rumk()
+        .current_dir(directory.path())
+        .args([
+            "check",
+            "-",
+            "--stdin-filename",
+            "Makefile",
+            "--output-format",
+            "json",
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let buffer = child.wait_with_output().unwrap();
+    assert_eq!(disk.status.code(), Some(1));
+    assert_eq!(disk.stdout, buffer.stdout);
+    assert_eq!(disk.stderr, buffer.stderr);
+    let diagnostics: Value = serde_json::from_slice(&disk.stdout).unwrap();
+    let values = diagnostics.as_array().unwrap();
+    assert_eq!(values.len(), 1);
+    assert!(values[0]["message"].as_str().unwrap().contains("'TSET'"));
+    let shown = rumk()
+        .current_dir(directory.path())
+        .args(["config", "get", "MK208.external-variables"])
+        .output()
+        .unwrap();
+    assert!(shown.status.success());
+    assert!(String::from_utf8(shown.stdout).unwrap().contains("TESTS"));
+}

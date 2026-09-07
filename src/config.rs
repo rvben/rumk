@@ -308,6 +308,9 @@ impl Config {
             "command-targets" if rule_id == "MK201" => {
                 settings.options.get("command-targets").map(value_string)
             }
+            "external-variables" if rule_id == "MK208" => {
+                settings.options.get("external-variables").map(value_string)
+            }
             "max-lines" if rule_id == "MK104" => {
                 settings.options.get("max-lines").map(value_string)
             }
@@ -587,6 +590,9 @@ fn default_settings() -> BTreeMap<String, RuleSettings> {
                                 .to_vec(),
                         ),
                     );
+                }
+                "MK208" => {
+                    options.insert("external-variables".into(), toml::Value::Array(Vec::new()));
                 }
                 "MK201" => {
                     options.insert("placement".to_string(), toml::Value::String("auto".into()));
@@ -875,6 +881,7 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
         ("MK102" | "MK103", "style") => Ok("style"),
         ("MK201", "placement") => Ok("placement"),
         ("MK201", "command-targets") => Ok("command-targets"),
+        ("MK208", "external-variables") => Ok("external-variables"),
         ("MK104", "max-lines") => Ok("max-lines"),
         ("MK215", "required") => Ok("required"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
@@ -928,9 +935,12 @@ fn build_rule(
         "MK205" => Box::new(rules::best_practices::DependencyCycle),
         "MK206" => Box::new(rules::project::MissingInclude),
         "MK207" => Box::new(rules::project::IncludeCycle),
-        "MK208" => Box::new(rules::project::UndefinedVariableReference::new(
-            global.predefined_variables.keys().cloned(),
-        )),
+        "MK208" => Box::new(
+            rules::project::UndefinedVariableReference::new(
+                global.predefined_variables.keys().cloned(),
+            )
+            .external_variables(external_variables_option(settings)?),
+        ),
         "MK209" => Box::new(rules::project::UnreachableTarget::new(
             global.entry_targets.clone(),
         )),
@@ -953,6 +963,23 @@ fn build_rule(
     };
 
     Ok(rule)
+}
+
+fn external_variables_option(settings: &RuleSettings) -> Result<Vec<String>> {
+    let names = match settings.options.get("external-variables") {
+        Some(value) => parse_string_array(value, "MK208.external-variables")?,
+        None => Vec::new(),
+    };
+    for name in &names {
+        if name.is_empty()
+            || name
+                .chars()
+                .any(|c| c.is_whitespace() || "$:#=\\(){}*?[];%".contains(c))
+        {
+            bail!("MK208.external-variables entries must be literal variable names without whitespace or Make metacharacters");
+        }
+    }
+    Ok(names)
 }
 
 fn command_targets_option(settings: &RuleSettings) -> Result<Vec<String>> {

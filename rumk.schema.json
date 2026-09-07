@@ -49,7 +49,7 @@
     "MK205": { "$ref": "#/$defs/RuleConfig" },
     "MK206": { "$ref": "#/$defs/RuleConfig" },
     "MK207": { "$ref": "#/$defs/RuleConfig" },
-    "MK208": { "$ref": "#/$defs/RuleConfig" },
+    "MK208": { "$ref": "#/$defs/MK208Config" },
     "MK209": { "$ref": "#/$defs/RuleConfig" },
     "MK210": { "$ref": "#/$defs/RuleConfig" },
     "MK211": { "$ref": "#/$defs/RuleConfig" },
@@ -239,6 +239,16 @@
             }
           }
         }
+      ],
+      "unevaluatedProperties": false
+    },
+    "MK208Config": {
+      "allOf": [
+        { "$ref": "#/$defs/RuleBase" },
+        { "properties": { "external-variables": {
+          "description": "Exact caller-supplied names accepted by MK208 without assuming values; local read-before-definition warnings remain enabled.",
+          "type": "array", "items": { "type": "string", "minLength": 1 }, "default": []
+        } } }
       ],
       "unevaluatedProperties": false
     },

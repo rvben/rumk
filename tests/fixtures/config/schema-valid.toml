@@ -32,6 +32,7 @@ style = "lower-case"
 placement = "adjacent"
 
 [MK208]
+external-variables = ["TESTS"]
 enabled = true
 severity = "info"
 

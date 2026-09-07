@@ -261,7 +261,10 @@ The original Rumk `[rules]` and `[ignore]` configuration sections remain accepte
 
 `include-paths` models GNU Make's `-I` search directories and resolves relative entries from the
 configuration directory. `predefined-variables` supplies command-line-style values to safe
-evaluation and names expected by opt-in rule `MK208`. That rule intentionally ignores references
+evaluation and names expected by opt-in rule `MK208`.
+The `MK208.external-variables` option accepts exact caller-supplied names
+without inventing their values; typos and local read-before-definition warnings
+remain visible. That rule intentionally ignores references
 inside recipes and deferred macro bodies, where command-line parameters and shell values are
 normal. `entry-targets` supplies the roots for opt-in reachability rule `MK209`; the rule stays
 silent without explicit roots because any Make target may be invoked directly from the command

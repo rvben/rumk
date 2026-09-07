@@ -711,13 +711,22 @@ fn blocked_reason_description(reason: &BlockedReason) -> String {
 #[derive(Default)]
 pub struct UndefinedVariableReference {
     predefined: BTreeSet<String>,
+    external: BTreeSet<String>,
 }
 
 impl UndefinedVariableReference {
     pub fn new(predefined: impl IntoIterator<Item = String>) -> Self {
         Self {
             predefined: predefined.into_iter().collect(),
+            external: BTreeSet::new(),
         }
+    }
+
+    /// Names intentionally supplied by callers; this does not define a value.
+    /// Local read-before-definition diagnostics remain enabled.
+    pub fn external_variables(mut self, names: impl IntoIterator<Item = String>) -> Self {
+        self.external = names.into_iter().collect();
+        self
     }
 }
 
@@ -731,7 +740,7 @@ impl Rule for UndefinedVariableReference {
     }
 
     fn description(&self) -> &'static str {
-        "Static Make variable references in assignments and build-graph declarations should resolve to a project definition, a GNU Make built-in, or a configured predefined variable, and should resolve by the time Make reads them, because a ':=' assignment takes the value the reference has where it is written. Recipes and deferred macro bodies are excluded because they commonly accept external parameters."
+        "Static Make variable references in assignments and build-graph declarations should resolve to a project definition, a GNU Make built-in, a configured predefined variable, or a declared external name, and should resolve by the time Make reads them, because a ':=' assignment takes the value the reference has where it is written. Recipes and deferred macro bodies are excluded because they commonly accept external parameters."
     }
 
     fn category(&self) -> RuleCategory {
@@ -768,6 +777,7 @@ impl Rule for UndefinedVariableReference {
                 })
             })
             .filter(|reference| !self.predefined.contains(&reference.name))
+            .filter(|reference| !self.external.contains(&reference.name))
             .filter(|reference| !is_defined_by_make(&reference.name))
             .map(|reference| {
                 Diagnostic::new(
