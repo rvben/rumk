@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 const DEFAULT_RULES: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK201", "MK203",
@@ -212,52 +213,29 @@ impl Config {
         self.global.unsafe_fixes
     }
 
-    pub fn is_path_ignored(&self, path: &Path) -> bool {
-        if self.global.include.is_empty() && self.global.exclude.is_empty() {
-            return false;
+    /// Captures path-resolution state for a batch in the current working directory.
+    pub fn path_filter(&self) -> PathFilter<'_> {
+        PathFilter {
+            config: self,
+            root: self
+                .project_root()
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok()),
+            canonical_root: OnceLock::new(),
         }
-        let normalized = self.relative_to_project(path);
-        if !self.global.include.is_empty()
-            && !self
-                .global
-                .include
-                .iter()
-                .any(|pattern| glob_matches(pattern, &normalized))
-        {
-            return true;
-        }
+    }
 
-        self.global
-            .exclude
-            .iter()
-            .any(|pattern| glob_matches(pattern, &normalized))
+    pub fn is_path_ignored(&self, path: &Path) -> bool {
+        self.path_filter().is_path_ignored(path)
     }
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
-        if self.global.exclude.is_empty() {
-            return false;
-        }
-        let normalized = self.relative_to_project(path);
-        self.global
-            .exclude
-            .iter()
-            .any(|pattern| glob_matches(pattern, &normalized))
+        self.path_filter().is_path_excluded(path)
     }
 
-    /// Whether the exclude patterns leave nothing to check below `path`, which
-    /// a directory Rumk cannot read is judged by: `vendor/**` says every file
-    /// under it is excluded, while `vendor` excludes only that one path.
+    /// Whether the exclude patterns cover every file below this directory.
     pub fn excludes_everything_below(&self, path: &Path) -> bool {
-        if self.global.exclude.is_empty() {
-            return false;
-        }
-        let normalized = self.relative_to_project(path);
-        self.global.exclude.iter().any(|pattern| {
-            pattern
-                .replace('\\', "/")
-                .strip_suffix("/**")
-                .is_some_and(|directory| glob_matches(directory, &normalized))
-        })
+        self.path_filter().excludes_everything_below(path)
     }
 
     /// Gives `diagnostic` the severity this configuration sets for the rule
@@ -484,20 +462,7 @@ impl Config {
     }
 
     fn relative_to_project(&self, path: &Path) -> String {
-        let config_root = self.project_root();
-        let current_dir = std::env::current_dir().ok();
-        let root = config_root.or(current_dir.as_deref());
-        if let Some(relative) = root.and_then(|root| path.strip_prefix(root).ok()) {
-            return normalize_path(relative);
-        }
-        let canonical_path = dunce::canonicalize(path).ok();
-        let canonical_root = root.and_then(|root| dunce::canonicalize(root).ok());
-        let relative = canonical_path
-            .as_deref()
-            .zip(canonical_root.as_deref())
-            .and_then(|(path, root)| path.strip_prefix(root).ok())
-            .unwrap_or(path);
-        normalize_path(relative)
+        self.path_filter().relative_to_project(path)
     }
 
     fn project_root(&self) -> Option<&Path> {
@@ -1125,4 +1090,83 @@ fn glob_matches(pattern: &str, path: &str) -> bool {
     }
 
     matches_from(pattern, path, 0, 0, &mut memo)
+}
+
+/// A batch of path filters sharing one root resolution. Create a new filter after
+/// changing directories or replacing the configuration root (for example a symlink).
+/// Individual paths are still resolved on each call to preserve symlink semantics.
+pub struct PathFilter<'a> {
+    config: &'a Config,
+    root: Option<PathBuf>,
+    canonical_root: OnceLock<Option<PathBuf>>,
+}
+
+impl PathFilter<'_> {
+    pub fn is_path_ignored(&self, path: &Path) -> bool {
+        if self.config.global.include.is_empty() && self.config.global.exclude.is_empty() {
+            return false;
+        }
+        let normalized = self.relative_to_project(path);
+        if !self.config.global.include.is_empty()
+            && !self
+                .config
+                .global
+                .include
+                .iter()
+                .any(|pattern| glob_matches(pattern, &normalized))
+        {
+            return true;
+        }
+
+        self.config
+            .global
+            .exclude
+            .iter()
+            .any(|pattern| glob_matches(pattern, &normalized))
+    }
+
+    pub fn is_path_excluded(&self, path: &Path) -> bool {
+        if self.config.global.exclude.is_empty() {
+            return false;
+        }
+        let normalized = self.relative_to_project(path);
+        self.config
+            .global
+            .exclude
+            .iter()
+            .any(|pattern| glob_matches(pattern, &normalized))
+    }
+
+    /// Whether the exclude patterns leave nothing to check below `path`, which
+    /// a directory Rumk cannot read is judged by: `vendor/**` says every file
+    /// under it is excluded, while `vendor` excludes only that one path.
+    pub fn excludes_everything_below(&self, path: &Path) -> bool {
+        if self.config.global.exclude.is_empty() {
+            return false;
+        }
+        let normalized = self.relative_to_project(path);
+        self.config.global.exclude.iter().any(|pattern| {
+            pattern
+                .replace('\\', "/")
+                .strip_suffix("/**")
+                .is_some_and(|directory| glob_matches(directory, &normalized))
+        })
+    }
+
+    fn relative_to_project(&self, path: &Path) -> String {
+        let root = self.root.as_deref();
+        if let Some(relative) = root.and_then(|root| path.strip_prefix(root).ok()) {
+            return normalize_path(relative);
+        }
+        let canonical_path = dunce::canonicalize(path).ok();
+        let canonical_root = self
+            .canonical_root
+            .get_or_init(|| root.and_then(|root| dunce::canonicalize(root).ok()));
+        let relative = canonical_path
+            .as_deref()
+            .zip(canonical_root.as_deref())
+            .and_then(|(path, root)| path.strip_prefix(root).ok())
+            .unwrap_or(path);
+        normalize_path(relative)
+    }
 }

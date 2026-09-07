@@ -356,3 +356,35 @@ fn project_configuration_is_queryable_and_resolves_include_paths_from_the_config
     std::fs::write(&rendered_path, rendered).unwrap();
     assert!(Config::from_file(&rendered_path).is_ok());
 }
+
+#[test]
+#[cfg(unix)]
+fn batch_path_filters_follow_file_symlinks_without_changing_lexical_precedence() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("project");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(
+        root.join(".rumk.toml"),
+        "[global]\nexclude = [\"blocked.mk\"]\n",
+    )
+    .unwrap();
+    for name in ["blocked.mk", "allowed.mk"] {
+        std::fs::write(root.join(name), "all:\n").unwrap();
+    }
+    let alias = directory.path().join("alias");
+    symlink(&root, &alias).unwrap();
+    let config = Config::from_file(&alias.join(".rumk.toml")).unwrap();
+    let filter = config.path_filter();
+    assert!(filter.is_path_excluded(&root.join("blocked.mk")));
+    assert!(!filter.is_path_excluded(&root.join("allowed.mk")));
+    let link = directory.path().join("file.mk");
+    symlink(root.join("blocked.mk"), &link).unwrap();
+    assert!(filter.is_path_excluded(&link));
+    std::fs::remove_file(&link).unwrap();
+    symlink(root.join("allowed.mk"), &link).unwrap();
+    assert!(!filter.is_path_excluded(&link));
+    // Paths already under the lexical config root use that spelling.
+    symlink(root.join("blocked.mk"), alias.join("visible.mk")).unwrap();
+    assert!(!filter.is_path_excluded(&alias.join("visible.mk")));
+}

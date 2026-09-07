@@ -1778,3 +1778,38 @@ fn local_rules_still_check_unselected_includes() {
     assert_eq!(diagnostics[0]["rule"], "MK001");
     assert_eq!(diagnostics[0]["fixable"], false);
 }
+
+#[test]
+fn large_directory_checks_match_serial_batches() {
+    let directory = tempfile::tempdir().unwrap();
+    let names: Vec<_> = (0..160).map(|i| format!("part{i:03}.mk")).collect();
+    for (i, name) in names.iter().enumerate() {
+        std::fs::write(
+            directory.path().join(name),
+            format!("target{i}:\n    echo {i}\n"),
+        )
+        .unwrap();
+    }
+    let check = |paths: &[String]| {
+        let output = rumk()
+            .current_dir(directory.path())
+            .args([
+                "--no-config",
+                "check",
+                "--enable",
+                "MK001",
+                "--output-format",
+                "json",
+            ])
+            .args(paths)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(output.stderr.is_empty());
+        serde_json::from_slice::<Vec<Value>>(&output.stdout).unwrap()
+    };
+    let serial: Vec<_> = names.chunks(80).flat_map(check).collect();
+    let parallel = check(&[".".to_string()]);
+    assert_eq!(parallel.len(), 160);
+    assert_eq!(parallel, serial);
+}

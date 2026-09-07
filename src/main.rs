@@ -566,23 +566,40 @@ fn run_files(
             }
         }
     }
-    let mut reports = Vec::new();
-    for (path, resolved) in &files {
-        let report = if let Some(report) = root_reports.remove(path) {
-            report
-        } else {
-            let project_root = project_roots.contains(path);
-            let context = LintContext {
-                config,
-                path,
-                project_root,
-                contextual: project_root || included_files.contains(resolved),
-                layout_only: operation.formats(),
-                covered_files: &covered_files,
-            };
-            process_file(&context, operation, resolved, None, args.silent, &display)?
+    let process = |&(path, resolved): &(&PathBuf, &PathBuf)| {
+        let project_root = project_roots.contains(path);
+        let context = LintContext {
+            config,
+            path,
+            project_root,
+            contextual: project_root || included_files.contains(resolved),
+            layout_only: operation.formats(),
+            covered_files: &covered_files,
         };
-        reports.extend(report);
+        process_file(&context, operation, resolved, None, args.silent, &display)
+    };
+    let mut reports = Vec::new();
+    if matches!(operation, Operation::Check) {
+        let pending: Vec<_> = files
+            .iter()
+            .filter(|(path, _)| !root_reports.contains_key(*path))
+            .collect();
+        let workers = std::thread::available_parallelism()
+            .map_or(1, usize::from)
+            .min(4);
+        let mut checked = map_checks(&pending, workers, process).into_iter();
+        // Preserve original file order even when root reports and aliases interleave.
+        for path in files.keys() {
+            let report = match root_reports.remove(path) {
+                Some(report) => report,
+                None => checked.next().expect("each pending file has a result")?,
+            };
+            reports.extend(report);
+        }
+    } else {
+        for file in &files {
+            reports.extend(process(&file)?);
+        }
     }
     reports.extend(unreadable_paths.into_iter().filter_map(|(path, error)| {
         let message = error.to_string();
@@ -632,6 +649,38 @@ fn run_files(
     })
 }
 
+/// Independent read-only checks, returned in input order. Small batches stay on
+/// the calling thread; exhausted thread resources reduce concurrency, not coverage.
+fn map_checks<T: Sync, R: Send>(
+    files: &[T],
+    workers: usize,
+    process: impl Fn(&T) -> R + Sync,
+) -> Vec<R> {
+    let workers = workers.min(files.len() / 64);
+    if workers < 2 {
+        return files.iter().map(process).collect();
+    }
+    std::thread::scope(|scope| {
+        let process = &process;
+        let jobs: Vec<_> = files
+            .chunks(files.len().div_ceil(workers))
+            .map(|chunk| {
+                std::thread::Builder::new()
+                    .spawn_scoped(scope, move || chunk.iter().map(process).collect::<Vec<_>>())
+                    .map_err(|_| chunk.iter().map(process).collect::<Vec<_>>())
+            })
+            .collect();
+        jobs.into_iter()
+            .flat_map(|job| match job {
+                Ok(handle) => handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+                Err(completed) => completed,
+            })
+            .collect()
+    })
+}
+
 impl FailOn {
     fn matches(self, severity: Severity) -> bool {
         match self {
@@ -651,6 +700,7 @@ struct Discovery {
 }
 
 fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
+    let filter = config.path_filter();
     let mut files = BTreeSet::new();
     let mut unreadable_paths = Vec::new();
     let current_dir = std::env::current_dir().context("Failed to determine current directory")?;
@@ -669,7 +719,7 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
             // Makefile-name filter does not apply.
             Err(_) => {
                 let relative = path.strip_prefix(&current_dir).unwrap_or(path);
-                if !config.is_path_excluded(relative) {
+                if !filter.is_path_excluded(relative) {
                     files.insert(path.clone());
                 }
                 continue;
@@ -677,7 +727,7 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
         };
         if metadata.is_file() {
             let relative = path.strip_prefix(&current_dir).unwrap_or(path);
-            if is_makefile(path) && !config.is_path_excluded(relative) {
+            if is_makefile(path) && !filter.is_path_excluded(relative) {
                 files.insert(path.clone());
             }
             continue;
@@ -712,8 +762,8 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
                             .strip_prefix(path)
                             .unwrap_or(&unreadable.0)
                             .to_path_buf();
-                        if !config.is_path_excluded(&relative)
-                            && !config.excludes_everything_below(&relative)
+                        if !filter.is_path_excluded(&relative)
+                            && !filter.excludes_everything_below(&relative)
                         {
                             unreadable_paths.push(unreadable);
                         }
@@ -730,7 +780,7 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
                 continue;
             }
             let relative = entry.path().strip_prefix(path).unwrap_or(entry.path());
-            if !config.is_path_ignored(relative) {
+            if !filter.is_path_ignored(relative) {
                 files.insert(entry.into_path());
             }
         }
@@ -1541,4 +1591,35 @@ fn show_config(
         }
     }
     Ok(SUCCESS)
+}
+
+#[cfg(test)]
+mod parallel_tests {
+    use super::map_checks;
+
+    #[test]
+    fn parallel_checks_preserve_order_and_errors() {
+        let files: Vec<_> = (0..257).collect();
+        let check = |value: &usize| {
+            if value % 7 == 0 {
+                std::thread::yield_now();
+            }
+            if value % 11 == 0 {
+                Err(*value)
+            } else {
+                Ok(value * 2)
+            }
+        };
+        assert_eq!(map_checks(&files, 4, check), map_checks(&files, 1, check));
+    }
+
+    #[test]
+    fn small_checks_use_the_calling_thread() {
+        let caller = std::thread::current().id();
+        for count in [0, 1, 127] {
+            let files = vec![(); count];
+            let results = map_checks(&files, 4, |_| std::thread::current().id());
+            assert_eq!(results, vec![caller; count]);
+        }
+    }
 }
