@@ -228,22 +228,54 @@ impl Rule for MissingInclude {
 /// the name being sought can grow at every step, but the rules available to
 /// reach it cannot.
 ///
+/// Two kinds of pattern rule reach less far than that. A rule written with `::`
+/// is terminal: Make uses it only where what it asks for is there to be had
+/// without another pattern rule, so a chain stops at one. And a rule whose
+/// target is `%` alone matches every name there is, which would put the whole
+/// rule set in front of every step of every chain, so Make declines to use a
+/// nonterminal one for what another pattern rule asks for. Neither restriction
+/// touches the name the search starts from. Both are settled a rule at a time,
+/// because one pattern written twice is two rules and Make may use either.
+///
 /// Enough patterns that match one another still put an exponential number of
 /// chains in front of the search, so it gives up after `BUILD_SEARCH_STEPS`.
 /// Giving up means Rumk does not know, and a name Rumk does not know about is
 /// left alone: exhaustion costs a report rather than inventing one.
 fn builds(project: &Project, name: &str) -> bool {
     let mut budget = BUILD_SEARCH_STEPS;
-    builds_along(project, name, &mut Vec::new(), &mut budget) || budget == 0
+    builds_along(
+        project,
+        name,
+        Sought::Outright,
+        &mut Vec::new(),
+        &mut budget,
+    ) || budget == 0
 }
 
 /// Names the search may look at before it gives up. Chains in a Makefile people
 /// wrote are a few rules long and nowhere near this.
 const BUILD_SEARCH_STEPS: u32 = 10_000;
 
+/// Why the search is looking at a name, which decides what may be used to reach
+/// it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Sought {
+    /// The name the search was asked about. Every rule is available here.
+    Outright,
+    /// A name another pattern rule asks for. A nonterminal `%` rule is not
+    /// available here.
+    ForAPattern,
+}
+
 /// `chain` holds the patterns already in use further up this search, which Make
 /// will not use again here.
-fn builds_along(project: &Project, name: &str, chain: &mut Vec<String>, budget: &mut u32) -> bool {
+fn builds_along(
+    project: &Project,
+    name: &str,
+    sought: Sought,
+    chain: &mut Vec<String>,
+    budget: &mut u32,
+) -> bool {
     let Some(remaining) = budget.checked_sub(1) else {
         return false;
     };
@@ -255,10 +287,6 @@ fn builds_along(project: &Project, name: &str, chain: &mut Vec<String>, budget: 
     index.targets.iter().any(|(pattern, symbol)| {
         pattern.contains('%')
             && !chain.contains(pattern)
-            && symbol
-                .declarations
-                .iter()
-                .any(|declaration| declaration.has_recipe)
             && pattern_stem(pattern, name)
                 // An implicit rule matches on a stem of at least one character,
                 // so '%.mk' passes over '.mk' however plainly it appears to fit.
@@ -266,11 +294,39 @@ fn builds_along(project: &Project, name: &str, chain: &mut Vec<String>, budget: 
                 .is_some_and(|stem| {
                     let stem = stem.to_string();
                     chain.push(pattern.clone());
-                    let reachable = symbol.dependencies.iter().all(|dependency| {
-                        let prerequisite = dependency.prerequisite.replace('%', &stem);
-                        project.working_directory().join(&prerequisite).exists()
-                            || builds_along(project, &prerequisite, chain, budget)
-                    });
+                    // One pattern written more than once is that many rules, each
+                    // asking for what stands on its own line, and Make needs only
+                    // one of them to work out.
+                    let reachable = symbol
+                        .declarations
+                        .iter()
+                        .filter(|declaration| declaration.has_recipe)
+                        .filter(|declaration| {
+                            sought == Sought::Outright || pattern != "%" || declaration.double_colon
+                        })
+                        .any(|declaration| {
+                            symbol
+                                .dependencies
+                                .iter()
+                                .filter(|dependency| dependency.location == declaration.location)
+                                .all(|dependency| {
+                                    let prerequisite = dependency.prerequisite.replace('%', &stem);
+                                    project.working_directory().join(&prerequisite).exists()
+                                        || if declaration.double_colon {
+                                            // A terminal rule reaches no further
+                                            // than a rule naming the file outright.
+                                            index.target(&prerequisite).is_some()
+                                        } else {
+                                            builds_along(
+                                                project,
+                                                &prerequisite,
+                                                Sought::ForAPattern,
+                                                chain,
+                                                budget,
+                                            )
+                                        }
+                                })
+                        });
                     chain.pop();
                     reachable
                 })

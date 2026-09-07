@@ -400,6 +400,154 @@ fn says_nothing_about_a_missing_include_one_pattern_rule_builds_both_halves_of()
 }
 
 #[test]
+fn reports_a_missing_include_only_a_match_anything_rule_could_supply_a_step_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make declines a nonterminal '%' rule for what another pattern rule asks
+    // for, so nothing supplies 'config.mid' and 'config.mk' has no rule at all.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'config.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_named_pattern_rule_supplies_that_step_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The same chain and the same files, with the second step spelled out
+    // rather than left to '%', which is the whole of the difference.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk: %.mid\n\t@cp $< $@\n%.mid: %.mid.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_match_anything_rule_builds_outright() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Nothing else asks for 'config.mk', so the restriction does not reach it.
+    std::fs::write(directory.path().join("config.mk.src"), "X := 1\n").unwrap();
+    std::fs::write(&root, "include config.mk\n%: %.src\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_terminal_match_anything_rule_supplies() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Written with '::' the same '%' rule is terminal, and the restriction is
+    // on nonterminal ones, so Make uses this one where it declined the last.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk: %.mid\n\t@cp $< $@\n%:: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_a_terminal_pattern_rule_would_have_to_chain_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // A terminal rule takes its prerequisites as they are. 'config.mid' is not
+    // there, and Make will not reach it through '%.mid: %.src'.
+    std::fs::write(directory.path().join("config.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk:: %.mid\n\t@cp $< $@\n%.mid: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'config.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_terminal_pattern_rule_finds_the_source_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The same rules, with what the terminal one asks for on disk.
+    std::fs::write(directory.path().join("config.mid"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk:: %.mid\n\t@cp $< $@\n%.mid: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_a_terminal_rule_asks_a_named_rule_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // What a terminal rule may not reach is another pattern rule. A rule naming
+    // the file outright is not one, and Make uses it.
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk:: %.mid\n\t@cp $< $@\nconfig.mid:\n\t@echo 'X := 1' > $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_written_as_a_terminal_and_an_ordinary_rule() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Each spelling is a rule of its own, and the ordinary one chains.
+    std::fs::write(directory.path().join("config.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk:: %.other\n\t@cp $< $@\n%.mk: %.mid\n\t@cp $< $@\n%.mid: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn reports_a_missing_include_a_pattern_rule_would_have_to_build_twice_over() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
