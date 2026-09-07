@@ -37,7 +37,16 @@ def snapshot(directory):
 
 
 def observation(result):
-    return {key: result[key] for key in ("case", "tool", "exit_code", "stdout", "stderr", "inputs")}
+    value = {key: result[key] for key in ("case", "tool", "exit_code", "stdout", "stderr", "inputs")}
+    # checkmake findings at the same location have changed order across
+    # repeated runs. Preserve raw output in the report, but
+    # compare its complete diagnostic multiset rather than incidental ordering.
+    if result["tool"] == "checkmake" and result["stdout"].strip():
+        diagnostics = json.loads(result["stdout"])
+        if not isinstance(diagnostics, list):
+            raise ValueError("checkmake JSON output must be a diagnostic array")
+        value["stdout"] = json.dumps(sorted(diagnostics, key=lambda item: json.dumps(item, sort_keys=True)), sort_keys=True)
+    return value
 
 
 def main():

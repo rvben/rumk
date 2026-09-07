@@ -33,6 +33,10 @@ records executable hashes, fixes Python hash ordering and terminal settings, and
 all tools. Repeat with `--baseline /tmp/rumk-comparison.json` and a different
 output path to check observation stability. Update pins deliberately in the
 runner and this document together; a version mismatch never silently upgrades.
+The baseline compares checkmake's complete JSON diagnostic multiset because its
+diagnostics can vary in order. Raw output is retained unchanged; duplicate,
+added, removed, or changed findings still affect the comparison. Other tools'
+output is compared in its original order.
 
 Checkmake is configured with `required = test` and `maxBodyLength = 2`. Rumk uses
 the corresponding settings with per-case rule selection. Unmake runs its normal
