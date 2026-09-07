@@ -1632,6 +1632,43 @@ fn says_nothing_about_a_directory_change_in_a_file_included_where_oneshell_holds
 }
 
 #[test]
+fn reports_a_directory_change_where_an_included_oneshell_sits_in_a_branch_make_skips() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make never reads this '.ONESHELL:', so the directory is gone by 'pwd'
+    // exactly as it would be had the line not been written.
+    std::fs::write(
+        directory.path().join("settings.mk"),
+        "ifeq (1,2)\n.ONESHELL:\nendif\n",
+    )
+    .unwrap();
+    std::fs::write(&root, "include settings.mk\nall:\n\tcd build\n\tpwd\n").unwrap();
+
+    let diagnostics = DirectoryChangeInRecipe.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+}
+
+#[test]
+fn says_nothing_about_a_directory_change_where_an_oneshell_holds_only_sometimes() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Whether the directory survives is decided when Make runs, and it does
+    // survive where 'ONE' is defined, so there is nothing to hold the file to.
+    std::fs::write(
+        directory.path().join("settings.mk"),
+        "ifdef ONE\n.ONESHELL:\nendif\n",
+    )
+    .unwrap();
+    std::fs::write(&root, "include settings.mk\nall:\n\tcd build\n\tpwd\n").unwrap();
+
+    let diagnostics = DirectoryChangeInRecipe.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
 fn reports_a_directory_change_in_an_included_file_against_that_file() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

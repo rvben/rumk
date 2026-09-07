@@ -717,7 +717,11 @@ impl Parser {
         let targets = split_top_level_words(content[..separator.position].trim());
         let rule_body = &content[separator.position + separator.length..];
 
-        if targets.iter().any(|target| target == ".ONESHELL") {
+        // A '.ONESHELL:' in a branch whose literal condition fails is not a
+        // setting Make ever holds. One in a branch decided at run time is a
+        // setting Make may hold, and a recipe run under it keeps its directory,
+        // so the file counts as declaring it.
+        if statement.reach != Reach::Never && targets.iter().any(|target| target == ".ONESHELL") {
             self.makefile.oneshell = true;
         }
 
