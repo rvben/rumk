@@ -637,6 +637,62 @@ fn reports_an_append_read_before_the_definition_it_needs() {
 }
 
 #[test]
+fn points_at_the_reference_inside_a_define_body_rather_than_at_its_header() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // 'define NAME :=' expands the body where it is written, so BODY is
+    // 'second here' and the reading on line 2 came before line 4.
+    std::fs::write(
+        &root,
+        "define BODY :=\nsecond $(LATER) here\nendef\nLATER := x\n",
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(diagnostics[0].column, 8);
+    assert_eq!(
+        diagnostics[0].message,
+        "Variable 'LATER' is read before line 4 defines it"
+    );
+}
+
+#[test]
+fn points_at_the_reference_on_the_continued_line_it_was_written_on() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(&root, "OUT := prefix \\\n  $(LATER) suffix\nLATER := x\n").unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(diagnostics[0].column, 3);
+}
+
+#[test]
+fn points_at_the_definition_where_the_reference_it_read_through_is_elsewhere() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Line 2 reads LATER through INNER, so the file writes no reference to
+    // LATER there. The one on line 4 belongs to another definition and is not
+    // the place the reading happened.
+    std::fs::write(
+        &root,
+        "INNER = $(LATER)\nOUT := $(INNER)\nLATER := x\nUSE := $(LATER)\n",
+    )
+    .unwrap();
+
+    let diagnostics = UndefinedVariableReference::default().check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+    assert_eq!(diagnostics[0].column, 1);
+}
+
+#[test]
 fn names_the_file_the_definition_an_assignment_was_read_before_is_in() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

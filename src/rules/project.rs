@@ -1,11 +1,11 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::analysis::{ReferenceContext, ReferenceKind};
 use crate::builtins::is_defined_by_make;
 use crate::diagnostic::{Diagnostic, Severity};
 use crate::eval::{BlockedReason, EvaluationLocation};
 use crate::parser::Makefile;
-use crate::project::{IncludeEdge, IncludeResolution, Project};
+use crate::project::{IncludeEdge, IncludeResolution, Project, SourceId};
 use crate::project_analysis::{ProjectSemanticIndex, ProjectTargetSymbol};
 use crate::rules::{Rule, RuleCategory};
 
@@ -522,11 +522,13 @@ impl Rule for UndefinedVariableReference {
 /// on the last line, which Make does certainly read.
 fn read_too_early(rule: &'static str, project: &Project) -> Vec<Diagnostic> {
     let index = project.analysis();
+    let sites = ReferenceSites::of(index);
     project
         .evaluation()
         .read_too_early()
         .into_iter()
         .map(|reading| {
+            let (line, column) = sites.of_name(&reading.name, reading.at);
             Diagnostic::new(
                 rule,
                 Severity::Warning,
@@ -535,27 +537,72 @@ fn read_too_early(rule: &'static str, project: &Project) -> Vec<Diagnostic> {
                     reading.name,
                     definition_site(project, reading.at.source, reading.defined)
                 ),
-                reading.at.line,
-                reference_column(index, &reading.name, reading.at),
+                line,
+                column,
             )
             .with_source(project.file(reading.at.source).path.clone())
         })
         .collect()
 }
 
-/// Where the reference to `name` begins on the line the definition starts on,
-/// so the report points at the reference rather than at the line. A reference
-/// on a continued line is reported at the start of the definition.
-fn reference_column(index: &ProjectSemanticIndex, name: &str, at: EvaluationLocation) -> usize {
-    index
-        .references
-        .iter()
-        .find(|reference| {
-            reference.name == name
-                && reference.location.source == at.source
-                && reference.location.line == at.line
-        })
-        .map_or(1, |reference| reference.location.column)
+/// Where the references a project makes sit, in reading order, together with
+/// how far down the file each definition runs. A definition can carry its
+/// references well below the line it starts on, as a `define` body does and as
+/// a line continued with a backslash does, so pointing at the reference means
+/// looking through the whole definition rather than its first line.
+struct ReferenceSites<'a> {
+    /// Keyed by source, line and column, so the references inside one
+    /// definition come out in the order the file reads them.
+    references: BTreeMap<(SourceId, usize, usize), &'a str>,
+    /// The last line of the definition starting at each source and line.
+    extents: BTreeMap<(SourceId, usize), usize>,
+}
+
+impl<'a> ReferenceSites<'a> {
+    fn of(index: &'a ProjectSemanticIndex) -> Self {
+        Self {
+            references: index
+                .references
+                .iter()
+                .map(|reference| {
+                    (
+                        (
+                            reference.location.source,
+                            reference.location.line,
+                            reference.location.column,
+                        ),
+                        reference.name.as_str(),
+                    )
+                })
+                .collect(),
+            extents: index
+                .variables
+                .values()
+                .flat_map(|symbol| &symbol.definitions)
+                .map(|definition| {
+                    (
+                        (definition.location.source, definition.location.line),
+                        definition.end_line,
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// Where the definition starting at `at` reads `name`, and the start of
+    /// that definition where the reference is one the index does not carry, as
+    /// a reference Rumk reached through another variable is.
+    fn of_name(&self, name: &str, at: EvaluationLocation) -> (usize, usize) {
+        let last = self
+            .extents
+            .get(&(at.source, at.line))
+            .copied()
+            .unwrap_or(at.line);
+        self.references
+            .range((at.source, at.line, 0)..=(at.source, last, usize::MAX))
+            .find(|(_, found)| **found == name)
+            .map_or((at.line, 1), |((_, line, column), _)| (*line, *column))
+    }
 }
 
 #[derive(Default)]
