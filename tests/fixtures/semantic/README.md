@@ -33,3 +33,10 @@ wildcard used only in recipes, and Git's resolved phony declarations. Their
 `source_reduction` fields identify the source paths in the pinned corpus manifest.
 These are reduced authored probes, not executions of upstream builds. Each
 injects a missing source and pairs it with a working spelling.
+
+The external-setting pair passes `TESTS=expected` to the GNU oracle; a name-only
+linter configuration clears the working `TESTS` reference while retaining `TSET`.
+Without that configuration, its working control deliberately warns. The
+`expected_rumk_control_flag` field records this; scores still use observed output.
+The Coccinelle variable pair reduces a nearby definition/reference spelling
+mismatch from the pinned Git Makefile. No upstream build is executed.

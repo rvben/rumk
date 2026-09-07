@@ -39,12 +39,13 @@ def invoke(command, directory, timeout=20):
             "seconds": time.perf_counter() - start}
 
 
-def populate(directory, case, variant, command_targets=()):
+def populate(directory, case, variant, command_targets=(), external_variables=()):
     files = dict(case["files"], Makefile=case[variant])
     if variant == "working":
         files.update(case.get("working_files", {}))
     files.update({"bake.toml": "[formatter]\n", "checkmake.ini": "[minphony]\nrequired =\n"})
-    files["rumk.toml"] = '[MK201]\ncommand-targets = ' + json.dumps(list(command_targets)) + '\n'
+    files["rumk.toml"] = ('[MK201]\ncommand-targets = ' + json.dumps(list(command_targets)) + '\n'
+                          + '[MK208]\nexternal-variables = ' + json.dumps(list(external_variables)) + '\n')
     for name, content in files.items():
         path = Path(name)
         if path.is_absolute() or ".." in path.parts:
@@ -112,12 +113,12 @@ def diagnostic_exit(tool, result):
         result["exit_code"] == 2 and re.search(r"Makefile:\d+: Error:", result["stdout"]) is not None)
 
 
-def safe_fix(tool, binary, make, case, variant, command_targets=()):
+def safe_fix(tool, binary, make, case, variant, command_targets=(), external_variables=()):
     if tool not in ("rumk", "mbake"):
         return {"available": False}
     with tempfile.TemporaryDirectory(prefix="rumk-semantic-fix-") as temp:
         directory = Path(temp)
-        populate(directory, case, variant, command_targets)
+        populate(directory, case, variant, command_targets, external_variables)
         before = COMPARE.snapshot(directory)
         command = (commands(tool, binary) + ["--fix"] if tool == "rumk" else
                    [binary, "format", "--config", "bake.toml", "Makefile"])
@@ -134,14 +135,14 @@ def safe_fix(tool, binary, make, case, variant, command_targets=()):
                 "working_contract_met": contract_matches(behavior, case["oracle"]["working"])}
 
 
-def benchmark(binaries, make, runs, command_targets=()):
+def benchmark(binaries, make, runs, command_targets=(), external_variables=()):
     raw = MANIFEST.read_bytes()
     cases = json.loads(raw)["cases"]
     report = {"schema_version": 1, "manifest_sha256": hashlib.sha256(raw).hexdigest(),
               "platform": platform.platform(), "runs": runs, "warmups": 1,
               "tools": {tool: identity(binary) for tool, binary in binaries.items()},
               "gnu_make": identity(make), "results": [], "failures": [],
-              "command_targets": list(command_targets),
+              "command_targets": list(command_targets), "external_variables": list(external_variables),
               "skipped": sorted(set(COMPARE.PINS) - set(binaries)),
               "method": "Authored paired GNU defects; one fixed rumk defaults+MK208+MK216 profile. Named-defect matching only; unmatched warnings are unscored. No population precision/recall or overall ranking. Checkmake has no required-target policy. Timings include startup; alternating order; fresh copies; warm cache. Fixes use default safe mode (mbake: formatter). Executable hashes do not pin interpreter dependencies."}
     if "GNU Make" not in report["gnu_make"]["version"]:
@@ -170,7 +171,7 @@ def benchmark(binaries, make, runs, command_targets=()):
                 for tool in order:
                     with tempfile.TemporaryDirectory(prefix="rumk-semantic-lint-") as temp:
                         directory = Path(temp)
-                        populate(directory, case, variant, command_targets)
+                        populate(directory, case, variant, command_targets, external_variables)
                         before = COMPARE.snapshot(directory)
                         command = commands(tool, binaries[tool])
                         result = invoke(command, directory)
@@ -187,7 +188,7 @@ def benchmark(binaries, make, runs, command_targets=()):
             for tool in binaries:
                 record = row["tools"][tool][variant]
                 record.update(seconds=samples[tool], median_seconds=statistics.median(samples[tool]))
-                record["safe_fix"] = safe_fix(tool, binaries[tool], make, case, variant, command_targets)
+                record["safe_fix"] = safe_fix(tool, binaries[tool], make, case, variant, command_targets, external_variables)
                 fix = record["safe_fix"]
                 if fix["available"] and (not fix["idempotent"] or
                     any(not diagnostic_exit(tool, fix[step]) for step in ("first", "second"))):
@@ -231,6 +232,8 @@ def main():
     parser.add_argument("--require-all", action="store_true")
     parser.add_argument("--command-target", action="append", default=[],
                         help="Declare project command intent for every rumk case; reported separately from defaults")
+    parser.add_argument("--external-variable", action="append", default=[],
+                        help="Declare a name-only MK208 input for every case; report separately")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, help="Require identical identities and observations, excluding timings")
@@ -241,7 +244,7 @@ def main():
         parser.error("--require-all needs every competitor executable")
     binaries = {tool: str(Path(getattr(args, tool)).resolve())
                 for tool in ("rumk", *COMPARE.PINS) if getattr(args, tool)}
-    report = benchmark(binaries, str(Path(args.make).resolve()), args.runs, args.command_target)
+    report = benchmark(binaries, str(Path(args.make).resolve()), args.runs, args.command_target, args.external_variable)
     if args.baseline and stable_report(report) != stable_report(json.loads(args.baseline.read_text())):
         report["failures"].append("Baseline identities or observations differ")
     args.output.parent.mkdir(parents=True, exist_ok=True)

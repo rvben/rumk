@@ -90,3 +90,10 @@ Three corpus-derived pairs test missing sources alongside optional compiler
 settings, recipe-only wildcard expansion, and resolved `.PHONY` declarations.
 The [coverage audit](prerequisite-coverage.md) measures how many real roots and
 visible dependencies are eligible separately from the authored detection score.
+
+Use `--external-variable TESTS` for a separate name-only MK208 profile applied
+uniformly to every case. It does not pass values to GNU Make or alter the oracle.
+The optional-setting typo pair intentionally flags its working control in the
+unconfigured profile; `expected_rumk_control_flag` records that limitation and
+is not used to derive scores. The configured profile must still catch `TSET`.
+A reduced Git spelling error provides a real-corpus defect control.

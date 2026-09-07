@@ -889,6 +889,59 @@
       "safe_fix": "withheld",
       "expected_rumk_detection": true,
       "source_reduction": "git/contrib/credential/osxkeychain/Makefile: .PHONY"
+    },
+    {
+      "name": "optional-external-typo",
+      "title": "A caller-supplied setting differs from a misspelled name",
+      "dialect": "GNU Make",
+      "rule": "MK208",
+      "files": {},
+      "args": [
+        "TESTS=expected",
+        "probe"
+      ],
+      "broken": "FLAGS = $(TSET)\nprobe:\n\t@echo $(FLAGS)\n",
+      "working": "FLAGS = $(TESTS)\nprobe:\n\t@echo $(FLAGS)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "expected\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "expected_rumk_control_flag": true
+    },
+    {
+      "name": "corpus-coccicheck-typo",
+      "title": "A misspelled pending-patch variable silently drops its value",
+      "dialect": "GNU Make",
+      "rule": "MK208",
+      "files": {},
+      "args": [
+        "probe"
+      ],
+      "broken": "COCCICHECK_PATCHES_PENDING = pending.patch\nCOCCI_RULES_GLOB += $(COCCICHEC_PATCHES_PENDING)\nprobe:\n\t@echo $(COCCI_RULES_GLOB)\n",
+      "working": "COCCICHECK_PATCHES_PENDING = pending.patch\nCOCCI_RULES_GLOB += $(COCCICHECK_PATCHES_PENDING)\nprobe:\n\t@echo $(COCCI_RULES_GLOB)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "pending.patch\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "git/Makefile:3514,3525 at the pinned corpus revision; reduced spelling effect, not an upstream build execution"
     }
   ]
 }

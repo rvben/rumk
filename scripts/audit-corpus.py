@@ -13,6 +13,7 @@ import platform
 import statistics
 import subprocess
 import time
+import tempfile
 
 
 def digest(data):
@@ -46,12 +47,13 @@ def makefiles(root):
                   and not (root / name).is_symlink())
 
 
-def invoke(binary, root, args, timeout, data=None):
+def invoke(binary, root, args, timeout, data=None, configuration=None):
     env = dict(os.environ, NO_COLOR="1", TERM="dumb", LC_ALL="C")
     for name in ("MAKEFLAGS", "MFLAGS", "GNUMAKEFLAGS"):
         env.pop(name, None)
     start = time.perf_counter()
-    result = subprocess.run([str(binary), "--no-config", *args], cwd=root,
+    config_flags = ["--config", str(configuration)] if configuration else ["--no-config"]
+    result = subprocess.run([str(binary), *config_flags, *args], cwd=root,
                             input=data, capture_output=True, timeout=timeout, env=env)
     elapsed = time.perf_counter() - start
     if result.returncode not in (0, 1):
@@ -65,7 +67,16 @@ def normalized(result, root):
             "stderr": result.stderr.decode().replace(str(root), "<project>")}
 
 
-def audit(binary, root, runs, timeout, extra_rules=()):
+def audit(binary, root, runs, timeout, extra_rules=(), external_variables=()):
+    if not external_variables:
+        return _audit(binary, root, runs, timeout, extra_rules)
+    with tempfile.TemporaryDirectory(prefix="rumk-corpus-config-") as temp:
+        configuration = Path(temp) / "rumk.toml"
+        configuration.write_text('[MK208]\nexternal-variables = ' + json.dumps(list(external_variables)) + '\n')
+        return _audit(binary, root, runs, timeout, extra_rules, configuration)
+
+
+def _audit(binary, root, runs, timeout, extra_rules=(), configuration=None):
     if git(root, "status", "--porcelain", "--untracked-files=no").strip():
         raise RuntimeError(f"Tracked files must be clean: {root}")
     revision = git(root, "rev-parse", "HEAD").decode().strip()
@@ -81,7 +92,7 @@ def audit(binary, root, runs, timeout, extra_rules=()):
         samples = []
         expected = None
         for iteration in range(runs + 1):  # one unmeasured warm-up
-            result, elapsed = invoke(binary, root, ["check", path, "--output-format", "json", *check_flags], timeout)
+            result, elapsed = invoke(binary, root, ["check", path, "--output-format", "json", *check_flags], timeout, configuration=configuration)
             value = normalized(result, root)
             json.loads(value["stdout"])
             if expected is not None and value != expected:
@@ -90,7 +101,7 @@ def audit(binary, root, runs, timeout, extra_rules=()):
             if iteration:
                 samples.append(elapsed)
         buffer, _ = invoke(binary, root, ["check", "-", "--stdin-filename", path,
-                                         "--output-format", "json", *check_flags], timeout, data)
+                                         "--output-format", "json", *check_flags], timeout, data, configuration)
         if normalized(buffer, root) != expected:
             failures.append(f"{path}: disk/stdin diagnostics differ")
         format_args = ["fmt", "-", "--stdin-filename", path, "--extend-enable", "MK105"]
@@ -116,6 +127,7 @@ def main():
     parser.add_argument("--project", type=Path, action="append", required=True)
     parser.add_argument("--manifest", type=Path, help="Require exactly the project names and revisions in a pinned manifest")
     parser.add_argument("--extend-enable", action="append", default=[], help="Add an opt-in rule to disk/stdin checks")
+    parser.add_argument("--external-variable", action="append", default=[], help="Declare a name-only MK208 input for every checked root")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -136,12 +148,13 @@ def main():
     binary = args.binary.resolve()
     report = {"schema_version": 1, "binary_sha256": digest(binary.read_bytes()),
               "platform": platform.platform(), "runs": args.runs, "extra_rules": args.extend_enable,
-              "method": "Clean tracked Makefiles; built-in checking defaults plus extra_rules; formatting adds MK105; one warm-up; no Make execution. Diagnostics are unreviewed observations, not confirmed defects.",
+              "external_variables": args.external_variable,
+              "method": "Clean tracked Makefiles; built-in checking defaults plus extra_rules and recorded external_variables; formatting adds MK105; one warm-up; no Make execution. Diagnostics are unreviewed observations, not confirmed defects.",
               "projects": {}}
     if manifest is not None:
         report["manifest"] = manifest
     for root in roots:
-        value = audit(binary, root, args.runs, args.timeout, args.extend_enable)
+        value = audit(binary, root, args.runs, args.timeout, args.extend_enable, args.external_variable)
         report["projects"][root.name] = value
         print(f'{root.name}: {len(value["files"])} files, {len(value["failures"])} failures', flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)

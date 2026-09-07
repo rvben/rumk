@@ -69,7 +69,7 @@ class SemanticIntegrationTest(unittest.TestCase):
                 broken = row["tools"]["rumk"]["broken"]
                 working = row["tools"]["rumk"]["working"]
                 self.assertEqual(broken["detected"], case["expected_rumk_detection"])
-                self.assertFalse(working["detected"])
+                self.assertEqual(working["detected"], case.get("expected_rumk_control_flag", False))
                 fix = broken["safe_fix"]
                 if case["safe_fix"] == "repair":
                     self.assertTrue(fix["changed"])
@@ -77,6 +77,18 @@ class SemanticIntegrationTest(unittest.TestCase):
                 else:
                     self.assertTrue(fix["original_contract_preserved"])
                     self.assertFalse(fix["changed"])
+
+    def test_external_names_clear_optional_controls_without_hiding_defects(self):
+        report = SEMANTIC.benchmark({"rumk": str(self.binary)}, self.make, 1, external_variables=["TESTS"])
+        self.assertEqual(report["failures"], [])
+        self.assertEqual(report["external_variables"], ["TESTS"])
+        cases = {case["name"]: case for case in json.loads(SEMANTIC.MANIFEST.read_text())["cases"]}
+        for row in report["results"]:
+            with self.subTest(case=row["name"]):
+                self.assertEqual(row["tools"]["rumk"]["broken"]["detected"], cases[row["name"]]["expected_rumk_detection"])
+                self.assertFalse(row["tools"]["rumk"]["working"]["detected"])
+        optional = next(row for row in report["results"] if row["name"] == "recipe-only-compiler-settings")
+        self.assertEqual(json.loads(optional["tools"]["rumk"]["working"]["stdout"]), [])
 
     def test_broad_pattern_can_feed_a_builtin_after_direct_match_fails(self):
         case = {

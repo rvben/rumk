@@ -65,6 +65,20 @@ class CorpusAuditTest(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("missing.txt", findings[0]["message"])
 
+    def test_name_only_external_configuration_preserves_other_diagnostics(self):
+        (self.repo / "Makefile").write_text("FLAGS = $(TESTS) $(TSET)\nprobe: missing.txt\n")
+        self.git("add", "Makefile")
+        self.git("-c", "user.name=Corpus Test", "-c", "user.email=corpus@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-m", "test: external settings")
+        before = AUDIT.audit(BINARY, self.repo, 1, 10, ["MK208", "MK216"])
+        after = AUDIT.audit(BINARY, self.repo, 1, 10, ["MK208", "MK216"], ["TESTS"])
+        self.assertEqual(after["failures"], [])
+        old = json.loads(before["files"][0]["check"]["stdout"])
+        new = json.loads(after["files"][0]["check"]["stdout"])
+        self.assertEqual(new, [d for d in old if not (d["rule"] == "MK208" and "'TESTS'" in d["message"])])
+        self.assertTrue(any("'TSET'" in d["message"] for d in new))
+        self.assertTrue(any(d["rule"] == "MK216" for d in new))
+
     def test_audit_detects_new_side_effects_and_unstable_output(self):
         original = AUDIT.invoke
         checks = 0
