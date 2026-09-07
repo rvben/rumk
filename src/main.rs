@@ -11,7 +11,7 @@ use rumk::{fix, inline_config, rules, source};
 use serde::Serialize;
 use similar::TextDiff;
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -160,6 +160,10 @@ struct FmtArgs {
 
 #[derive(Args, Default)]
 struct SharedArgs {
+    /// Read stdin as this file (requires '-' as the only path); never writes it
+    #[arg(long)]
+    stdin_filename: Option<PathBuf>,
+
     /// Disable specific rules (comma-separated)
     #[arg(short, long)]
     disable: Option<String>,
@@ -387,7 +391,7 @@ fn run() -> Result<u8> {
             show_config(&config, subcommand, defaults, no_defaults, output)
         }
         Commands::Check(args) => {
-            let mut config = load_config(cli.config.as_deref(), cli.no_config)?;
+            let mut config = load_input_config(cli.config.as_deref(), cli.no_config, &args.shared)?;
             apply_shared_args(&mut config, &args.shared, args.unsafe_fixes())?;
             let operation = if args.fix {
                 Operation::CheckFix
@@ -399,7 +403,7 @@ fn run() -> Result<u8> {
             run_files(args.paths, &config, &args.shared, operation, args.fail_on)
         }
         Commands::Fmt(args) => {
-            let mut config = load_config(cli.config.as_deref(), cli.no_config)?;
+            let mut config = load_input_config(cli.config.as_deref(), cli.no_config, &args.shared)?;
             // Formatting is not a decision about what Make does, so `fmt` never
             // applies a fix that can change it, whatever the configuration says.
             // `check --fix --unsafe-fixes` is where those are agreed to.
@@ -435,6 +439,16 @@ fn load_config(path: Option<&Path>, no_config: bool) -> Result<Config> {
     } else {
         Config::find_and_load()
     }
+}
+
+fn load_input_config(path: Option<&Path>, no_config: bool, args: &SharedArgs) -> Result<Config> {
+    if path.is_none() && !no_config {
+        if let Some(filename) = &args.stdin_filename {
+            let absolute = std::env::current_dir()?.join(filename);
+            return Config::find_from(absolute.parent().unwrap_or(Path::new(".")));
+        }
+    }
+    load_config(path, no_config)
 }
 
 fn apply_shared_args(
@@ -484,6 +498,15 @@ fn run_files(
     operation: Operation,
     fail_on: FailOn,
 ) -> Result<u8> {
+    if paths.iter().any(|path| path == Path::new("-")) {
+        if paths.len() != 1 {
+            bail!("stdin ('-') cannot be combined with other paths");
+        }
+        return run_stdin(config, args, operation, fail_on);
+    }
+    if args.stdin_filename.is_some() {
+        bail!("--stdin-filename requires '-' as the only path");
+    }
     if paths.is_empty() {
         paths.push(PathBuf::from("."));
     }
@@ -558,7 +581,7 @@ fn run_files(
                     &context,
                     operation,
                     &resolved,
-                    Some((source, project)),
+                    Some(PreparedInput::Project(source, Box::new(project))),
                     args.silent,
                     &display,
                 )?;
@@ -643,6 +666,79 @@ fn run_files(
             })
     });
     Ok(if violations || unread {
+        VIOLATIONS_FOUND
+    } else {
+        SUCCESS
+    })
+}
+
+/// An editor buffer uses the same lint and fix pipeline as a disk file, but
+/// its filename is context only. Neither the named file nor includes are written.
+fn run_stdin(
+    config: &Config,
+    args: &SharedArgs,
+    operation: Operation,
+    fail_on: FailOn,
+) -> Result<u8> {
+    if matches!(operation, Operation::CheckFix) {
+        bail!("check --fix does not support stdin; use fmt - for formatting or check - --output-format json for edits");
+    }
+    if !matches!(operation, Operation::Check) && !matches!(args.output_format, OutputFormat::Text) {
+        bail!("stdin formatting and diffs require text output");
+    }
+    let path = args
+        .stdin_filename
+        .as_deref()
+        .unwrap_or(Path::new("Makefile"));
+    if path == Path::new("-") || path.as_os_str().is_empty() || path.is_dir() {
+        bail!("--stdin-filename must name a file");
+    }
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .read_to_end(&mut bytes)
+        .context("Failed to read stdin")?;
+    // Never emit replacement characters as a supposedly formatted buffer.
+    let (text, _) = source::split_byte_order_mark(&bytes);
+    std::str::from_utf8(text).context("stdin must contain valid UTF-8")?;
+    let covered_files = BTreeSet::new();
+    let context = LintContext {
+        config,
+        path,
+        project_root: true,
+        contextual: true,
+        layout_only: operation.formats(),
+        covered_files: &covered_files,
+    };
+    let report = process_file(
+        &context,
+        operation,
+        &path_identity(path),
+        Some(PreparedInput::Stdin(decode_makefile(&bytes))),
+        args.silent,
+        &PathDisplay::default(),
+    )?
+    .expect("a valid UTF-8 stdin buffer is always linted");
+    let violations = match operation {
+        Operation::Format => false,
+        Operation::FormatDiff => false,
+        Operation::FormatCheck => report.changed,
+        Operation::CheckDiff => report
+            .initial_diagnostics
+            .iter()
+            .any(|d| fail_on.matches(d.severity)),
+        _ => report
+            .diagnostics
+            .iter()
+            .any(|d| fail_on.matches(d.severity)),
+    };
+    if matches!(operation, Operation::Format) {
+        // stdout is the complete replacement buffer, including an unchanged one.
+        std::io::stdout()
+            .write_all(with_byte_order_mark(&report.content, report.byte_order_mark).as_bytes())?;
+    } else if !args.silent {
+        output_reports(&[report], args.output_format, operation)?;
+    }
+    Ok(if violations {
         VIOLATIONS_FOUND
     } else {
         SUCCESS
@@ -830,20 +926,26 @@ fn error_path(error: &ignore::Error) -> Option<PathBuf> {
     }
 }
 
+enum PreparedInput {
+    Project(MakefileSource, Box<Project>),
+    Stdin(MakefileSource),
+}
+
 fn process_file(
     context: &LintContext<'_>,
     operation: Operation,
     resolved: &Path,
-    prepared: Option<(MakefileSource, Project)>,
+    prepared: Option<PreparedInput>,
     silent: bool,
     display: &PathDisplay,
 ) -> Result<Option<FileReport>> {
     let path = context.path;
     let config = context.config;
     // Read and write the same resolved path, including when the argument is a symlink.
-    let (source, project) = match prepared {
-        Some((source, project)) => (Ok(source), Some(project)),
-        None => (read_makefile(resolved), None),
+    let (source, project, write_to_disk) = match prepared {
+        Some(PreparedInput::Project(source, project)) => (Ok(source), Some(project), true),
+        Some(PreparedInput::Stdin(source)) => (Ok(source), None, false),
+        None => (read_makefile(resolved), None, true),
     };
     let MakefileSource {
         text: original,
@@ -901,7 +1003,7 @@ fn process_file(
                 &with_byte_order_mark(&original, byte_order_mark),
                 &with_byte_order_mark(&content, byte_order_mark),
             ));
-            if operation.writes() {
+            if operation.writes() && write_to_disk {
                 atomic_write(resolved, &with_byte_order_mark(&content, byte_order_mark))?;
             }
         }
@@ -979,8 +1081,12 @@ struct MakefileSource {
 /// linted; the failure says where the first invalid byte was.
 fn read_makefile(path: &Path) -> std::io::Result<MakefileSource> {
     let read = std::fs::read(path)?;
-    let (bytes, byte_order_mark) = source::split_byte_order_mark(&read);
-    Ok(match std::str::from_utf8(bytes) {
+    Ok(decode_makefile(&read))
+}
+
+fn decode_makefile(read: &[u8]) -> MakefileSource {
+    let (bytes, byte_order_mark) = source::split_byte_order_mark(read);
+    match std::str::from_utf8(bytes) {
         Ok(content) => MakefileSource {
             text: content.to_string(),
             byte_order_mark,
@@ -994,7 +1100,7 @@ fn read_makefile(path: &Path) -> std::io::Result<MakefileSource> {
                 failure: Some(rules::ReadFailure::InvalidUtf8 { line, column }),
             }
         }
-    })
+    }
 }
 
 /// Line and character column, both 1-based, of the byte at `offset`, which

@@ -90,6 +90,30 @@ for users who prefer automatic `0.x` Action updates. Supported commands are `che
 and `fmt`; `install-only: true` only installs Rumk. The Action also accepts `config`, `args`,
 `fail-on-error`, and `output-file`, and exposes `rumk-version` and `rumk-path` outputs.
 
+## Editor buffers and pipelines
+
+Use `-` to read a Makefile from standard input. Give unsaved buffers their actual
+filename so Rumk can find the nearest configuration, resolve relative includes,
+and apply per-file rule settings:
+
+```sh
+rumk check - --stdin-filename project/Makefile --output-format json < buffer.mk
+rumk fmt - --stdin-filename project/Makefile < buffer.mk > formatted.mk
+```
+
+`fmt -` writes only the complete formatted buffer to stdout, even when unchanged
+or when `--quiet`/`--silent` is set. It preserves a UTF-8 BOM, line endings, and
+significant whitespace. The named file and its includes are never written.
+`fmt - --check` returns 1 when formatting is needed; `--diff` previews changes.
+Checking retains the normal diagnostic formats and `--fail-on` policy, without
+a summary. JSON fixes contain byte ranges suitable for editor edits.
+
+Without `--stdin-filename`, the buffer is treated as `Makefile` in the current
+directory. Explicit `--config` and `--no-config` override automatic discovery.
+Stdin must be valid UTF-8 and cannot be mixed with filesystem paths.
+`check --fix -` is rejected: use JSON edits for lint fixes or `fmt -` for layout.
+This is a command-line integration interface, not a language server.
+
 ## Pre-commit
 
 The repository provides `rumk-fmt` and `rumk-check` hooks. Pre-commit builds the
