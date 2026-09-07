@@ -1138,3 +1138,130 @@ fn directory_change_reads_an_escaped_space_as_part_of_the_word_after_it() {
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0].line, 2);
 }
+
+#[test]
+fn directory_change_reads_a_backslash_before_a_newline_as_joining_the_lines() {
+    // The shell takes the backslash and the newline out of the line, so the
+    // '#' still starts its word and comments the 'cd' out.
+    let joined = "all:\n\techo \\\n# ; cd /tmp\n\tpwd\n";
+    assert!(
+        DirectoryChangeInRecipe
+            .check(&parse(joined), joined)
+            .is_empty(),
+        "the shell reads a comment here"
+    );
+
+    // Without the space the '#' carries on the word before the backslash, so
+    // it is text and the 'cd' runs.
+    let word = "all:\n\techo\\\n# ; cd /tmp\n\tpwd\n";
+    let diagnostics = DirectoryChangeInRecipe.check(&parse(word), word);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+}
+
+#[test]
+fn shell_call_reads_an_append_over_one_of_several_targets_as_that_target_alone() {
+    // 'a' takes the simple flavor the first assignment gave it, so its append
+    // is expanded once, but 'b' has nothing of its own and takes a recursive
+    // one, so the command runs at every reading of 'b's value.
+    let shared = "a b: X := base\na: X += $(shell date)\n";
+    assert!(
+        ShellInRecursiveVariable
+            .check(&parse(shared), shared)
+            .is_empty(),
+        "'a' was given a simple value by the assignment naming both targets"
+    );
+
+    // One append is expanded once for the target that has a simple value and
+    // again at every reading for the one that has none, whichever of the two
+    // the assignment names first.
+    for partial in [
+        "a: X := base\na b: X += $(shell date)\n",
+        "b: X := base\na b: X += $(shell date)\n",
+    ] {
+        let diagnostics = ShellInRecursiveVariable.check(&parse(partial), partial);
+
+        assert_eq!(diagnostics.len(), 1, "{partial:?} {diagnostics:?}");
+        assert_eq!(diagnostics[0].line, 2, "{partial:?}");
+    }
+}
+
+#[test]
+fn shell_call_says_nothing_about_an_ordinary_assignment_an_override_throws_away() {
+    // Make reads an ordinary assignment to a name an 'override' holds and
+    // throws it away, so neither the command nor the flavor is Make's.
+    for assignment in [
+        "X = $(shell date)",
+        "X += $(shell date)",
+        "X ?= $(shell date)",
+    ] {
+        let content = format!("override X := base\n{assignment}\n");
+        assert!(
+            ShellInRecursiveVariable
+                .check(&parse(&content), &content)
+                .is_empty(),
+            "{assignment}"
+        );
+    }
+}
+
+#[test]
+fn shell_call_is_reported_where_an_override_assignment_replaces_an_override() {
+    // An 'override' assignment is one Make does make, whatever came before it.
+    let content = "override X := base\noverride X = $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+
+    // The append takes the flavor the 'override' before it left, so an append
+    // onto a simple value is expanded once and an append onto a recursive one
+    // is expanded again at every reading.
+    let simple = "override X := base\noverride X += $(shell date)\n";
+    assert!(
+        ShellInRecursiveVariable
+            .check(&parse(simple), simple)
+            .is_empty(),
+        "an append onto a simple value runs the command once"
+    );
+
+    let recursive = "override X = base\noverride X += $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(recursive), recursive);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 2);
+}
+
+#[test]
+fn shell_call_says_nothing_where_a_plain_undefine_leaves_an_override_standing() {
+    // A plain 'undefine' cannot take the value of a name an 'override' holds,
+    // so the simple flavor stands and the append after it is thrown away.
+    let content = "override X := base\nundefine X\nX += $(shell date)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_is_reported_where_an_override_undefine_takes_an_override_away() {
+    // 'override undefine' leaves nothing behind, so the append has nothing to
+    // append to and creates a variable Make expands at every reading.
+    let content = "override X := base\noverride undefine X\nX += $(shell date)\n";
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 3);
+}
+
+#[test]
+fn shell_call_reads_a_file_level_undefine_as_leaving_target_specific_values_alone() {
+    // The 'undefine' takes the file-wide value, which is not the one the
+    // append reads: 'all' still holds the simple value of its own.
+    let content = "all: X := base\nundefine X\nall: X += $(shell date)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
