@@ -27,3 +27,9 @@ not prevent reporting an unrelated missing input. The fifth proves that a
 terminal rule cannot chain a missing intermediate and records MK216 detecting it.
 Additional pairs check direct pattern inputs, order-only inputs, failed competing
 producers, and directory restoration for slashless terminal patterns.
+
+Corpus-derived reductions cover Lua's optional compiler settings, Git's glossary
+wildcard used only in recipes, and Git's resolved phony declarations. Their
+`source_reduction` fields identify the source paths in the pinned corpus manifest.
+These are reduced authored probes, not executions of upstream builds. Each
+injects a missing source and pairs it with a working spelling.

@@ -235,3 +235,42 @@ fn broad_direct_pattern_may_build_a_different_builtin_source() {
     )
     .is_empty());
 }
+
+#[test]
+fn recipe_only_optional_settings_do_not_hide_missing_inputs() {
+    for settings in [
+        "LOCAL = $(OPTIONAL)\nMYCFLAGS = $(LOCAL) -O2\nCFLAGS = $(MYCFLAGS)\n",
+        "ALL_POFILES = $(wildcard *.po)\n",
+    ] {
+        let source = format!("{settings}probe: missing.txt\n\t@echo $(CFLAGS) $(ALL_POFILES)\n");
+        assert_eq!(check(&source, &[]).len(), 1, "{source}");
+        assert!(check(&source, &[("missing.txt", "input")]).is_empty());
+    }
+}
+
+#[test]
+fn graph_facing_and_indirect_settings_remain_uncertain() {
+    for source in [
+        "INPUT = $(OPTIONAL)\nALIAS = $(INPUT)\nprobe: missing.txt $(ALIAS)\n",
+        "VALUE = $(OPTIONAL)\nVPATH = $(VALUE)\nprobe: missing.txt\n",
+        "VALUE = $(OPTIONAL)\ninclude $(VALUE)\nprobe: missing.txt\n",
+        "VALUE = $(OPTIONAL)\nifeq ($(VALUE),yes)\nextra:\nendif\nprobe: missing.txt\n",
+        "VALUE = $(OPTIONAL)\n$(NAME) = $(VALUE)\nprobe: missing.txt\n",
+        "VALUE = $(OPTIONAL)\n.EXTRA_PREREQS = $(VALUE)\nprobe: missing.txt\n",
+        "VALUE = $(shell touch never-created)\nprobe: missing.txt\n",
+    ] {
+        assert!(check(source, &[]).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn resolved_phony_lists_do_not_exclude_the_project() {
+    for source in [
+        ".PHONY: probe\nprobe: missing.txt\n",
+        "COMMAND = probe\n.PHONY: $(COMMAND)\nCOMMAND = changed\nprobe: missing.txt\n",
+    ] {
+        assert_eq!(check(source, &[]).len(), 1, "{source}");
+        assert!(check(source, &[("missing.txt", "input")]).is_empty());
+    }
+    assert!(check(".PHONY: $(UNKNOWN)\nprobe: missing.txt\n", &[]).is_empty());
+}

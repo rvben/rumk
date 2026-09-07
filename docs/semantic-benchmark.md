@@ -85,3 +85,8 @@ order-only sources, competing failed producers, and slashless terminal rules wit
 pattern and literal inputs. A separate GNU regression verifies that a broad
 pattern can generate a built-in compiler input even when its direct match fails.
 Compare shared cases separately when comparing reports with different denominators.
+
+Three corpus-derived pairs test missing sources alongside optional compiler
+settings, recipe-only wildcard expansion, and resolved `.PHONY` declarations.
+The [coverage audit](prerequisite-coverage.md) measures how many real roots and
+visible dependencies are eligible separately from the authored detection score.

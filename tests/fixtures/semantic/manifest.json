@@ -799,6 +799,96 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": true
+    },
+    {
+      "name": "recipe-only-compiler-settings",
+      "title": "Optional compiler settings do not hide a missing source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input"
+      },
+      "working_files": {},
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "LOCAL = $(TESTS)\nMYCFLAGS = $(LOCAL) -O2\nCFLAGS = $(MYCFLAGS)\nprobe: soruce.txt\n\t@echo built $(CFLAGS)\n",
+      "working": "LOCAL = $(TESTS)\nMYCFLAGS = $(LOCAL) -O2\nCFLAGS = $(MYCFLAGS)\nprobe: source.txt\n\t@echo built $(CFLAGS)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "lua/makefile: LOCAL, MYCFLAGS, CFLAGS"
+    },
+    {
+      "name": "recipe-only-wildcard",
+      "title": "Recipe-only wildcard expansion does not hide a missing source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input"
+      },
+      "working_files": {},
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "ALL_POFILES = $(wildcard *.po)\nprobe: soruce.txt\n\t@echo built $(ALL_POFILES)\n",
+      "working": "ALL_POFILES = $(wildcard *.po)\nprobe: source.txt\n\t@echo built $(ALL_POFILES)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "git/git-gui/po/glossary/Makefile: ALL_POFILES"
+    },
+    {
+      "name": "resolved-phony-coverage",
+      "title": "A resolved phony list does not hide a missing source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input"
+      },
+      "working_files": {},
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "COMMAND = probe\n.PHONY: $(COMMAND)\nCOMMAND = changed\nprobe: soruce.txt\n\t@echo built\n",
+      "working": "COMMAND = probe\n.PHONY: $(COMMAND)\nCOMMAND = changed\nprobe: source.txt\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo built"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "git/contrib/credential/osxkeychain/Makefile: .PHONY"
     }
   ]
 }

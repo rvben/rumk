@@ -146,9 +146,118 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
     diagnostics
 }
 
+// Follow assignment readers back from graph-facing references. Unknown names,
+// scopes and exhausted work retain the old project exclusion. Recipe expansion
+// itself is outside MK216's static prerequisite model.
+fn recipe_only_assignments(
+    project: &Project,
+    mut budget: usize,
+) -> BTreeSet<(crate::project::SourceId, usize)> {
+    use crate::analysis::{ReferenceContext, ReferenceKind};
+    use crate::parser::VariableScope;
+    let index = project.analysis();
+    let mut owners: BTreeMap<_, Vec<String>> = BTreeMap::new();
+    let mut dependencies: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut needed = BTreeSet::new();
+    for (name, symbol) in &index.variables {
+        if !plain_recipe_setting(name)
+            || symbol
+                .definitions
+                .iter()
+                .any(|definition| definition.scope != VariableScope::Global)
+        {
+            needed.insert(name.clone());
+        }
+        for definition in &symbol.definitions {
+            for line in definition.location.line..=definition.end_line {
+                let Some(remaining) = budget.checked_sub(1) else {
+                    return BTreeSet::new();
+                };
+                budget = remaining;
+                owners
+                    .entry((definition.location.source, line))
+                    .or_default()
+                    .push(name.clone());
+            }
+        }
+    }
+    for reference in &index.references {
+        let Some(remaining) = budget.checked_sub(1) else {
+            return BTreeSet::new();
+        };
+        budget = remaining;
+        if reference.context == ReferenceContext::Recipe {
+            continue;
+        }
+        if reference.kind == ReferenceKind::Dynamic {
+            return BTreeSet::new();
+        }
+        if reference.kind != ReferenceKind::Variable {
+            continue;
+        }
+        if reference.context == ReferenceContext::Assignment {
+            match owners.get(&(reference.location.source, reference.location.line)) {
+                Some(names) if names.len() == 1 => {
+                    dependencies
+                        .entry(names[0].clone())
+                        .or_default()
+                        .insert(reference.name.clone());
+                }
+                _ => {
+                    needed.insert(reference.name.clone());
+                }
+            }
+        } else {
+            needed.insert(reference.name.clone());
+        }
+    }
+    let mut pending: Vec<_> = needed.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        if let Some(inputs) = dependencies.get(&name) {
+            for input in inputs {
+                let Some(remaining) = budget.checked_sub(1) else {
+                    return BTreeSet::new();
+                };
+                budget = remaining;
+                if needed.insert(input.clone()) {
+                    pending.push(input.clone());
+                }
+            }
+        }
+    }
+    index
+        .variables
+        .iter()
+        .filter(|(name, _)| !needed.contains(*name))
+        .flat_map(|(_, symbol)| {
+            symbol
+                .definitions
+                .iter()
+                .map(|definition| (definition.location.source, definition.location.line))
+        })
+        .collect()
+}
+
+fn plain_recipe_setting(name: &str) -> bool {
+    !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !matches!(
+            name,
+            "VPATH"
+                | "GPATH"
+                | "MAKEFILES"
+                | "MAKEFLAGS"
+                | "MFLAGS"
+                | "GNUMAKEFLAGS"
+                | "MAKEOVERRIDES"
+                | "SHELL"
+        )
+}
+
 // Count all independent exclusions, rather than only the first early return.
 // Counts are occurrences; a root can have several blockers simultaneously.
 fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
+    let recipe_only = recipe_only_assignments(project, 10_000);
     let mut reasons = BTreeMap::new();
     let mut add = |reason| *reasons.entry(reason).or_default() += 1;
     if !matches!(
@@ -207,14 +316,12 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
             if text.split_whitespace().next() == Some("vpath") {
                 add("selective_vpath");
             }
-            for (function, reason) in [
-                ("eval", "eval_function"),
-                ("shell", "shell_function"),
-                ("file", "file_function"),
+            for (round, brace, reason) in [
+                ("$(eval", "${eval", "eval_function"),
+                ("$(shell", "${shell", "shell_function"),
+                ("$(file", "${file", "file_function"),
             ] {
-                if text.contains(&format!("$({function}"))
-                    || text.contains(&format!("${{{function}"))
-                {
+                if text.contains(round) || text.contains(brace) {
                     add(reason);
                 }
             }
@@ -222,7 +329,10 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
                 if text.contains("!=") {
                     add("shell_assignment");
                 }
-                if text.contains('$') && project.evaluation().expand(text).value.is_none() {
+                if text.contains('$')
+                    && project.evaluation().expand(text).value.is_none()
+                    && !recipe_only.contains(&(file.id, statement.start_line))
+                {
                     add("unresolved_assignment");
                 }
             }
@@ -506,6 +616,20 @@ fn plausible_implicit_input(project: &Project, name: &str, directories: &[PathBu
 mod tests {
     use super::*;
     use crate::project::ProjectOptions;
+
+    #[test]
+    fn exhausted_assignment_search_does_not_relax_exclusions() {
+        let directory = tempfile::tempdir().unwrap();
+        let project = Project::load_with_root_content(
+            &directory.path().join("Makefile"),
+            "LOCAL = $(OPTIONAL)\nCFLAGS = $(LOCAL)\nprobe: missing.txt\n\t@echo $(CFLAGS)\n"
+                .into(),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert!(recipe_only_assignments(&project, 0).is_empty());
+        assert!(!recipe_only_assignments(&project, 10_000).is_empty());
+    }
 
     #[test]
     fn exhausted_pattern_search_preserves_uncertainty() {

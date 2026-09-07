@@ -49,15 +49,39 @@ fn coverage_retains_overlapping_root_exclusions_without_running_shells() {
     )
     .unwrap();
     let report = coverage(&project);
-    for reason in [
-        "fragment_root",
-        "shell_function",
-        "unresolved_assignment",
-        "unresolved_include",
-    ] {
+    for reason in ["fragment_root", "shell_function", "unresolved_include"] {
         assert!(report.root_blockers.contains_key(reason), "{reason}");
     }
     assert_eq!(report.outcomes.get("root_excluded"), Some(&1));
     assert!(MissingPrerequisite.check_project(&project).is_empty());
     assert!(!dir.path().join("never-created").exists());
+}
+
+#[test]
+fn phony_coverage_uses_the_expansion_at_each_read() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("commands.mk"), ".PHONY: $(COMMAND)\n").unwrap();
+    let project = Project::load_with_root_content(
+        &dir.path().join("Makefile"),
+        "COMMAND = first\ninclude commands.mk\nCOMMAND = second\ninclude commands.mk\nprobe: missing.txt\n".into(),
+        &ProjectOptions::default(),
+    ).unwrap();
+    let source = project
+        .files()
+        .iter()
+        .find(|file| file.path.ends_with("commands.mk"))
+        .unwrap()
+        .id;
+    let lists: Vec<_> = project
+        .evaluation()
+        .rules(source, 1)
+        .iter()
+        .map(|rule| rule.prerequisites.clone())
+        .collect();
+    assert_eq!(
+        lists,
+        vec![vec!["first".to_string()], vec!["second".to_string()]]
+    );
+    assert!(coverage(&project).root_blockers.is_empty());
+    assert_eq!(MissingPrerequisite.check_project(&project).len(), 1);
 }

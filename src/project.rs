@@ -423,7 +423,12 @@ impl<'a> Loader<'a> {
                     {
                         self.consider_rule(source, rule, activity);
                     } else if let Some(prerequisites) = phony_prerequisites(statement.text()) {
-                        self.consider_phonies(prerequisites, activity);
+                        self.consider_phonies(
+                            source,
+                            statement.start_line,
+                            prerequisites,
+                            activity,
+                        );
                     }
                 }
                 LogicalKind::Directive => {
@@ -691,13 +696,29 @@ impl<'a> Loader<'a> {
         Some(words)
     }
 
-    fn consider_phonies(&mut self, prerequisites: &str, activity: Truth) {
+    fn consider_phonies(
+        &mut self,
+        source: SourceId,
+        line: usize,
+        prerequisites: &str,
+        activity: Truth,
+    ) {
         if activity != Truth::True {
             return;
         }
         if let Some(value) = self.evaluator.expand(prerequisites).value {
-            self.active_phonies
-                .extend(value.split_whitespace().map(ToOwned::to_owned));
+            let prerequisites: Vec<_> = value.split_whitespace().map(ToOwned::to_owned).collect();
+            self.active_phonies.extend(prerequisites.iter().cloned());
+            // Preserve successful read-time expansion for project-aware rules.
+            // Re-expanding against the final environment can change a phony list.
+            self.rules
+                .entry((source, line))
+                .or_default()
+                .push(EvaluatedRule {
+                    targets: vec![".PHONY".into()],
+                    prerequisites,
+                    order_only_prerequisites: Vec::new(),
+                });
         }
     }
 
