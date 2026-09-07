@@ -130,3 +130,54 @@ fn inactive_inputs_and_unconfigured_rules_do_not_report() {
         .check(&parse("probe: missing\n"), "probe: missing\n")
         .is_empty());
 }
+
+#[test]
+fn unrelated_patterns_do_not_hide_missing_inputs() {
+    for pattern in [
+        "generated/%.dat: templates/%.src\n\t@echo generated\n",
+        "./generated/%.dat: templates/%.src\n\t@echo generated\n",
+        ".generated/%.dat: templates/%.src\n\t@echo generated\n",
+        "generated/%.dat:: templates/%.src\n\t@echo generated\n",
+        "generated/%.dat: intermediate/%.mid\n\t@echo generated\nintermediate/%.mid: templates/%.src\n\t@echo generated\n",
+        "generated/%.dat: impossible/%.src\n\t@echo first\ngenerated/%.dat: templates/%.src\n\t@echo second\n",
+    ] {
+        let source = format!("probe: missing.txt\n{pattern}");
+        let findings = check(&source, &[]);
+        assert_eq!(findings.len(), 1, "{source}");
+        assert_eq!(findings[0].line, 1);
+        assert!(findings[0].message.contains("missing.txt"));
+    }
+}
+
+#[test]
+fn matching_patterns_and_builtin_sources_remain_uncertain() {
+    for source in [
+        "probe: generated/output.dat\ngenerated/%.dat: templates/%.src\n\t@echo generated\n",
+        "probe: generated/output.dat\ngenerated/%.dat:: templates/%.src\n\t@echo generated\n",
+        "probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n",
+        "probe: output.o\n%.c: templates/%.src\n\t@echo generated\n",
+        "VPATH := generated\nprobe: output.o\ngenerated/%.c: templates/%.src\n\t@echo generated\n",
+        "probe: output.o\ns.%: revisions/%\n\t@echo generated\n",
+        "probe: missing.txt\n%:\n\t@echo fallback\n",
+    ] {
+        assert!(check(source, &[]).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn pattern_prerequisites_are_not_checked_as_literal_root_inputs() {
+    assert!(check(
+        "probe:\ngenerated/%.dat: shared.txt\n\t@echo generated\n",
+        &[]
+    )
+    .is_empty());
+    let findings = check(
+        "probe: missing.txt\ninclude patterns.mk\n",
+        &[(
+            "patterns.mk",
+            "generated/%.dat: shared.txt\n\t@echo generated\n",
+        )],
+    );
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].line, 1);
+}

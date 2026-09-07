@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use crate::diagnostic::{Diagnostic, Severity};
-use crate::eval::Truth;
+use crate::eval::{pattern_stem, Truth};
 use crate::logical::LogicalKind;
 use crate::parser::Makefile;
 use crate::project::{IncludeResolution, Project};
@@ -66,7 +66,11 @@ impl Rule for MissingPrerequisite {
         }
         let mut seen = BTreeSet::new();
         let mut diagnostics = Vec::new();
-        for target in index.targets.values().filter(|target| !target.special) {
+        for target in index
+            .targets
+            .values()
+            .filter(|target| !target.special && !target.name.contains('%'))
+        {
             for edge in &target.dependencies {
                 let name = normalized(&edge.prerequisite);
                 if !index.is_definitely_active(edge.location)
@@ -76,6 +80,7 @@ impl Rule for MissingPrerequisite {
                         .iter()
                         .any(|directory| may_exist(&directory.join(name)))
                     || plausible_implicit_input(project, name, &directories)
+                    || possible_pattern_producer(project, name, &directories)
                     || !seen.insert((edge.location, name.to_string()))
                 {
                     continue;
@@ -101,9 +106,8 @@ fn incomplete(project: &Project) -> bool {
     }
     let index = project.analysis();
     if index.targets.iter().any(|(name, symbol)| {
-        name.contains('%')
-            || matches!(name.as_str(), ".DEFAULT" | ".SECONDEXPANSION")
-            || (name.starts_with('.') && name[1..].contains('.'))
+        matches!(name.as_str(), ".DEFAULT" | ".SECONDEXPANSION")
+            || (name.starts_with('.') && !name.contains('%') && name[1..].contains('.'))
             || symbol
                 .declarations
                 .iter()
@@ -153,6 +157,78 @@ fn incomplete(project: &Project) -> bool {
         }
     }
     false
+}
+
+// A pattern's prerequisites need not be interpreted to establish that an
+// unrelated pattern cannot produce this input. Conversely, a possible match
+// remains uncertainty: competing recipes, intermediate chains and terminal
+// restrictions require more than this conservative intersection check.
+fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathBuf]) -> bool {
+    project
+        .analysis()
+        .targets
+        .keys()
+        .filter(|pattern| pattern.contains('%'))
+        .any(|pattern| {
+            if pattern.contains(['\\', '$']) {
+                return true;
+            }
+            directories.iter().any(|directory| {
+                let candidate = directory.join(name);
+                let Ok(candidate) = candidate.strip_prefix(project.working_directory()) else {
+                    // Absolute/external search paths may use another spelling in
+                    // the target table. Do not assume those names are unrelated.
+                    return true;
+                };
+                let Some(candidate) = candidate.to_str() else {
+                    return true;
+                };
+                let candidate = normalized(candidate);
+                let pattern = normalized(pattern);
+                let candidate = if pattern.contains('/') {
+                    candidate
+                } else {
+                    // GNU ignores the directory while matching a slashless pattern.
+                    candidate.rsplit('/').next().unwrap_or(candidate)
+                };
+                if pattern_stem(pattern, candidate).is_some() {
+                    return true;
+                }
+                let path = Path::new(candidate);
+                let parent = path.parent().unwrap_or(Path::new(""));
+                let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
+                    return true;
+                };
+                // Built-in conversions can consume generated same-basename inputs.
+                // Admit every suffix, rather than pinning a host-specific catalogue.
+                let stem = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or(filename);
+                let prefix = pattern.split('%').next().unwrap_or("");
+                for base in [filename, stem] {
+                    let source_prefix = parent.join(format!("{base}."));
+                    let Some(source_prefix) = source_prefix.to_str() else {
+                        return true;
+                    };
+                    if source_prefix.starts_with(prefix) || prefix.starts_with(source_prefix) {
+                        return true;
+                    }
+                }
+                [
+                    parent.join(format!("s.{filename}")),
+                    parent.join(format!("{filename},v")),
+                    parent.join("RCS").join(filename),
+                    parent.join("SCCS").join(format!("s.{filename}")),
+                ]
+                .iter()
+                .any(|source| {
+                    source
+                        .to_str()
+                        .is_none_or(|source| pattern_stem(pattern, source).is_some())
+                })
+            })
+        })
 }
 
 fn normalized(mut name: &str) -> &str {
