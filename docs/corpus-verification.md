@@ -2,8 +2,10 @@
 
 `scripts/audit-corpus.py` checks clean local Git checkouts with the actual Rumk
 executable. It does not download projects, run Make, or write source files.
-`scripts/corpus-projects.json` pins a sample of Git, Redis, and Zstandard by full
-commit ID. Upstream source is not copied into this repository.
+`scripts/corpus-projects.json` pins Git, Redis, Zstandard, Lua, bbolt, and musl
+by full commit ID. Lua adds lowercase Makefiles and a language runtime;
+bbolt adds Go tooling; musl adds a libc build. This is a deliberately selected
+sample, not a random population. Upstream source is not copied into this repository.
 
 Clone each manifest repository into a directory named for its manifest key and
 check out the specified revision. Then run:
@@ -13,6 +15,7 @@ cargo build --release --locked
 python3 scripts/audit-corpus.py \
   --manifest scripts/corpus-projects.json \
   --project /path/to/git --project /path/to/redis --project /path/to/zstd \
+  --project /path/to/lua --project /path/to/bbolt --project /path/to/musl \
   --output /tmp/rumk-corpus-audit.json
 ```
 
@@ -41,6 +44,10 @@ runs. Timings include process startup and are not comparable to another tool
 without matching scope, hardware, and methodology. Diagnostics remain unreviewed
 observations: passing these invariants does not establish precision, recall,
 semantic equivalence of all formatting, or overall superiority.
+
+The separate [semantic benchmark](semantic-benchmark.md) measures named defect
+detection and working controls against authored GNU Make behavior contracts.
+It never executes the upstream checkouts.
 
 Generated reports stay outside commits. CI tests the auditor on a disposable
 repository, including a Make expression that must never execute, deliberate

@@ -10,5 +10,17 @@
   "zstd": {
     "repository": "https://github.com/facebook/zstd",
     "revision": "d9c0c7e2cf8a8bf9fb98d3bee546dcf8dc9ac59a"
+  },
+  "lua": {
+    "repository": "https://github.com/lua/lua",
+    "revision": "7579fc9d7ed90240487251dfb69168f8e64e9294"
+  },
+  "bbolt": {
+    "repository": "https://github.com/etcd-io/bbolt",
+    "revision": "e8305cf81c86819f78a04f4e119aad25495af018"
+  },
+  "musl": {
+    "repository": "https://git.musl-libc.org/git/musl",
+    "revision": "5e9972eaef08ccf55dabe254ac829a30329793d3"
   }
 }
