@@ -921,6 +921,7 @@ fn build_rule(
             rules::best_practices::MissingPhony::new(phony_placement_option(rule_id, settings)?)
                 .command_targets(command_targets_option(settings)?),
         ),
+        "MK216" => Box::new(rules::prerequisites::MissingPrerequisite),
         "MK202" => Box::new(rules::best_practices::HardcodedPath),
         "MK203" => Box::new(rules::best_practices::RecursiveMake),
         "MK204" => Box::new(rules::best_practices::DuplicateRecipe),

@@ -7,6 +7,7 @@ pub mod best_practices;
 pub mod formatting;
 mod phony;
 pub mod policy;
+pub mod prerequisites;
 pub mod project;
 pub mod style;
 pub mod syntax;
@@ -14,7 +15,7 @@ pub mod syntax;
 pub const RULE_IDS: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK102", "MK103",
     "MK104", "MK105", "MK201", "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208",
-    "MK209", "MK210", "MK211", "MK212", "MK213", "MK214", "MK215",
+    "MK209", "MK210", "MK211", "MK212", "MK213", "MK214", "MK215", "MK216",
 ];
 
 /// Why the content Rumk lints is not the file exactly as it is on disk.
@@ -146,6 +147,7 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(best_practices::ShellInRecursiveVariable),
         Box::new(policy::GlobalIgnore),
         Box::new(policy::RequiredTargets::default()),
+        Box::new(prerequisites::MissingPrerequisite),
     ]
 }
 

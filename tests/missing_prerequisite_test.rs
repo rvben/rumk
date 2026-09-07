@@ -1,0 +1,132 @@
+use rumk::parser::parse;
+use rumk::project::{Project, ProjectOptions};
+use rumk::rules::get_all_rules;
+
+fn check(source: &str, files: &[(&str, &str)]) -> Vec<rumk::diagnostic::Diagnostic> {
+    let directory = tempfile::tempdir().unwrap();
+    for (name, content) in files {
+        let path = directory.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let project = Project::load_with_root_content(
+        &directory.path().join("Makefile"),
+        source.into(),
+        &ProjectOptions::default(),
+    )
+    .unwrap();
+    get_all_rules()
+        .into_iter()
+        .find(|r| r.id() == "MK216")
+        .expect("MK216 registered")
+        .check_project(&project)
+}
+
+#[test]
+fn reports_static_missing_normal_and_order_only_inputs_at_the_declaration() {
+    for source in [
+        "probe: soruce.txt\n",
+        "probe: | soruce.txt\n",
+        "INPUT := soruce.txt\nprobe: $(INPUT)\n",
+    ] {
+        let findings = check(source, &[("source.txt", "input")]);
+        assert_eq!(findings.len(), 1, "{source}");
+        assert!(findings[0].message.contains("soruce.txt"));
+        assert!(findings[0].fix.is_none());
+        assert_eq!(findings[0].line, source.lines().count());
+    }
+    let findings = check(
+        "include rules.mk\n",
+        &[("rules.mk", "probe: missing.txt\n")],
+    );
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].source.as_ref().unwrap().ends_with("rules.mk"));
+}
+
+#[test]
+fn existing_declared_and_search_path_inputs_are_allowed() {
+    for (source, files) in [
+        ("probe: input.txt\n", vec![("input.txt", "input")]),
+        (
+            "probe: generated.txt\ngenerated.txt:\n\t@echo generated\n",
+            vec![],
+        ),
+        ("probe: .//generated.txt\ngenerated.txt:\n", vec![]),
+        ("probe: task\n.PHONY: task\n", vec![]),
+        (
+            "VPATH := inputs\nprobe: input.txt\n",
+            vec![("inputs/input.txt", "input")],
+        ),
+        (
+            "VPATH := first:inputs\nprobe: input.txt\n",
+            vec![("inputs/input.txt", "input")],
+        ),
+        (
+            "include rules.mk\nprobe: generated.txt\n",
+            vec![("rules.mk", "generated.txt:\n")],
+        ),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn implicit_rules_and_incomplete_graphs_withhold_a_warning() {
+    for (source, files) in [
+        ("probe: input.o\n", vec![("input.c", "int value;\n")]),
+        ("probe: input.o\n", vec![("INPUT.c", "int value;\n")]),
+        (
+            "probe: program\n",
+            vec![("program.c", "int main(void){return 0;}\n")],
+        ),
+        ("probe: input.o\ninput.c:\n\t@echo generated\n", vec![]),
+        (
+            "probe: output.dat\n%.dat: %.src\n\t@echo generated\n",
+            vec![("output.src", "input")],
+        ),
+        ("probe: output.dat\n.src.dat:\n\t@echo generated\n", vec![]),
+        (
+            "vpath %.txt inputs\nprobe: input.txt\n",
+            vec![("inputs/input.txt", "input")],
+        ),
+        ("VPATH := $(EXTERNAL)\nprobe: input.txt\n", vec![]),
+        (".DEFAULT:\n\t@echo fallback\nprobe: missing\n", vec![]),
+        (
+            ".SECONDEXPANSION:\nprobe: $$(INPUT)\nINPUT = missing\n",
+            vec![],
+        ),
+        ("include $(EXTERNAL)\nprobe: missing\n", vec![]),
+        ("-include generated.mk\nprobe: missing\n", vec![]),
+        ("$(EXTERNAL):\nprobe: missing\n", vec![]),
+        (
+            "ifeq ($(EXTERNAL),yes)\nmissing:\nendif\nprobe: missing\n",
+            vec![],
+        ),
+        ("probe: $(EXTERNAL)\n", vec![]),
+        ("probe: *.txt\n", vec![]),
+        ("probe: lib.a(member.o)\n", vec![]),
+        ("probe: .WAIT\n", vec![]),
+        ("VPATH := one;two\nprobe: input.txt\n", vec![]),
+        ("$(file >missing,generated)\nprobe: missing\n", vec![]),
+        ("probe: -lthing\n", vec![]),
+        ("probe: file\n", vec![("file,v", "revision control input")]),
+        ("probe: file\n", vec![("s.file", "SCCS input")]),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn inactive_inputs_and_unconfigured_rules_do_not_report() {
+    assert!(check("ifeq (a,b)\nprobe: missing\nendif\nprobe:\n", &[]).is_empty());
+    assert!(!rumk::rules::get_default_rules()
+        .iter()
+        .any(|rule| rule.id() == "MK216"));
+    let rule = get_all_rules()
+        .into_iter()
+        .find(|r| r.id() == "MK216")
+        .unwrap();
+    assert!(rule
+        .check(&parse("probe: missing\n"), "probe: missing\n")
+        .is_empty());
+}

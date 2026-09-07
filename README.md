@@ -458,6 +458,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 
 - [MK214](docs/mk214.md) - Global `.IGNORE` suppresses recipe failures (**default**)
 - [MK215](docs/mk215.md) - Required project targets must be defined and phony (opt-in)
+- [MK216](docs/mk216.md) - Missing static prerequisites with no visible producer (opt-in)
 
 ## Development
 
