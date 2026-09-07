@@ -424,6 +424,43 @@ fn reports_a_missing_include_only_a_match_anything_rule_could_supply_a_step_of()
 }
 
 #[test]
+fn says_nothing_about_a_missing_include_whose_step_the_project_asks_for_by_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // 'all' asks for 'config.mid' outright, so it is a file Make was told about
+    // rather than one it reached by working backwards, and the '%' rule builds
+    // it after all.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\nall: config.mid\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_step_only_a_pattern_rule_asks_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // The same mention, made by a pattern rule instead. Make invents the name
+    // either way, so the '%' rule stays out of reach.
+    std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.zz: config.mid\n\t@cp $< $@\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+}
+
+#[test]
 fn says_nothing_about_a_missing_include_a_named_pattern_rule_supplies_that_step_of() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

@@ -233,23 +233,49 @@ impl Rule for MissingInclude {
 /// without another pattern rule, so a chain stops at one. And a rule whose
 /// target is `%` alone matches every name there is, which would put the whole
 /// rule set in front of every step of every chain, so Make declines to use a
-/// nonterminal one for what another pattern rule asks for. Neither restriction
-/// touches the name the search starts from. Both are settled a rule at a time,
-/// because one pattern written twice is two rules and Make may use either.
+/// nonterminal one for a name it reached only by working backwards from another
+/// pattern rule. Neither restriction touches the name the search starts from,
+/// and the second does not touch a name the project asks for somewhere outside
+/// its pattern rules either: Make was told about that file, so it is not one
+/// Make invented along the way. Both are settled a rule at a time, because one
+/// pattern written twice is two rules and Make may use either.
 ///
 /// Enough patterns that match one another still put an exponential number of
 /// chains in front of the search, so it gives up after `BUILD_SEARCH_STEPS`.
 /// Giving up means Rumk does not know, and a name Rumk does not know about is
 /// left alone: exhaustion costs a report rather than inventing one.
 fn builds(project: &Project, name: &str) -> bool {
+    let index = project.analysis();
+    // Only a '%' rule has to be weighed against a mention, and few projects
+    // write one.
+    let mentioned = if index.targets.contains_key("%") {
+        mentioned_outright(index)
+    } else {
+        BTreeSet::new()
+    };
     let mut budget = BUILD_SEARCH_STEPS;
     builds_along(
         project,
         name,
         Sought::Outright,
+        &mentioned,
         &mut Vec::new(),
         &mut budget,
     ) || budget == 0
+}
+
+/// Every name the project asks for outside a pattern rule.
+fn mentioned_outright(index: &ProjectSemanticIndex) -> BTreeSet<&str> {
+    index
+        .targets
+        .iter()
+        .filter(|(target, _)| !target.contains('%'))
+        .flat_map(|(_, symbol)| &symbol.dependencies)
+        .map(|dependency| dependency.prerequisite.as_str())
+        // A static pattern rule keeps its prerequisite pattern here, and a
+        // pattern names no file.
+        .filter(|prerequisite| !prerequisite.contains('%'))
+        .collect()
 }
 
 /// Names the search may look at before it gives up. Chains in a Makefile people
@@ -262,8 +288,9 @@ const BUILD_SEARCH_STEPS: u32 = 10_000;
 enum Sought {
     /// The name the search was asked about. Every rule is available here.
     Outright,
-    /// A name another pattern rule asks for. A nonterminal `%` rule is not
-    /// available here.
+    /// A name reached by working backwards from another pattern rule. A
+    /// nonterminal `%` rule is available here only for a name the project
+    /// mentions of its own accord.
     ForAPattern,
 }
 
@@ -273,6 +300,7 @@ fn builds_along(
     project: &Project,
     name: &str,
     sought: Sought,
+    mentioned: &BTreeSet<&str>,
     chain: &mut Vec<String>,
     budget: &mut u32,
 ) -> bool {
@@ -284,6 +312,7 @@ fn builds_along(
     if index.target(name).is_some() {
         return true;
     }
+    let told_about = sought == Sought::Outright || mentioned.contains(name);
     index.targets.iter().any(|(pattern, symbol)| {
         pattern.contains('%')
             && !chain.contains(pattern)
@@ -302,7 +331,7 @@ fn builds_along(
                         .iter()
                         .filter(|declaration| declaration.has_recipe)
                         .filter(|declaration| {
-                            sought == Sought::Outright || pattern != "%" || declaration.double_colon
+                            told_about || pattern != "%" || declaration.double_colon
                         })
                         .any(|declaration| {
                             symbol
@@ -321,6 +350,7 @@ fn builds_along(
                                                 project,
                                                 &prerequisite,
                                                 Sought::ForAPattern,
+                                                mentioned,
                                                 chain,
                                                 budget,
                                             )
