@@ -938,3 +938,124 @@ fn shell_call_is_reported_where_an_append_has_nothing_to_append_to() {
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0].line, 1);
 }
+
+#[test]
+fn shell_style_reference_offers_no_fix_in_a_recipe_the_rule_line_carries() {
+    // 'all:; echo $HOME' is a recipe, and Make prints 'OME' for it, so the
+    // reference is one of the two edits a recipe leaves open.
+    let content = "all: build ; echo $HOME\n";
+    let diagnostics = ShellStyleVariableReference.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!((diagnostics[0].line, diagnostics[0].column), (1, 19));
+    assert!(!diagnostics[0].fixable);
+}
+
+#[test]
+fn shell_style_reference_reads_a_hash_in_an_inline_recipe_as_shell_text() {
+    // Make hands the whole inline recipe to the shell, '#' included, so the
+    // reference after it is text Make still expands.
+    let content = "all: ; echo hi # $HOME\n";
+    let diagnostics = ShellStyleVariableReference.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+
+    // A '#' before the ';' is a comment that takes the semicolon with it, so
+    // there is no recipe on this line and nothing to report.
+    let commented = "all: # ; echo $HOME\n";
+    assert!(ShellStyleVariableReference
+        .check(&parse(commented), commented)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_says_nothing_about_a_cd_a_shell_comment_hides() {
+    // The shell reads '#' as a comment to the end of the line, so nothing
+    // after it runs and no directory changes.
+    let content = "all:\n\techo hi # old command: ; cd sub\n\tpwd\n";
+
+    assert!(DirectoryChangeInRecipe
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn directory_change_is_reported_where_a_shell_comment_follows_it() {
+    // 'cd /tmp' is the last command the shell runs on this line; the text
+    // after '#' is not a command at all.
+    let content = "all:\n\tcd /tmp # comment; unrelated\n\tpwd\n";
+    let diagnostics = DirectoryChangeInRecipe.check(&parse(content), content);
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!((diagnostics[0].line, diagnostics[0].column), (2, 2));
+}
+
+#[test]
+fn directory_change_reads_a_quoted_or_escaped_hash_as_text() {
+    // A '#' only starts a comment where it starts a word, and quoting or
+    // escaping it takes even that away.
+    let cases = [
+        "all:\n\techo \"a # b\" ; cd sub\n\tpwd\n",
+        "all:\n\techo \\# ; cd sub\n\tpwd\n",
+        "all:\n\techo a#b ; cd sub\n\tpwd\n",
+    ];
+
+    for content in cases {
+        let diagnostics = DirectoryChangeInRecipe.check(&parse(content), content);
+        assert_eq!(diagnostics.len(), 1, "{content:?} {diagnostics:?}");
+        assert_eq!(diagnostics[0].line, 2, "{content:?}");
+    }
+}
+
+#[test]
+fn shell_call_says_nothing_where_a_conditional_assignment_does_nothing() {
+    // '?=' does not touch a name that already has a value, so 'Z' stays the
+    // simple variable ':=' made and the append is expanded once.
+    let content = "Z := base\nZ ?= ignored\nZ += $(shell date)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}
+
+#[test]
+fn shell_call_follows_an_append_onto_a_variable_make_expands_again() {
+    // '!=' stores the output without expanding it and ':::=' escapes what it
+    // expands; GNU Make calls both recursive, so an append to either is
+    // expanded again at every reading.
+    for operator in ["!=", ":::="] {
+        let content = format!("X {operator} base\nX += $(shell date)\n");
+        let diagnostics = ShellInRecursiveVariable.check(&parse(&content), &content);
+
+        assert_eq!(diagnostics.len(), 1, "{content:?} {diagnostics:?}");
+        assert_eq!(diagnostics[0].line, 2, "{content:?}");
+    }
+}
+
+#[test]
+fn shell_call_says_nothing_about_the_assignment_that_runs_the_command_once() {
+    // The value of a '!=' or a ':::=' is expanded where it is written, whatever
+    // flavor the name is left in, so the command behind it runs once.
+    for operator in ["!=", ":::="] {
+        let content = format!("X {operator} echo $(shell date)\n");
+
+        assert!(
+            ShellInRecursiveVariable
+                .check(&parse(&content), &content)
+                .is_empty(),
+            "{content:?}"
+        );
+    }
+}
+
+#[test]
+fn shell_call_says_nothing_about_a_flavor_a_target_specific_assignment_gave() {
+    // 'other: X = lazy' binds 'X' only while Make builds 'other'; the file-wide
+    // 'X' is still the simple one, so the append is expanded once.
+    let content = "X := base\nother: X = lazy\nX += $(shell date)\n";
+
+    assert!(ShellInRecursiveVariable
+        .check(&parse(content), content)
+        .is_empty());
+}

@@ -1,10 +1,10 @@
 use crate::diagnostic::{Applicability, Diagnostic, Edit, Fix, Severity};
 use crate::expansion::{function_name, reference_length, unexpanded_arguments};
 use crate::logical::{
-    find_top_level_char, find_top_level_rule_separator, split_top_level_words,
-    strip_top_level_comment, LogicalKind, Reach,
+    find_top_level_char, find_top_level_rule_separator, inline_recipe_separator,
+    split_top_level_words, strip_top_level_comment, LogicalKind, Reach,
 };
-use crate::parser::{AssignmentOperator, Makefile};
+use crate::parser::{AssignmentOperator, Makefile, VariableScope};
 use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
 use crate::syntax::SyntaxKind;
@@ -920,12 +920,21 @@ impl Rule for ShellStyleVariableReference {
                 // Make expands a recipe line whole and hands it to the shell,
                 // so a '#' there starts nothing; anywhere else it starts a
                 // comment, and Make expands nothing after it.
-                let in_recipe = recipe_lines.contains(&line);
-                let expanded = if in_recipe || node.kind == SyntaxKind::DefineBody {
+                let whole_line_recipe = recipe_lines.contains(&line);
+                let stripped = if whole_line_recipe || node.kind == SyntaxKind::DefineBody {
                     content
                 } else {
                     strip_top_level_comment(content)
                 };
+                // A rule line carries a recipe of its own after the ';', and
+                // Make hands that to the shell whole as well, so a '#' after
+                // the ';' starts nothing either.
+                let inline = (node.kind == SyntaxKind::Rule)
+                    .then(|| inline_recipe_separator(stripped))
+                    .flatten()
+                    .map(|semicolon| semicolon + 1);
+                let expanded = if inline.is_some() { content } else { stripped };
+                let recipe_start = if whole_line_recipe { Some(0) } else { inline };
                 let start_column = node.content_span.start.column;
                 shell_style_references(expanded, &defined)
                     .into_iter()
@@ -946,7 +955,7 @@ impl Rule for ShellStyleVariableReference {
                         // A recipe can mean either the Make variable or the
                         // shell one, written '$$VAR', and the two are not the
                         // same edit, so there is nothing to apply for it.
-                        if in_recipe {
+                        if recipe_start.is_some_and(|start| reference.start >= start) {
                             return diagnostic;
                         }
                         let end = start_column + expanded[..reference.end].chars().count();
@@ -1079,9 +1088,10 @@ impl Rule for DirectoryChangeInRecipe {
 /// of the line, taking the directory with it, so only a `cd` nothing follows
 /// is one whose whole effect is lost.
 fn trailing_directory_change(command: &str) -> Option<usize> {
+    let command = without_shell_comments(command);
     let mut command_position = true;
     let mut last = None;
-    for token in shell_tokens(command) {
+    for token in shell_tokens(&command) {
         match token {
             ShellToken::Separator => command_position = true,
             ShellToken::Word {
@@ -1104,6 +1114,49 @@ fn trailing_directory_change(command: &str) -> Option<usize> {
         }
     }
     last
+}
+
+/// `command` with the text of every shell comment replaced by spaces, which
+/// leaves the offset of everything else where it was. The shell reads an
+/// unquoted `#` that starts a word as a comment running to the end of its line,
+/// so nothing written there is a command.
+fn without_shell_comments(command: &str) -> String {
+    let mut result = String::with_capacity(command.len());
+    let mut quote = None;
+    let mut escaped = false;
+    let mut word_start = true;
+    let mut commented = false;
+    for character in command.chars() {
+        if commented {
+            if character == '\n' {
+                commented = false;
+                word_start = true;
+                result.push(character);
+            } else {
+                // A space for every byte, so the offsets after it still hold.
+                result.push_str(&" ".repeat(character.len_utf8()));
+            }
+            continue;
+        }
+        if escaped {
+            escaped = false;
+        } else if character == '\\' && quote != Some('\'') {
+            escaped = true;
+        } else if let Some(active) = quote {
+            if character == active {
+                quote = None;
+            }
+        } else if matches!(character, '\'' | '"') {
+            quote = Some(character);
+        } else if character == '#' && word_start {
+            commented = true;
+            result.push(' ');
+            continue;
+        }
+        result.push(character);
+        word_start = matches!(character, ' ' | '\t' | '\n' | ';' | '|' | '&') && quote.is_none();
+    }
+    result
 }
 
 /// Where `offset` falls in a recipe that starts at `line` and `column`,
@@ -1139,7 +1192,7 @@ impl Rule for ShellInRecursiveVariable {
     }
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
-        let mut flavors: BTreeMap<&str, AssignmentOperator> = BTreeMap::new();
+        let mut bindings: BTreeMap<&str, Binding> = BTreeMap::new();
         let mut diagnostics = Vec::new();
         // A `define` is an assignment whose value is its body, so the bodies
         // are here too, under the operator their header carries.
@@ -1150,16 +1203,35 @@ impl Rule for ShellInRecursiveVariable {
             if variable.reach == Reach::Never {
                 continue;
             }
+            // A target-specific assignment binds the name only while Make
+            // builds that target, and leaves the file-wide one as it was.
+            if variable.scope != VariableScope::Global {
+                continue;
+            }
+            let existing = bindings.get(variable.name.as_str()).copied();
+            // '?=' does nothing at all where the name already has a value: it
+            // runs no command and leaves the flavor the earlier assignment set.
+            if variable.operator == AssignmentOperator::Conditional
+                && existing.is_some_and(|binding| binding.definite)
+            {
+                continue;
+            }
             let flavor = match variable.operator {
                 // '+=' takes the flavor of the variable it appends to, and
                 // creates a recursive one where there is nothing to append to.
-                AssignmentOperator::Append => *flavors
-                    .get(variable.name.as_str())
-                    .unwrap_or(&AssignmentOperator::Recursive),
-                operator => operator,
+                AssignmentOperator::Append => {
+                    existing.map_or(Flavor::Deferred, |binding| binding.flavor)
+                }
+                operator => flavor_of(operator),
             };
-            flavors.insert(variable.name.as_str(), flavor);
-            if !expands_on_every_reading(flavor) {
+            bindings.insert(
+                variable.name.as_str(),
+                Binding {
+                    flavor,
+                    definite: variable.reach == Reach::Always,
+                },
+            );
+            if !expands_again(variable.operator, flavor) {
                 continue;
             }
             if calls_the_shell(&variable.value) && !reads_a_late_value(&variable.value) {
@@ -1175,6 +1247,50 @@ impl Rule for ShellInRecursiveVariable {
     }
 }
 
+/// What a name holds after an assignment, as far as the file says. `definite`
+/// is false where the assignment sits in a branch whose condition Make decides
+/// while it reads, so the name may hold nothing at all.
+#[derive(Clone, Copy)]
+struct Binding {
+    flavor: Flavor,
+    definite: bool,
+}
+
+/// How Make holds a value. It expands a `Deferred` one again at every reading,
+/// and an `Immediate` one only where it is written.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Flavor {
+    Deferred,
+    Immediate,
+}
+
+/// The flavor an assignment leaves the name in, which is what a later `+=`
+/// appends to. `!=` stores the command's output without expanding it, and
+/// `:::=` expands the value once and escapes what comes out; both leave a
+/// variable Make expands again at every reading, so an append to either is
+/// expanded again too.
+fn flavor_of(operator: AssignmentOperator) -> Flavor {
+    match operator {
+        AssignmentOperator::Simple | AssignmentOperator::SimplePosix => Flavor::Immediate,
+        AssignmentOperator::Recursive
+        | AssignmentOperator::Conditional
+        | AssignmentOperator::Shell
+        | AssignmentOperator::ImmediateRecursive
+        | AssignmentOperator::Append => Flavor::Deferred,
+    }
+}
+
+/// Whether Make expands the value written here again at every reading. `!=`,
+/// `:=`, `::=` and `:::=` all expand it where it stands, whatever flavor they
+/// leave behind, so a command in one of those runs once.
+fn expands_again(operator: AssignmentOperator, flavor: Flavor) -> bool {
+    match operator {
+        AssignmentOperator::Recursive | AssignmentOperator::Conditional => true,
+        AssignmentOperator::Append => flavor == Flavor::Deferred,
+        _ => false,
+    }
+}
+
 fn shell_call_diagnostic(rule: &'static str, name: &str, line: usize, column: usize) -> Diagnostic {
     Diagnostic::new(
         rule,
@@ -1182,16 +1298,6 @@ fn shell_call_diagnostic(rule: &'static str, name: &str, line: usize, column: us
         format!("'{name}' runs its $(shell ...) again every time it is read"),
         line,
         column,
-    )
-}
-
-/// Whether an assignment leaves Make expanding the value again at every
-/// reading. `:::=` expands the value where it is written and escapes what
-/// comes out, so the command behind it runs once.
-fn expands_on_every_reading(operator: AssignmentOperator) -> bool {
-    matches!(
-        operator,
-        AssignmentOperator::Recursive | AssignmentOperator::Conditional
     )
 }
 
