@@ -1,0 +1,14 @@
+{
+  "git": {
+    "repository": "https://github.com/git/git",
+    "revision": "3cb9185f65410273787f74333cc027d2ea5daada"
+  },
+  "redis": {
+    "repository": "https://github.com/redis/redis",
+    "revision": "60b4364fef859de5c639546bcdd08091876f502c"
+  },
+  "zstd": {
+    "repository": "https://github.com/facebook/zstd",
+    "revision": "d9c0c7e2cf8a8bf9fb98d3bee546dcf8dc9ac59a"
+  }
+}

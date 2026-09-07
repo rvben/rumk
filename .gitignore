@@ -29,6 +29,9 @@ coverage/
 # Benchmark results
 *.bench
 
+# Python verification scripts
+__pycache__/
+
 # Local configuration
 .rumk.toml
 rumk.toml

@@ -38,3 +38,6 @@ the build inputs into temporary repositories, tests the actual Rust hook backend
 and checks formatting, include context, and configuration triggers. It never
 installs hooks or changes the real repository's index. Run the Cargo checks first
 so the offline hook installation can reuse downloaded crate dependencies.
+For real upstream checkouts, follow [corpus verification](docs/corpus-verification.md).
+The pinned sample and audit runner check repeatability, editor-buffer parity,
+formatting idempotence, and input integrity without running upstream Makefiles.
