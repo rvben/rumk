@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 const DEFAULT_RULES: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK201", "MK203",
-    "MK204", "MK205", "MK206", "MK207", "MK211", "MK212",
+    "MK204", "MK205", "MK206", "MK207", "MK211", "MK212", "MK214",
 ];
 const ALL_RULES: &[&str] = rules::RULE_IDS;
 
@@ -305,6 +305,10 @@ impl Config {
             "placement" if rule_id == "MK201" => {
                 settings.options.get("placement").map(value_string)
             }
+            "max-lines" if rule_id == "MK104" => {
+                settings.options.get("max-lines").map(value_string)
+            }
+            "required" if rule_id == "MK215" => settings.options.get("required").map(value_string),
             _ => None,
         }
     }
@@ -566,6 +570,19 @@ fn default_settings() -> BTreeMap<String, RuleSettings> {
                     options.insert(
                         "style".to_string(),
                         toml::Value::String("lower-case".into()),
+                    );
+                }
+                "MK104" => {
+                    options.insert("max-lines".into(), toml::Value::Integer(10));
+                }
+                "MK215" => {
+                    options.insert(
+                        "required".into(),
+                        toml::Value::Array(
+                            ["all", "clean", "test"]
+                                .map(|name| toml::Value::String(name.into()))
+                                .to_vec(),
+                        ),
                     );
                 }
                 "MK201" => {
@@ -853,6 +870,8 @@ fn canonical_option(rule_id: &str, key: &str) -> Result<&'static str> {
         ("MK101", "ignore-recipes") => Ok("ignore-recipes"),
         ("MK102" | "MK103", "style") => Ok("style"),
         ("MK201", "placement") => Ok("placement"),
+        ("MK104", "max-lines") => Ok("max-lines"),
+        ("MK215", "required") => Ok("required"),
         _ => bail!("Unknown option '{key}' for rule {rule_id}"),
     }
 }
@@ -912,10 +931,38 @@ fn build_rule(
         "MK211" => Box::new(rules::best_practices::ShellStyleVariableReference),
         "MK212" => Box::new(rules::best_practices::DirectoryChangeInRecipe),
         "MK213" => Box::new(rules::best_practices::ShellInRecursiveVariable),
+        "MK104" => Box::new(rules::policy::RecipeLength::new(integer_option(
+            rule_id,
+            settings,
+            "max-lines",
+            10,
+        )?)),
+        "MK105" => Box::new(rules::formatting::AssignmentSpacing),
+        "MK214" => Box::new(rules::policy::GlobalIgnore),
+        "MK215" => Box::new(rules::policy::RequiredTargets::new(
+            required_targets_option(settings)?,
+        )),
         _ => bail!("Unknown rule: {rule_id}"),
     };
 
     Ok(rule)
+}
+
+fn required_targets_option(settings: &RuleSettings) -> Result<Vec<String>> {
+    let names = match settings.options.get("required") {
+        Some(value) => parse_string_array(value, "MK215.required")?,
+        None => vec!["all".into(), "clean".into(), "test".into()],
+    };
+    for name in &names {
+        if name.is_empty()
+            || name
+                .chars()
+                .any(|c| c.is_whitespace() || "$%:#;=\\".contains(c))
+        {
+            bail!("MK215.required entries must be literal target names without whitespace or Make metacharacters");
+        }
+    }
+    Ok(names)
 }
 
 fn integer_option(

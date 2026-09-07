@@ -1,6 +1,6 @@
 .PHONY: all build test lint fmt fmt-check clean install run check-examples
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
-.PHONY: release-check benchmark help
+.PHONY: release-check benchmark help check-comparison
 
 # Configuration
 CARGO = cargo
@@ -50,6 +50,9 @@ check-examples: build
 
 check-gnu-fixtures:
 	$(CARGO) test --test gnu_make_test
+
+check-comparison:
+	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test
 
 check-corpus:
 	$(CARGO) test --test corpus_test
@@ -110,6 +113,7 @@ help:
 	@echo "  check-examples - Check example Makefiles"
 	@echo "  check-gnu-fixtures - Verify parser fixtures with GNU Make"
 	@echo "  check-corpus - Verify production-style Makefile projects"
+	@echo "  check-comparison - Verify linter comparison and formatting regressions"
 	@echo "  benchmark - Measure include graphs, large files, and bulk fixes"
 	@echo "  fuzz    - Fuzz every target for FUZZ_TIME seconds (needs nightly)"
 	@echo "  check-fuzz - Type-check the fuzz targets against the library"

@@ -579,6 +579,7 @@ fn special_targets_must_not_share_the_left_hand_side() {
 /// below has something to check.
 fn fix_corpus() -> Vec<String> {
     vec![
+        "CC:=cc  # retain value spaces\n".to_string(),
         "all:\n    echo hi\n".to_string(),
         "all clean:\n\tmake -C sub && gmake test\n".to_string(),
         format!(".PHONY: {}\n", ["target"; 40].join(" ")),

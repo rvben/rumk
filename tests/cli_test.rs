@@ -827,7 +827,7 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
             .lines()
             .map(|line| line.split_whitespace().next().unwrap())
             .collect::<Vec<_>>(),
-        ["MK001", "MK101", "MK201", "MK203", "MK211"]
+        ["MK001", "MK101", "MK105", "MK201", "MK203", "MK211"]
     );
     assert_eq!(String::from_utf8_lossy(&config_output.stdout).trim(), "88");
     assert!(String::from_utf8_lossy(&file_output.stdout).contains(".rumk.toml"));

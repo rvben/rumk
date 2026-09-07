@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "global-ignore",
+      "category": "failure-propagation",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK214"
+      ],
+      "expected": [
+        {
+          "rule": "MK214",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "scoped-ignore",
+      "category": "failure-propagation",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK214"
+      ],
+      "expected": []
+    },
+    {
+      "name": "inactive-ignore",
+      "category": "failure-propagation",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK214"
+      ],
+      "expected": []
+    },
+    {
+      "name": "included-ignore",
+      "category": "failure-propagation",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK214"
+      ],
+      "expected": [
+        {
+          "rule": "MK214",
+          "line": 1,
+          "file": "policy.mk"
+        }
+      ]
+    },
+    {
+      "name": "missing-required",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": [
+        {
+          "rule": "MK215",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "phony-without-definition",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": [
+        {
+          "rule": "MK215",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "included-required",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": []
+    },
+    {
+      "name": "required-not-phony",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": [
+        {
+          "rule": "MK215",
+          "line": 2,
+          "file": "tasks.mk"
+        }
+      ]
+    },
+    {
+      "name": "unknown-include",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": []
+    },
+    {
+      "name": "long-recipe",
+      "category": "recipe-length",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK104"
+      ],
+      "expected": [
+        {
+          "rule": "MK104",
+          "line": 2,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "continued-recipe",
+      "category": "recipe-length",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK104"
+      ],
+      "expected": []
+    },
+    {
+      "name": "assignment-spacing",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK105"
+      ],
+      "expected": [
+        {
+          "rule": "MK105",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "significant-spaces",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK105"
+      ],
+      "expected": []
+    },
+    {
+      "name": "define-body",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK105"
+      ],
+      "expected": []
+    },
+    {
+      "name": "recipe-assignment",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK105"
+      ],
+      "expected": []
+    },
+    {
+      "name": "lost-directory",
+      "category": "recipe-semantics",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK212"
+      ],
+      "expected": [
+        {
+          "rule": "MK212",
+          "line": 3,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "oneshell-directory",
+      "category": "recipe-semantics",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK212"
+      ],
+      "expected": []
+    },
+    {
+      "name": "repeated-timestamp",
+      "category": "expansion",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK213"
+      ],
+      "expected": [
+        {
+          "rule": "MK213",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "immediate-timestamp",
+      "category": "expansion",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK213"
+      ],
+      "expected": []
+    },
+    {
+      "name": "indentation",
+      "category": "syntax",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK001"
+      ],
+      "expected": [
+        {
+          "rule": "MK001",
+          "line": 3,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "dependency-cycle",
+      "category": "graph",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK205"
+      ],
+      "expected": [
+        {
+          "rule": "MK205",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "portable-clean",
+      "category": "portability",
+      "dialect": "posix",
+      "entry": "Makefile",
+      "enable": [
+        "MK214",
+        "MK215",
+        "MK104",
+        "MK105",
+        "MK212",
+        "MK213"
+      ],
+      "expected": []
+    },
+    {
+      "name": "target-assignment-only",
+      "category": "project-policy",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK215"
+      ],
+      "expected": [
+        {
+          "rule": "MK215",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    }
+  ]
+}

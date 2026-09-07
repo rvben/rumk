@@ -1,0 +1,49 @@
+# Makefile comparison corpus
+
+Small, authored regression fixtures shared by `comparison_corpus_test.rs` and
+`scripts/compare-linters.py`. These are synthetic probes, not sampled production
+projects. The separate `tests/fixtures/corpus` suite covers production-style
+multi-file projects. No competitor source code is embedded here.
+
+`manifest.json` states the purpose, dialect, selected rumk rules, and exact
+expected rule/file/line tuples. Every defect has valid lookalikes. The runner
+uses temporary copies, records input hashes and commands, and rejects input
+mutations in check mode. Fixtures must remain harmless even if a validator
+invokes Make; never include destructive recipes or side-effecting Make functions.
+
+Run the offline regression suite:
+
+```sh
+cargo test --test comparison_corpus_test --test formatting_test --test policy_test
+```
+
+Run all four tools after installing the pinned versions explicitly:
+
+```sh
+cargo build
+python3 scripts/compare-linters.py --require-all \
+  --checkmake /path/to/checkmake-0.3.2 \
+  --unmake /path/to/unmake-0.0.27 \
+  --mbake /path/to/mbake-1.4.6 \
+  --output /tmp/rumk-comparison.json
+```
+
+The script does not install anything. It rejects mismatched competitor versions,
+records executable hashes, fixes Python hash ordering and terminal settings, and reports omissions unless `--require-all` requires
+all tools. Repeat with `--baseline /tmp/rumk-comparison.json` and a different
+output path to check observation stability. Update pins deliberately in the
+runner and this document together; a version mismatch never silently upgrades.
+
+Checkmake is configured with `required = test` and `maxBodyLength = 2`. Rumk uses
+the corresponding settings with per-case rule selection. Unmake runs its normal
+static checks (never `--dry-run`); mbake runs `format --check` with an explicit
+default configuration (never `--validate`). Both receive the same root Makefile,
+as does checkmake; include traversal is each tool's responsibility.
+
+Competitor output is evidence, not a correctness oracle. POSIX rejection of a
+GNU fixture is a dialect distinction, and mbake's formatting changes need not
+be build defects. Extra convention warnings are not automatically false positives.
+Only the declared rumk expectation is an assertion of correctness. Inspect raw
+messages and case intent before drawing conclusions; do not rank tools by exit
+status, warning count, or these deliberately small samples. Generated reports
+remain local working material and must not be committed.

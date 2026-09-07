@@ -25,3 +25,16 @@ target gets; the scheduled workflow runs them weekly.
 Rule diagnostics must use accurate one-based character positions. Fixes must preserve source
 bytes outside their declared ranges, remain idempotent, and be followed by a fresh parse and lint
 pass. CLI and configuration changes should follow `docs/rumdl-compatibility.md`.
+
+## Comparison and integration checks
+
+`make check-comparison` runs the offline corpus and new policy/formatting tests.
+The [comparison corpus guide](tests/fixtures/comparison/README.md) describes the
+pinned cross-tool runner and its limits. Keep generated comparison output out of
+commits. Add positive cases and valid lookalikes when changing detection.
+
+With `pre-commit==4.6.0` installed, run `python3 scripts/verify-hooks.py`. It copies
+the build inputs into temporary repositories, tests the actual Rust hook backend,
+and checks formatting, include context, and configuration triggers. It never
+installs hooks or changes the real repository's index. Run the Cargo checks first
+so the offline hook installation can reuse downloaded crate dependencies.

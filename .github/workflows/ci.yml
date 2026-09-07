@@ -47,6 +47,11 @@ jobs:
       - name: Type-check the fuzz targets
         run: make check-fuzz
 
+      - name: Verify pre-commit hooks in disposable repositories
+        run: |
+          python3 -m pip install pre-commit==4.6.0
+          python3 scripts/verify-hooks.py
+
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -122,7 +127,7 @@ jobs:
         run: make --version
 
       - name: Verify controlled and production-style fixtures
-        run: cargo test --locked --test gnu_make_test --test corpus_test
+        run: cargo test --locked --test gnu_make_test --test corpus_test --test comparison_corpus_test --test formatting_test --test policy_test
 
   msrv:
     name: Minimum supported Rust

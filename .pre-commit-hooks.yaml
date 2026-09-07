@@ -1,0 +1,17 @@
+- id: rumk-check
+  name: Check Makefiles with rumk
+  description: Check the project and include graphs when a Makefile or rumk configuration changes.
+  entry: rumk check .
+  language: rust
+  files: '(^|/)(GNUmakefile|[Mm]akefile|[^/]+\.(mk|make)|\.?rumk\.toml)$'
+  types: [file]
+  pass_filenames: false
+  require_serial: true
+- id: rumk-fmt
+  name: Format Makefiles with rumk
+  description: Apply enabled layout fixes to changed Makefiles.
+  entry: rumk fmt
+  language: rust
+  files: '(^|/)(GNUmakefile|[Mm]akefile|[^/]+\.(mk|make))$'
+  types: [file]
+  require_serial: true

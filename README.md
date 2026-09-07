@@ -90,6 +90,30 @@ for users who prefer automatic `0.x` Action updates. Supported commands are `che
 and `fmt`; `install-only: true` only installs Rumk. The Action also accepts `config`, `args`,
 `fail-on-error`, and `output-file`, and exposes `rumk-version` and `rumk-path` outputs.
 
+## Pre-commit
+
+The repository provides `rumk-fmt` and `rumk-check` hooks. Pre-commit builds the
+native executable from the selected repository revision using its Rust backend.
+Pin a commit containing the hook manifest or a release tag that includes it.
+The v0.0.7 release predates these hooks.
+
+```yaml
+repos:
+  - repo: https://github.com/rvben/rumk
+    rev: <commit-containing-the-hooks>
+    hooks:
+      - id: rumk-fmt
+      - id: rumk-check
+```
+
+Formatting runs on changed Makefiles. Checking scans the project when a Makefile
+or Rumk configuration changes, so included fragments are analyzed with their
+entry Makefiles. This also means existing violations elsewhere can fail the
+check; use configuration exclusions and per-file ignores for gradual adoption.
+Neither hook enables unsafe fixes. Use `args: [--check]` on `rumk-fmt` for a
+read-only formatting gate. Hooks match `Makefile`, `makefile`, `GNUmakefile`,
+`*.mk`, and `*.make`, including paths with spaces.
+
 ## Quick start
 
 ```bash
@@ -245,7 +269,7 @@ Rumdl has no equivalent setting; this is a Rumk addition, modeled on Ruff's `--u
 ### Formatting
 
 `rumk fmt` is responsible for how a Makefile is laid out, and leaves what Make does with it to
-`rumk check`. Only the layout rules run:
+`rumk check`. By default, only these layout rules run:
 [`MK001`](https://github.com/rvben/rumk/blob/main/docs/mk001.md) indents recipes with the prefix
 Make expects there, and [`MK101`](https://github.com/rvben/rumk/blob/main/docs/mk101.md) wraps a
 long static `.PHONY` declaration. A path that cannot be read is still reported as
@@ -257,6 +281,11 @@ path, or a bare `make` in a recipe: those are lint findings, they belong to `rum
 project that formats on save should not have them appear as formatting noise. This also makes
 `rumk fmt --check` usable as a CI gate on its own, since it fails only when a file's layout is
 not the one Rumk writes.
+
+Opt into assignment operator spacing by enabling MK105 in the config
+(or `rumk fmt --enable MK001,MK101,MK105`). This preserves variable values and
+trailing whitespace, and leaves continuations, dynamic names, define bodies,
+and target-specific assignments alone. See [MK105](docs/mk105.md).
 
 Every layout fix is safe, so `rumk fmt` has no unsafe fix to withhold and `--unsafe-fixes` makes
 no difference to it.
@@ -349,6 +378,9 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [`MK102`](https://github.com/rvben/rumk/blob/main/docs/mk102.md) - Variable naming convention
 - [`MK103`](https://github.com/rvben/rumk/blob/main/docs/mk103.md) - Target naming convention
 
+- [MK104](docs/mk104.md) - Configurable logical recipe length (opt-in)
+- [MK105](docs/mk105.md) - Assignment operator spacing (opt-in, safe fix, run by `fmt`)
+
 ### Best practices
 
 - [`MK201`](https://github.com/rvben/rumk/blob/main/docs/mk201.md) - Conventional
@@ -380,6 +412,9 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [`MK213`](https://github.com/rvben/rumk/blob/main/docs/mk213.md) - `$(shell ...)` belongs in a
   variable Make expands once (opt-in)
 
+- [MK214](docs/mk214.md) - Global `.IGNORE` suppresses recipe failures (**default**)
+- [MK215](docs/mk215.md) - Required project targets must be defined and phony (opt-in)
+
 ## Development
 
 ```bash
@@ -409,6 +444,12 @@ contents. Use `--scale 1 --runs 1 --warmups 0` for a quick smoke check. Keep com
 settings and machine load comparable; use raw samples to assess noise rather than
 enforcing a universal timing threshold. The include graph caps at 1,002 files to
 stay below Rumk's default project limit.
+
+The shared [comparison corpus](tests/fixtures/comparison/README.md) verifies
+new rules against exact expectations and supports reproducible runs of pinned
+checkmake, unmake, and mbake executables. Run `make check-comparison` for its
+offline regression checks. `scripts/compare-linters.py` records cross-tool
+observations separately; generated results are local working material.
 
 The product-level compatibility contract is documented in
 [`docs/rumdl-compatibility.md`](docs/rumdl-compatibility.md).
