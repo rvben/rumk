@@ -45,6 +45,9 @@ without matching scope, hardware, and methodology. Diagnostics remain unreviewed
 observations: passing these invariants does not establish precision, recall,
 semantic equivalence of all formatting, or overall superiority.
 
+Add `--extend-enable MK216` to review the opt-in prerequisite rule with the same
+disk/stdin parity and filesystem integrity gates. Reports record the extra rules.
+
 The separate [semantic benchmark](semantic-benchmark.md) measures named defect
 detection and working controls against authored GNU Make behavior contracts.
 It never executes the upstream checkouts.

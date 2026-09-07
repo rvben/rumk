@@ -65,7 +65,7 @@ def normalized(result, root):
             "stderr": result.stderr.decode().replace(str(root), "<project>")}
 
 
-def audit(binary, root, runs, timeout):
+def audit(binary, root, runs, timeout, extra_rules=()):
     if git(root, "status", "--porcelain", "--untracked-files=no").strip():
         raise RuntimeError(f"Tracked files must be clean: {root}")
     revision = git(root, "rev-parse", "HEAD").decode().strip()
@@ -73,6 +73,7 @@ def audit(binary, root, runs, timeout):
     paths = makefiles(root)
     if not paths:
         raise RuntimeError(f"No tracked Makefiles: {root}")
+    check_flags = ["--extend-enable", ",".join(extra_rules)] if extra_rules else []
     observations = []
     failures = []
     for path in paths:
@@ -80,7 +81,7 @@ def audit(binary, root, runs, timeout):
         samples = []
         expected = None
         for iteration in range(runs + 1):  # one unmeasured warm-up
-            result, elapsed = invoke(binary, root, ["check", path, "--output-format", "json"], timeout)
+            result, elapsed = invoke(binary, root, ["check", path, "--output-format", "json", *check_flags], timeout)
             value = normalized(result, root)
             json.loads(value["stdout"])
             if expected is not None and value != expected:
@@ -89,7 +90,7 @@ def audit(binary, root, runs, timeout):
             if iteration:
                 samples.append(elapsed)
         buffer, _ = invoke(binary, root, ["check", "-", "--stdin-filename", path,
-                                         "--output-format", "json"], timeout, data)
+                                         "--output-format", "json", *check_flags], timeout, data)
         if normalized(buffer, root) != expected:
             failures.append(f"{path}: disk/stdin diagnostics differ")
         format_args = ["fmt", "-", "--stdin-filename", path, "--extend-enable", "MK105"]
@@ -114,6 +115,7 @@ def main():
     parser.add_argument("--binary", type=Path, default=Path("target/release/rumk"))
     parser.add_argument("--project", type=Path, action="append", required=True)
     parser.add_argument("--manifest", type=Path, help="Require exactly the project names and revisions in a pinned manifest")
+    parser.add_argument("--extend-enable", action="append", default=[], help="Add an opt-in rule to disk/stdin checks")
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--timeout", type=float, default=30)
     parser.add_argument("--output", type=Path, required=True)
@@ -133,13 +135,13 @@ def main():
                 parser.error(f"{root.name}: checkout revision differs from manifest")
     binary = args.binary.resolve()
     report = {"schema_version": 1, "binary_sha256": digest(binary.read_bytes()),
-              "platform": platform.platform(), "runs": args.runs,
-              "method": "Clean tracked Makefiles; built-in checking defaults; formatting adds MK105; one warm-up; no Make execution. Diagnostics are unreviewed observations, not confirmed defects.",
+              "platform": platform.platform(), "runs": args.runs, "extra_rules": args.extend_enable,
+              "method": "Clean tracked Makefiles; built-in checking defaults plus extra_rules; formatting adds MK105; one warm-up; no Make execution. Diagnostics are unreviewed observations, not confirmed defects.",
               "projects": {}}
     if manifest is not None:
         report["manifest"] = manifest
     for root in roots:
-        value = audit(binary, root, args.runs, args.timeout)
+        value = audit(binary, root, args.runs, args.timeout, args.extend_enable)
         report["projects"][root.name] = value
         print(f'{root.name}: {len(value["files"])} files, {len(value["failures"])} failures', flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)

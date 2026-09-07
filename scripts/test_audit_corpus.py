@@ -53,6 +53,18 @@ class CorpusAuditTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "must be clean"):
             AUDIT.audit(BINARY, self.repo, 1, 10)
 
+    def test_opt_in_rule_is_checked_on_disk_and_stdin(self):
+        (self.repo / "Makefile").write_text("probe: missing.txt\n")
+        self.git("add", "Makefile")
+        self.git("-c", "user.name=Corpus Test", "-c", "user.email=corpus@example.invalid",
+                 "-c", "commit.gpgsign=false", "commit", "-m", "test: add absent prerequisite")
+        result = AUDIT.audit(BINARY, self.repo, 1, 10, ["MK216"])
+        self.assertEqual(result["failures"], [])
+        findings = [d for file in result["files"] for d in json.loads(file["check"]["stdout"])
+                    if d["rule"] == "MK216"]
+        self.assertEqual(len(findings), 1)
+        self.assertIn("missing.txt", findings[0]["message"])
+
     def test_audit_detects_new_side_effects_and_unstable_output(self):
         original = AUDIT.invoke
         checks = 0
