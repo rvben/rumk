@@ -1,6 +1,6 @@
 .PHONY: all build test lint fmt fmt-check clean install run check-examples
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
-.PHONY: release-check benchmark help check-comparison
+.PHONY: release-check benchmark help check-comparison check-semantic
 
 # Configuration
 CARGO = cargo
@@ -53,6 +53,10 @@ check-gnu-fixtures:
 
 check-comparison:
 	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test --test phony_precision_test
+
+check-semantic:
+	$(CARGO) build --bin rumk
+	python3 -m unittest discover -s scripts -p 'test_semantic_benchmark.py'
 
 check-corpus:
 	$(CARGO) test --test corpus_test
@@ -114,6 +118,7 @@ help:
 	@echo "  check-gnu-fixtures - Verify parser fixtures with GNU Make"
 	@echo "  check-corpus - Verify production-style Makefile projects"
 	@echo "  check-comparison - Verify linter comparison and formatting regressions"
+	@echo "  check-semantic - Verify authored defects and safe fixes against GNU Make"
 	@echo "  benchmark - Measure include graphs, large files, and bulk fixes"
 	@echo "  fuzz    - Fuzz every target for FUZZ_TIME seconds (needs nightly)"
 	@echo "  check-fuzz - Type-check the fuzz targets against the library"

@@ -1,0 +1,294 @@
+{
+  "schema_version": 1,
+  "cases": [
+    {
+      "name": "duplicate-recipe",
+      "title": "A second recipe silently replaces the first",
+      "dialect": "GNU Make",
+      "rule": "MK204",
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "probe"
+      ],
+      "broken": "probe:\n\t@echo expected\n\nprobe:\n\t@echo replaced\n",
+      "working": "probe: source.txt\nprobe:\n\t@echo expected\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "replaced\n",
+          "stderr_contains": "overriding"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "expected\n",
+          "stderr_absent": "overriding"
+        }
+      },
+      "matchers": {
+        "checkmake": "uniquetargets",
+        "mbake": "Error: Duplicate target 'probe'"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "dependency-cycle",
+      "title": "Make discards a circular dependency",
+      "dialect": "GNU Make",
+      "rule": "MK205",
+      "files": {},
+      "args": [
+        "probe"
+      ],
+      "broken": "probe: helper\n\t@echo probe\nhelper: probe\n\t@echo helper\n",
+      "working": "probe: helper\n\t@echo probe\nhelper:\n\t@echo helper\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "helper\nprobe\n",
+          "stderr_contains": "Circular"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "helper\nprobe\n",
+          "stderr_absent": "Circular"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "missing-prerequisite",
+      "title": "A prerequisite typo stops the build",
+      "dialect": "GNU Make",
+      "rule": null,
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "probe"
+      ],
+      "broken": "probe: soruce.txt\n\t@echo built\n",
+      "working": "probe: source.txt\n\t@echo built\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
+    },
+    {
+      "name": "recursive-dry-run",
+      "title": "A direct make command hides child dry-run output",
+      "dialect": "GNU Make",
+      "rule": "MK203",
+      "files": {
+        "child.mk": "child:\n\t@echo child-command\n"
+      },
+      "args": [
+        "-n",
+        "probe"
+      ],
+      "broken": "probe:\n\t@make -f child.mk child\n",
+      "working": "probe:\n\t@$(MAKE) -f child.mk child\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout_absent": "echo child-command"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout_contains": "echo child-command"
+        }
+      },
+      "matchers": {
+        "unmake": ": MAKE_NOP:"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "lost-directory",
+      "title": "A new recipe shell loses the previous directory",
+      "dialect": "GNU Make",
+      "rule": "MK212",
+      "files": {
+        "marker": "root\n",
+        "work/marker": "child\n"
+      },
+      "args": [
+        "probe"
+      ],
+      "broken": "probe:\n\t@cd work\n\t@cat marker\n",
+      "working": "probe:\n\t@cd work && cat marker\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "root\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "child\n"
+        }
+      },
+      "matchers": {
+        "unmake": ": WD_NOP:"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "global-ignore",
+      "title": "Global suppression lets a failed build succeed",
+      "dialect": "GNU Make",
+      "rule": "MK214",
+      "files": {},
+      "args": [
+        "probe"
+      ],
+      "broken": ".IGNORE:\nprobe:\n\t@false\n",
+      "working": "probe:\n\t@false\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "",
+          "stderr_contains": "ignored"
+        },
+        "working": {
+          "exit_code": 2,
+          "stderr_contains": "Error"
+        }
+      },
+      "matchers": {
+        "unmake": ": GLOBAL_IGNORE:",
+        "mbake": "Special target '\\.IGNORE'.*requires prerequisites"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "late-expansion",
+      "title": "An immediate assignment reads a value too early",
+      "dialect": "GNU Make",
+      "rule": "MK208",
+      "files": {},
+      "args": [
+        "probe"
+      ],
+      "broken": "VALUE := $(LATER)\nLATER := expected\nprobe:\n\t@printf \"<%s>\\n\" \"$(VALUE)\"\n",
+      "working": "LATER := expected\nVALUE := $(LATER)\nprobe:\n\t@printf \"<%s>\\n\" \"$(VALUE)\"\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "<>\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "<expected>\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "recipe-indentation",
+      "title": "Spaces prevent a recipe from parsing",
+      "dialect": "GNU Make",
+      "rule": "MK001",
+      "files": {},
+      "args": [
+        "probe"
+      ],
+      "broken": "probe:\n    @echo expected\n",
+      "working": "probe:\n\t@echo expected\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "missing separator"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "expected\n"
+        }
+      },
+      "matchers": {
+        "unmake": "error: Makefile:2:1.*expected:.*\\\\t"
+      },
+      "safe_fix": "repair",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "phony-collision",
+      "title": "A file named test suppresses the command",
+      "dialect": "GNU Make",
+      "rule": "MK201",
+      "files": {
+        "test": "existing file\n"
+      },
+      "args": [
+        "test"
+      ],
+      "broken": "test:\n\t@echo verified\n",
+      "working": ".PHONY: test\ntest:\n\t@echo verified\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout_absent": "verified"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "verified\n"
+        }
+      },
+      "matchers": {
+        "checkmake": "phonydeclared",
+        "unmake": ": PHONY[^:]*:",
+        "mbake": "Consider adding \\.PHONY declaration.*test"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "custom-phony-collision",
+      "title": "A file named verify suppresses the command",
+      "dialect": "GNU Make",
+      "rule": "MK201",
+      "files": {
+        "verify": "existing file\n"
+      },
+      "args": [
+        "verify"
+      ],
+      "broken": "verify:\n\t@echo verified\n",
+      "working": ".PHONY: verify\nverify:\n\t@echo verified\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout_absent": "verified"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "verified\n"
+        }
+      },
+      "matchers": {
+        "checkmake": "phonydeclared",
+        "unmake": ": PHONY[^:]*:",
+        "mbake": "Consider adding \\.PHONY declaration.*verify"
+      },
+      "safe_fix": "withheld",
+      "expected_rumk_detection": false
+    }
+  ]
+}

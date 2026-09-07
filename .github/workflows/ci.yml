@@ -52,7 +52,7 @@ jobs:
           python3 -m pip install pre-commit==4.6.0
           python3 scripts/verify-hooks.py
 
-      - name: Verify corpus audit tooling
+      - name: Verify corpus audits and GNU behavior benchmark
         run: |
           cargo build --locked --bin rumk
           python3 -m unittest discover -s scripts -p 'test_*.py'

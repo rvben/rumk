@@ -1,0 +1,22 @@
+# GNU behavior pairs
+
+`manifest.json` is trusted, executable test input for
+`scripts/semantic-benchmark.py`. Each case holds authored broken and working
+Makefiles, supporting files, a GNU Make invocation, and independent output
+contracts. Only these disposable fixtures execute; upstream checkouts do not.
+
+Ground truth is the observable behavior, not Rumk's diagnostics. The
+`expected_rumk_detection` field locks current coverage, including known misses;
+it is not used to derive benchmark scores. A null `rule` marks a defect outside
+the current Rumk rule set. Tool matchers identify the named defect; all unmatched
+output remains available and unscored. Update a matcher only after reviewing
+the raw diagnostic and both variants.
+
+The duplicate-recipe control intentionally repeats a target with just one
+recipe, which GNU Make accepts. The custom command uses a real same-named file;
+it needs declared project intent for Rumk to recommend `.PHONY`. The prerequisite
+typo deliberately remains uncovered.
+
+Keep recipes harmless and deterministic. Review fixture changes like executable
+code. See [methodology](../../../docs/semantic-benchmark.md) for scoring, tool
+profiles, fix validation, and reproduction commands.
