@@ -296,6 +296,127 @@ fn reports_a_missing_include_whose_pattern_rule_carries_no_recipe() {
 }
 
 #[test]
+fn says_nothing_about_a_missing_include_whose_chains_are_too_many_to_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Every one of these patterns matches the include and every other pattern's
+    // prerequisite, which is more chains than the search will read. What it
+    // does not finish reading, it says nothing about.
+    let mut source = format!("include {}\n", "z".repeat(40));
+    for width in 1..=32 {
+        source.push_str(&format!("%{}: %\n\t@cp $< $@\n", "z".repeat(width)));
+    }
+    std::fs::write(&root, source).unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_pattern_rule_would_match_on_nothing_at_all() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // An implicit rule matches on a stem of at least one character, so Make
+    // passes over '%.mk' here and says '.mk' has no rule.
+    std::fs::write(directory.path().join(".in"), "X := 1\n").unwrap();
+    std::fs::write(&root, "include .mk\n%.mk: %.in\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include '.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+const CHAIN: &str =
+    "include config.mk\n%.mk: %.mk.in\n\t@cp $< $@\n%.mk.in: %.mk.src\n\t@cp $< $@\n";
+
+#[test]
+fn says_nothing_about_a_missing_include_a_chain_of_pattern_rules_builds() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("config.mk.src"), "X := 1\n").unwrap();
+    std::fs::write(&root, CHAIN).unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_whose_chain_of_pattern_rules_runs_out_of_sources() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Nothing supplies 'config.mk.src', so Make passes over both patterns.
+    std::fs::write(&root, CHAIN).unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'config.mk' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_one_pattern_rule_builds_in_a_single_step() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("aXX"), "X := 1\n").unwrap();
+    std::fs::write(&root, "include aX\n%X: %XX\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn says_nothing_about_a_missing_include_one_pattern_rule_builds_both_halves_of() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Make declines a pattern rule twice along one chain, not twice in one
+    // build: '%.x: %.y' supplies both halves here.
+    std::fs::write(directory.path().join("a.y"), "A := 1\n").unwrap();
+    std::fs::write(directory.path().join("b.y"), "B := 2\n").unwrap();
+    std::fs::write(
+        &root,
+        "include config.mk\n%.mk: a.x b.x\n\t@cat $^ > $@\n%.x: %.y\n\t@cp $< $@\n",
+    )
+    .unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}
+
+#[test]
+fn reports_a_missing_include_a_pattern_rule_would_have_to_build_twice_over() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    // Reaching 'aX' from 'aXXX' asks for '%X: %XX' twice, which Make refuses.
+    std::fs::write(directory.path().join("aXXX"), "X := 1\n").unwrap();
+    std::fs::write(&root, "include aX\n%X: %XX\n\t@cp $< $@\n").unwrap();
+
+    let diagnostics = MissingInclude.check_project(&load(&root));
+
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("Required include 'aX' was not found"),
+        "{diagnostics:?}"
+    );
+}
+
+#[test]
 fn says_nothing_about_a_name_a_file_make_remakes_and_rereads_may_define() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");

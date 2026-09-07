@@ -219,26 +219,61 @@ impl Rule for MissingInclude {
 /// rule is different. Make passes over a pattern whose prerequisites it can
 /// neither find nor make, as if the rule were not written, and says the target
 /// has no rule at all, so a pattern counts here only where everything it asks
-/// for is on disk already or is a target in its own right. A pattern with no
+/// for is on disk already or is something Make can make. A pattern with no
 /// recipe builds nothing and never counts.
+///
+/// What a pattern asks for may itself be the work of another pattern, and Make
+/// chains them, so the search follows the chain. Make refuses to use one
+/// pattern rule twice along a single chain, and that is what ends the search:
+/// the name being sought can grow at every step, but the rules available to
+/// reach it cannot.
+///
+/// Enough patterns that match one another still put an exponential number of
+/// chains in front of the search, so it gives up after `BUILD_SEARCH_STEPS`.
+/// Giving up means Rumk does not know, and a name Rumk does not know about is
+/// left alone: exhaustion costs a report rather than inventing one.
 fn builds(project: &Project, name: &str) -> bool {
+    let mut budget = BUILD_SEARCH_STEPS;
+    builds_along(project, name, &mut Vec::new(), &mut budget) || budget == 0
+}
+
+/// Names the search may look at before it gives up. Chains in a Makefile people
+/// wrote are a few rules long and nowhere near this.
+const BUILD_SEARCH_STEPS: u32 = 10_000;
+
+/// `chain` holds the patterns already in use further up this search, which Make
+/// will not use again here.
+fn builds_along(project: &Project, name: &str, chain: &mut Vec<String>, budget: &mut u32) -> bool {
+    let Some(remaining) = budget.checked_sub(1) else {
+        return false;
+    };
+    *budget = remaining;
     let index = project.analysis();
     if index.target(name).is_some() {
         return true;
     }
     index.targets.iter().any(|(pattern, symbol)| {
         pattern.contains('%')
+            && !chain.contains(pattern)
             && symbol
                 .declarations
                 .iter()
                 .any(|declaration| declaration.has_recipe)
-            && pattern_stem(pattern, name).is_some_and(|stem| {
-                symbol.dependencies.iter().all(|dependency| {
-                    let prerequisite = dependency.prerequisite.replace('%', stem);
-                    index.target(&prerequisite).is_some()
-                        || project.working_directory().join(&prerequisite).exists()
+            && pattern_stem(pattern, name)
+                // An implicit rule matches on a stem of at least one character,
+                // so '%.mk' passes over '.mk' however plainly it appears to fit.
+                .filter(|stem| !stem.is_empty())
+                .is_some_and(|stem| {
+                    let stem = stem.to_string();
+                    chain.push(pattern.clone());
+                    let reachable = symbol.dependencies.iter().all(|dependency| {
+                        let prerequisite = dependency.prerequisite.replace('%', &stem);
+                        project.working_directory().join(&prerequisite).exists()
+                            || builds_along(project, &prerequisite, chain, budget)
+                    });
+                    chain.pop();
+                    reachable
                 })
-            })
     })
 }
 
