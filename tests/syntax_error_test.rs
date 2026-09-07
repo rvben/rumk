@@ -730,6 +730,29 @@ fn a_recipe_prefix_rumk_cannot_evaluate_proves_no_missing_separator() {
 }
 
 #[test]
+fn a_recipe_prefix_rumk_cannot_work_out_proves_no_broken_reference_in_a_recipe() {
+    // Make expands the last line only where it reads it as a recipe, which the
+    // prefix decides. The other reading is an assignment nothing expands, and
+    // Make accepts the file, so neither reading can be held against it.
+    let sources = [
+        "ifdef X\n.RECIPEPREFIX = >\nendif\nall:;@true\n>FOO = $(\n",
+        "P := >\n.RECIPEPREFIX := $(P)\nall:;@true\n\tFOO = $(\n",
+    ];
+    for source in sources {
+        assert!(errors(source).is_empty(), "{source:?}");
+    }
+    // A prefix Rumk reads outright leaves one reading, and Make stops there.
+    assert_eq!(
+        errors(".RECIPEPREFIX = >\nall:;@true\n>FOO = $(\n"),
+        [(unterminated(')', None, None), 3, 8)]
+    );
+    assert_eq!(
+        errors("all:;@true\n\tFOO = $(\n"),
+        [(unterminated(')', None, None), 2, 8)]
+    );
+}
+
+#[test]
 fn a_comment_after_a_define_header_is_not_part_of_it() {
     let source = "define FOO # := note\n$(BROKEN\nendef\nall: ; @echo ok\n";
     let makefile = parse(source);

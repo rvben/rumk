@@ -667,14 +667,21 @@ impl Parser {
 
     fn attach_recipe(&mut self, statement: &LogicalStatement) {
         let raw = statement.raw(self.source());
-        let error = unterminated_error(
-            raw,
-            0..raw.len(),
-            statement.start_line,
-            CommentHandling::Keep,
-            None,
-        );
-        self.record_all(error);
+        // The line is a recipe only under the prefix Rumk read it with, and
+        // Make expands a recipe. A prefix Rumk could not follow leaves a second
+        // reading where the line is an ordinary statement, and a reference in
+        // an ordinary statement may never be expanded at all, so a broken one
+        // here is not something Rumk can hold Make to.
+        if self.recipe_prefix_at(statement.start_line).known {
+            let error = unterminated_error(
+                raw,
+                0..raw.len(),
+                statement.start_line,
+                CommentHandling::Keep,
+                None,
+            );
+            self.record_all(error);
+        }
 
         let Some(index) = self.last_rule else {
             return;
