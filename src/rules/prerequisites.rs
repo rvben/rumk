@@ -428,7 +428,7 @@ const PATTERN_SEARCH_STEPS: usize = 10_000;
 
 fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathBuf]) -> bool {
     let mut budget = PATTERN_SEARCH_STEPS;
-    pattern_producer(project, name, directories, true, &mut budget)
+    pattern_producer(project, name, directories, true, &mut budget, None)
 }
 
 fn pattern_producer(
@@ -437,6 +437,7 @@ fn pattern_producer(
     directories: &[PathBuf],
     inspect_inputs: bool,
     budget: &mut usize,
+    excluded: Option<crate::project_analysis::SourceLocation>,
 ) -> bool {
     project
         .analysis()
@@ -444,6 +445,15 @@ fn pattern_producer(
         .iter()
         .filter(|(pattern, _)| pattern.contains('%'))
         .any(|(pattern, symbol)| {
+            // GNU Make never uses one implicit rule twice in a chain. A
+            // speculative built-in input must not revive its own producer.
+            if symbol
+                .declarations
+                .iter()
+                .all(|d| Some(d.location) == excluded)
+            {
+                return false;
+            }
             if pattern.contains(['\\', '$']) {
                 return true;
             }
@@ -596,7 +606,14 @@ fn declaration_may_build(
                         .any(|directory| may_exist(&directory.join(input)))
                     || (!declaration.double_colon
                         && (plausible_implicit_input(project, input, directories)
-                            || pattern_producer(project, input, directories, false, budget)))
+                            || pattern_producer(
+                                project,
+                                input,
+                                directories,
+                                false,
+                                budget,
+                                Some(declaration.location),
+                            )))
             })
     })
 }
@@ -728,7 +745,8 @@ mod tests {
                 "generated/output.dat",
                 &directories,
                 true,
-                &mut budget
+                &mut budget,
+                None,
             ));
         }
         assert!(!possible_pattern_producer(

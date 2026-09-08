@@ -38,6 +38,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- MK216 no longer treats reuse of the same implicit rule within a chain as a
+  possible producer for that rule’s missing input.
+
 - Unsaved buffers resolve their existing parent directory before analysis, so
   Windows path spelling and symlink aliases cannot detach SARIF/JSON edits from
   the buffer that owns them.

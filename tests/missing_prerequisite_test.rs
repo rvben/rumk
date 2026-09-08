@@ -152,7 +152,6 @@ fn unrelated_patterns_do_not_hide_missing_inputs() {
 #[test]
 fn matching_patterns_and_builtin_sources_remain_uncertain() {
     for source in [
-        "probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n",
         "probe: output.o\n%.c: templates/%.src\n\t@echo generated\n",
         "VPATH := generated\nprobe: output.o\ngenerated/%.c: templates/%.src\n\t@echo generated\n",
         "probe: output.o\ns.%: revisions/%\n\t@echo generated\n",
@@ -373,5 +372,36 @@ fn selective_vpath_decisions_agree_with_gnu_make() {
             expected,
             "{directives}"
         );
+    }
+}
+
+#[test]
+fn an_implicit_rule_cannot_rescue_its_own_missing_input() {
+    for source in [
+        "probe: output.dat\n%.dat: %.src\n\t@echo generated\n",
+        "probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n",
+        "probe: output.dat\n%.dat: | %.src\n\t@echo generated\n",
+    ] {
+        assert_eq!(check(source, &[]).len(), 1, "{source}");
+    }
+    for (source, files) in [
+        (
+            "probe: output.dat\n%.dat: %.src\n\t@echo generated\n",
+            vec![("output.src", "input")],
+        ),
+        (
+            "probe: nested/output.dat\n%.dat: %.src\n\t@echo generated\n",
+            vec![("nested/output.src", "input")],
+        ),
+        (
+            "probe: output.dat\n%.dat: %.src\n\t@echo generated\n%.src: seed\n\t@echo source\n",
+            vec![("seed", "input")],
+        ),
+        (
+            "probe: output.dat\n%.dat: %.src\n\t@echo first\n%.dat: %.seed\n\t@echo second\n",
+            vec![("output.seed", "input")],
+        ),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
     }
 }

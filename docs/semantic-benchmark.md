@@ -69,8 +69,7 @@ For explicit project intent, run a separate measurement with
 it is not automatic detection of arbitrary command intent.
 
 MK216 now covers simple missing prerequisites, generated declarations, static
-VPATH, and absent built-in compiler inputs. It remains opt-in. User-pattern,
-and dynamic-expression defects remain deliberately uncovered
+VPATH, and absent built-in compiler inputs. It remains opt-in. Dynamic-expression defects remain deliberately uncovered
 in the manifest; see [its boundaries](mk216.md). The additional pairs change
 the denominator, so compare the original ten separately when assessing progress.
 
@@ -110,3 +109,6 @@ expected misses explicitly; a high paired score is not proof of complete coverag
 
 The selective-vpath pair is now detected using search paths expanded at directive
 read time. Additional regressions verify clearing, includes, and reassignment.
+
+The simple pattern-prerequisite defect is now detected by excluding reuse of its
+own implicit declaration. Other viable producer declarations remain controls.
