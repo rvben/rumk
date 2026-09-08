@@ -42,6 +42,12 @@ Interpretation:
 
 - An eligible root has no root blockers. It may still contain unsupported or
   uncertain dependencies, or no visible dependencies at all.
+- `local_exclusions` identifies declarations with known ordinary targets but
+  unresolved prerequisites, with source, line, and reason. Independent declarations
+  can still be checked. Such declarations may have no evaluated edges to count;
+  `unresolved_prerequisites` marks any visible edges withheld at those locations.
+  The corpus summary counts `roots_with_local_exclusions` and `local_exclusions`
+  separately from global blockers and the evaluated edge inventory.
 - `roots_by_blocker` counts affected roots, while `blocker_occurrences` counts
   occurrences inside their include graphs. Blockers overlap; do not sum them
   into a count of excluded roots. Included files can appear under multiple roots.

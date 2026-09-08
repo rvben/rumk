@@ -21,6 +21,8 @@ def summarize(roots):
         outcomes.update(coverage["outcomes"])
         assert sum(coverage["outcomes"].values()) == len(coverage["edges"])
     return {"roots": len(roots), "eligible_roots": sum(not r["coverage"]["root_blockers"] for r in roots),
+            "roots_with_local_exclusions": sum(bool(r["coverage"].get("local_exclusions")) for r in roots),
+            "local_exclusions": sum(len(r["coverage"].get("local_exclusions", [])) for r in roots),
             "roots_by_blocker": dict(blockers.most_common()),
             "blocker_occurrences": dict(occurrences.most_common()),
             "edge_outcomes": dict(outcomes.most_common()), "visible_edges": sum(outcomes.values())}

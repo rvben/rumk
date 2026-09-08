@@ -83,12 +83,14 @@ pub(super) struct InputIndex<'a> {
     filesystem: RefCell<Filesystem>,
 }
 impl<'a> InputIndex<'a> {
-    pub fn new(project: &'a Project) -> Self {
+    pub fn new(project: &'a Project, local_targets: impl Iterator<Item = &'a str>) -> Self {
         let targets: BTreeSet<_> = project
             .analysis()
             .targets
             .keys()
-            .map(|name| normalized(name))
+            .map(String::as_str)
+            .chain(local_targets)
+            .map(normalized)
             .collect();
         let mut parents: BTreeMap<PathBuf, Names> = BTreeMap::new();
         for name in &targets {

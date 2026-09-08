@@ -1170,6 +1170,65 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": true
+    },
+    {
+      "name": "local-unknown-prerequisites",
+      "title": "local unknown prerequisites",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "INPUTS := $(wildcard vendor/*.c)\nOBJECTS := $(INPUTS:.c=.o)\noptional: $(OBJECTS)\nprobe: soruce.txt\n\t@:\n",
+      "working": "INPUTS := $(wildcard vendor/*.c)\nOBJECTS := $(INPUTS:.c=.o)\noptional: $(OBJECTS)\nprobe: source.txt\n\t@:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "No rule to make target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "zstd/contrib/linux-kernel/test/Makefile: wildcard source lists flow through substitution references into liblinuxzstd.a prerequisites"
+    },
+    {
+      "name": "included-local-unknown-producer",
+      "title": "included local unknown producer",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "rules.mk": "generated.txt: $(EXTRA_INPUTS);\n"
+      },
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "include rules.mk\nEXTRA_INPUTS = later.txt\nprobe: misspelled.txt\n\t@:\n",
+      "working": "include rules.mk\nEXTRA_INPUTS = later.txt\nprobe: generated.txt\n\t@:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "No rule to make target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
     }
   ]
 }

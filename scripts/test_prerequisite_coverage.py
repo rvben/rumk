@@ -17,9 +17,13 @@ class CoverageTest(unittest.TestCase):
         report = COVERAGE.summarize([
             {"coverage": {"root_blockers": {"unknown_activity": 7, "unresolved_rule": 2},
                           "outcomes": {"root_excluded": 1}, "edges": [{}]}},
-            {"coverage": {"root_blockers": {}, "outcomes": {"missing": 1}, "edges": [{}]}},
+            {"coverage": {"root_blockers": {}, "outcomes": {"missing": 1}, "edges": [{}],
+                          "local_exclusions": [{"source": "Makefile", "line": 1,
+                                                "reason": "unresolved_prerequisites"}]}},
         ])
         self.assertEqual(report["eligible_roots"], 1)
+        self.assertEqual(report["roots_with_local_exclusions"], 1)
+        self.assertEqual(report["local_exclusions"], 1)
         self.assertEqual(report["roots_by_blocker"]["unknown_activity"], 1)
         self.assertEqual(report["blocker_occurrences"]["unknown_activity"], 7)
         self.assertEqual(report["visible_edges"], 2)

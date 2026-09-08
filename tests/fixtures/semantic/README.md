@@ -51,3 +51,9 @@ The comment and function-prefix pairs prove that inert Make comments and ordinar
 variable names do not hide missing inputs. Separate coverage regressions retain
 exclusions for actual calls, including nested calls and recipe comments, and
 verify that analysis never creates their sentinel files.
+
+Local-uncertainty pairs check independent static inputs alongside unknown
+prerequisites. An included producer control also verifies that its literal target
+remains visible and that a later assignment does not alter the earlier rule read.
+The wildcard/substitution chain reduces zstd's Linux-kernel test archive rule;
+the upstream Makefile itself is never executed.

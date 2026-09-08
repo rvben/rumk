@@ -44,8 +44,16 @@ impl Rule for MissingPrerequisite {
 #[derive(Debug, Default, serde::Serialize)]
 pub struct Coverage {
     pub root_blockers: BTreeMap<&'static str, usize>,
+    pub local_exclusions: Vec<CoverageLocalExclusion>,
     pub outcomes: BTreeMap<&'static str, usize>,
     pub edges: Vec<CoverageEdge>,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct CoverageLocalExclusion {
+    pub source: PathBuf,
+    pub line: usize,
+    pub reason: &'static str,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -67,7 +75,8 @@ pub fn coverage(project: &Project) -> Coverage {
 
 fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagnostic> {
     let index = project.analysis();
-    let mut blockers = root_blockers(project);
+    let mut local = BTreeSet::new();
+    let mut blockers = root_blockers(project, &mut local);
     let (selective, uncertain_selective) = selective_search(project);
     if uncertain_selective {
         *blockers.entry("unresolved_selective_vpath").or_default() += 1;
@@ -108,7 +117,15 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 .flat_map(|(_, paths)| paths.iter().cloned()),
         )
         .collect();
-    let inputs = InputIndex::new(project);
+    let local_targets = project.files().iter().flat_map(|file| {
+        let local = &local;
+        file.makefile
+            .rules
+            .iter()
+            .filter(move |rule| local.contains(&(file.id, rule.line)))
+            .flat_map(|rule| rule.targets.iter().map(String::as_str))
+    });
+    let inputs = InputIndex::new(project, local_targets);
     let mut seen = BTreeSet::new();
     let mut diagnostics = Vec::new();
     for target in index.targets.values() {
@@ -120,6 +137,8 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 "pattern_declaration"
             } else if !blockers.is_empty() {
                 "root_excluded"
+            } else if local.contains(&(edge.location.source, edge.location.line)) {
+                "unresolved_prerequisites"
             } else if !index.is_definitely_active(edge.location) {
                 "inactive_or_unknown_edge"
             } else if !literal(name) {
@@ -169,6 +188,14 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
     }
     if let Some(report) = coverage {
         report.root_blockers = blockers;
+        report.local_exclusions = local
+            .into_iter()
+            .map(|(source, line)| CoverageLocalExclusion {
+                source: project.file(source).path.clone(),
+                line,
+                reason: "unresolved_prerequisites",
+            })
+            .collect();
     }
     diagnostics
 }
@@ -222,9 +249,10 @@ fn selective_search(project: &Project) -> (Vec<(String, Vec<PathBuf>)>, bool) {
 // Follow assignment readers back from graph-facing references. Unknown names,
 // scopes and exhausted work retain the old project exclusion. Recipe expansion
 // itself is outside MK216's static prerequisite model.
-fn recipe_only_assignments(
+fn assignments_outside_checked_graph(
     project: &Project,
     mut budget: usize,
+    local: &BTreeSet<(crate::project::SourceId, usize)>,
 ) -> BTreeSet<(crate::project::SourceId, usize)> {
     use crate::analysis::{ReferenceContext, ReferenceKind};
     use crate::parser::VariableScope;
@@ -259,7 +287,10 @@ fn recipe_only_assignments(
             return BTreeSet::new();
         };
         budget = remaining;
-        if reference.context == ReferenceContext::Recipe {
+        if reference.context == ReferenceContext::Recipe
+            || (reference.context == ReferenceContext::Rule
+                && local.contains(&(reference.location.source, reference.location.line)))
+        {
             continue;
         }
         if reference.kind == ReferenceKind::Dynamic {
@@ -329,8 +360,36 @@ fn plain_recipe_setting(name: &str) -> bool {
 
 // Count all independent exclusions, rather than only the first early return.
 // Counts are occurrences; a root can have several blockers simultaneously.
-fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
-    let recipe_only = recipe_only_assignments(project, 10_000);
+fn root_blockers(
+    project: &Project,
+    local: &mut BTreeSet<(crate::project::SourceId, usize)>,
+) -> BTreeMap<&'static str, usize> {
+    for file in project.files() {
+        for rule in &file.makefile.rules {
+            if project.evaluation().activity(file.id, rule.line) != Truth::True
+                || rule.target_pattern.is_some()
+                || rule.targets.is_empty()
+                || !rule
+                    .targets
+                    .iter()
+                    .all(|name| literal(name) && !normalized(name).starts_with('.'))
+            {
+                continue;
+            }
+            let evaluated = project.evaluation().rules(file.id, rule.line);
+            if evaluated.is_empty()
+                || evaluated.iter().any(|rule| {
+                    rule.prerequisites
+                        .iter()
+                        .chain(&rule.order_only_prerequisites)
+                        .any(|name| name.contains('$'))
+                })
+            {
+                local.insert((file.id, rule.line));
+            }
+        }
+    }
+    let recipe_only = assignments_outside_checked_graph(project, 10_000, local);
     let mut reasons = BTreeMap::new();
     let mut add = |reason| *reasons.entry(reason).or_default() += 1;
     if !matches!(
@@ -453,7 +512,13 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
                             .any(|name| name.contains('$'))
                     })
                 {
-                    add("unresolved_rule");
+                    // Unknown prerequisites on explicit, ordinary targets do
+                    // not introduce new producers. Keep their entire declaration
+                    // opaque while checking independent declarations. Patterns,
+                    // special targets and unresolved target names remain global.
+                    if !local.contains(&(file.id, statement.start_line)) {
+                        add("unresolved_rule");
+                    }
                 }
             }
         }
@@ -726,8 +791,8 @@ mod tests {
             &ProjectOptions::default(),
         )
         .unwrap();
-        assert!(recipe_only_assignments(&project, 0).is_empty());
-        assert!(!recipe_only_assignments(&project, 10_000).is_empty());
+        assert!(assignments_outside_checked_graph(&project, 0, &BTreeSet::new()).is_empty());
+        assert!(!assignments_outside_checked_graph(&project, 10_000, &BTreeSet::new()).is_empty());
     }
 
     #[test]
@@ -749,14 +814,14 @@ mod tests {
                 true,
                 &mut budget,
                 None,
-                &InputIndex::new(&project),
+                &InputIndex::new(&project, std::iter::empty()),
             ));
         }
         assert!(!possible_pattern_producer(
             &project,
             "generated/output.dat",
             &directories,
-            &InputIndex::new(&project),
+            &InputIndex::new(&project, std::iter::empty()),
         ));
     }
 }
