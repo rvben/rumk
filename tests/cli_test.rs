@@ -1744,8 +1744,14 @@ fn a_message_names_a_file_the_way_the_location_beside_it_is_named() {
         .lines()
         .find(|line| line.contains("[MK206]"))
         .unwrap_or_default();
+    let fragment = std::path::Path::new("inc").join("frag.mk");
+    let definition = std::path::Path::new("inc").join("defs.mk");
     assert!(
-        report.contains("before inc/defs.mk:1 defines it"),
+        report.starts_with(&format!("{}:1:1:", fragment.display())),
+        "{report}"
+    );
+    assert!(
+        report.contains(&format!("before {}:1 defines it", definition.display())),
         "{report}"
     );
     assert!(
