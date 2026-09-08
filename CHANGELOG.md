@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- MK216 follows static selective `vpath` searches, preserving directive expansion
+  timing, include order, repeated patterns, and clearing behavior.
+
 - Native `rumk server` provides stdio LSP diagnostics, versioned quick fixes,
   fix-all actions, formatting, and symbols with UTF-16 incremental buffers,
   unsaved include overlays, cancellation, and configuration invalidation.

@@ -65,6 +65,10 @@ pub fn coverage(project: &Project) -> Coverage {
 fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagnostic> {
     let index = project.analysis();
     let mut blockers = root_blockers(project);
+    let (selective, uncertain_selective) = selective_search(project);
+    if uncertain_selective {
+        *blockers.entry("unresolved_selective_vpath").or_default() += 1;
+    }
     let mut directories = vec![project.working_directory().join(".")];
     match project.evaluation().expand("$(VPATH)").value {
         Some(value) => {
@@ -90,6 +94,17 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
     if coverage.is_none() && !blockers.is_empty() {
         return Vec::new();
     }
+    // Implicit producers may consume another suffix. Include all selective
+    // directories for that conservative proof, never just the output's matches.
+    let implicit_directories: Vec<_> = directories
+        .iter()
+        .cloned()
+        .chain(
+            selective
+                .iter()
+                .flat_map(|(_, paths)| paths.iter().cloned()),
+        )
+        .collect();
     let mut seen = BTreeSet::new();
     let mut diagnostics = Vec::new();
     for target in index.targets.values() {
@@ -109,12 +124,20 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 "declared_target"
             } else if directories
                 .iter()
+                .chain(
+                    selective
+                        .iter()
+                        .filter(|(pattern, _)| {
+                            pattern == name || pattern_stem(pattern, name).is_some()
+                        })
+                        .flat_map(|(_, paths)| paths.iter()),
+                )
                 .any(|directory| may_exist(&directory.join(name)))
             {
                 "file_or_io_uncertainty"
-            } else if plausible_implicit_input(project, name, &directories) {
+            } else if plausible_implicit_input(project, name, &implicit_directories) {
                 "possible_builtin_input"
-            } else if possible_pattern_producer(project, name, &directories) {
+            } else if possible_pattern_producer(project, name, &implicit_directories) {
                 "possible_pattern_producer"
             } else if !seen.insert((edge.location, name.to_string())) {
                 "duplicate_finding"
@@ -144,6 +167,52 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
         report.root_blockers = blockers;
     }
     diagnostics
+}
+
+// Directives are replayed after evaluation, but their values were captured at
+// read time: later variable reassignments must not change an earlier search path.
+fn selective_search(project: &Project) -> (Vec<(String, Vec<PathBuf>)>, bool) {
+    let mut paths: Vec<(String, Vec<PathBuf>)> = Vec::new();
+    let mut uncertain = false;
+    for directive in project.evaluation().vpaths() {
+        let Some(value) = directive else {
+            uncertain = true;
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            paths.clear();
+            uncertain = false;
+            continue;
+        }
+        let (pattern, directories) = value
+            .split_once(char::is_whitespace)
+            .map_or((value, ""), |(pattern, directories)| {
+                (pattern, directories.trim())
+            });
+        if pattern.contains(['\\', '$'])
+            || pattern.matches('%').count() > 1
+            || directories.contains(['\\', ';'])
+            || directories.contains(":/")
+            || (cfg!(windows) && directories.contains(':'))
+        {
+            uncertain = true;
+            continue;
+        }
+        if directories.is_empty() {
+            paths.retain(|(existing, _)| existing != pattern);
+        } else {
+            paths.push((
+                pattern.into(),
+                directories
+                    .split(|c: char| c == ':' || c.is_whitespace())
+                    .filter(|part| !part.is_empty())
+                    .map(|part| project.working_directory().join(part))
+                    .collect(),
+            ));
+        }
+    }
+    (paths, uncertain)
 }
 
 // Follow assignment readers back from graph-facing references. Unknown names,
@@ -312,9 +381,6 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
             let text = statement.text().trim_start();
             if matches!(statement.kind, LogicalKind::Unknown) {
                 add("opaque_syntax");
-            }
-            if text.split_whitespace().next() == Some("vpath") {
-                add("selective_vpath");
             }
             for (round, brace, reason) in [
                 ("$(eval", "${eval", "eval_function"),

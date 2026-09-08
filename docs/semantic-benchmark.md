@@ -70,7 +70,7 @@ it is not automatic detection of arbitrary command intent.
 
 MK216 now covers simple missing prerequisites, generated declarations, static
 VPATH, and absent built-in compiler inputs. It remains opt-in. User-pattern,
-dynamic-expression, and selective-vpath defects remain deliberately uncovered
+and dynamic-expression defects remain deliberately uncovered
 in the manifest; see [its boundaries](mk216.md). The additional pairs change
 the denominator, so compare the original ten separately when assessing progress.
 
@@ -107,3 +107,6 @@ broken cases divided by all cases), and paired precision (detections divided by
 detections plus named control flags). These are **authored-pair metrics**, not
 population estimates or whole-output precision. `known_rumk_coverage_gaps` lists
 expected misses explicitly; a high paired score is not proof of complete coverage.
+
+The selective-vpath pair is now detected using search paths expanded at directive
+read time. Additional regressions verify clearing, includes, and reassignment.

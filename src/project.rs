@@ -93,6 +93,7 @@ pub struct ProjectEvaluation {
     activity: BTreeMap<(SourceId, usize), Truth>,
     default_goal: DefaultGoal,
     active_phonies: BTreeSet<String>,
+    vpaths: Vec<Option<String>>,
     rules: BTreeMap<(SourceId, usize), Vec<EvaluatedRule>>,
 }
 
@@ -117,6 +118,12 @@ impl ProjectEvaluation {
 
     pub fn default_goal(&self) -> &DefaultGoal {
         &self.default_goal
+    }
+
+    /// Selective search directives expanded when read, in include traversal order.
+    /// None preserves uncertainty from an unknown branch or expansion.
+    pub fn vpaths(&self) -> &[Option<String>] {
+        &self.vpaths
     }
 
     pub fn active_phonies(&self) -> &BTreeSet<String> {
@@ -212,6 +219,7 @@ impl Project {
                 activity: loader.activity,
                 default_goal: loader.default_goal,
                 active_phonies: loader.active_phonies,
+                vpaths: loader.vpaths,
                 rules: loader.rules,
             },
             analysis: OnceLock::new(),
@@ -294,6 +302,7 @@ struct Loader<'a> {
     activity: BTreeMap<(SourceId, usize), Truth>,
     default_goal: DefaultGoal,
     active_phonies: BTreeSet<String>,
+    vpaths: Vec<Option<String>>,
     rules: BTreeMap<(SourceId, usize), Vec<EvaluatedRule>>,
     /// Whether Make has reached an include Rumk did not read. Set in the order
     /// Make reads, so an include below one of those cannot be judged on what
@@ -323,6 +332,7 @@ impl<'a> Loader<'a> {
             activity: BTreeMap::new(),
             default_goal: DefaultGoal::Unset,
             active_phonies: BTreeSet::new(),
+            vpaths: Vec::new(),
             rules: BTreeMap::new(),
         }
     }
@@ -436,6 +446,20 @@ impl<'a> Loader<'a> {
                     }
                 }
                 LogicalKind::Directive => {
+                    let text = crate::logical::strip_top_level_comment(statement.text());
+                    if let Some(rest) = text
+                        .trim_start()
+                        .strip_prefix("vpath")
+                        .filter(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+                    {
+                        if activity != Truth::False {
+                            self.vpaths.push(if activity == Truth::True {
+                                self.evaluator.expand(rest.trim()).value
+                            } else {
+                                None
+                            });
+                        }
+                    }
                     if let Some(name) = undefine_name(statement.text()) {
                         self.evaluator.undefine(name, activity);
                     }

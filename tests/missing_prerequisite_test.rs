@@ -274,3 +274,104 @@ fn resolved_phony_lists_do_not_exclude_the_project() {
     }
     assert!(check(".PHONY: $(UNKNOWN)\nprobe: missing.txt\n", &[]).is_empty());
 }
+
+#[test]
+fn selective_vpath_detects_missing_inputs_and_preserves_working_searches() {
+    let source = "vpath %.txt sources\nprobe: input.txt\n\t@echo found\n";
+    assert_eq!(check(source, &[]).len(), 1);
+    assert!(check(source, &[("sources/input.txt", "input")]).is_empty());
+    for source in [
+        "vpath input.txt first sources\nprobe: input.txt\n",
+        "vpath %.txt first:sources\nprobe: input.txt\n",
+        "vpath %.txt first\nvpath %.txt sources\nprobe: input.txt\n",
+        "SEARCH = sources\nvpath %.txt $(SEARCH)\nSEARCH = wrong\nprobe: input.txt\n",
+        "vpath %.src sources\nprobe: output.dat\n%.dat: %.src\n\t@echo generated\n",
+    ] {
+        assert!(
+            check(
+                source,
+                &[
+                    ("sources/input.txt", "input"),
+                    ("sources/output.src", "input")
+                ]
+            )
+            .is_empty(),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn selective_vpath_clear_and_include_order_are_observed() {
+    let files = [
+        ("sources/input.txt", "input"),
+        ("clear.mk", "vpath %.txt\n"),
+    ];
+    for source in [
+        "vpath %.txt sources\nvpath %.txt\nprobe: input.txt\n",
+        "vpath %.txt sources\nvpath\nprobe: input.txt\n",
+        "vpath %.txt sources\ninclude clear.mk\nprobe: input.txt\n",
+        "ifeq (no,yes)\nvpath %.txt sources\nendif\nprobe: input.txt\n",
+    ] {
+        assert_eq!(check(source, &files).len(), 1, "{source}");
+    }
+    assert!(check(
+        "include clear.mk\nvpath %.txt sources\nprobe: input.txt\n",
+        &files
+    )
+    .is_empty());
+    assert!(check("vpath %.txt sources\nvpath %.c\nprobe: input.txt\n", &files).is_empty());
+}
+
+#[test]
+fn uncertain_selective_searches_never_invent_a_missing_input() {
+    for source in [
+        "vpath %.txt $(EXTERNAL)\nprobe: input.txt\n",
+        "vpath a\\%b sources\nprobe: input.txt\n",
+        "ifeq ($(EXTERNAL),yes)\nvpath %.txt sources\nendif\nprobe: input.txt\n",
+    ] {
+        assert!(check(source, &[]).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn selective_vpath_decisions_agree_with_gnu_make() {
+    use std::process::Command;
+    let make = std::env::var("GNU_MAKE").unwrap_or_else(|_| "make".into());
+    let Ok(version) = Command::new(&make).arg("--version").output() else {
+        return;
+    };
+    if !String::from_utf8_lossy(&version.stdout).contains("GNU Make") {
+        return;
+    }
+    for (directives, expected) in [
+        ("vpath %.txt sources\n", true),
+        ("vpath %.txt sources\nvpath %.txt\n", false),
+        ("vpath %.txt sources\nvpath\n", false),
+        (
+            "SEARCH = sources\nvpath %.txt $(SEARCH)\nSEARCH = wrong\n",
+            true,
+        ),
+        ("vpath %.txt wrong\nvpath %.txt sources\n", true),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::create_dir(directory.path().join("sources")).unwrap();
+        std::fs::write(directory.path().join("sources/input.txt"), "input").unwrap();
+        let source = format!("{directives}probe: input.txt\n\t@echo found\n");
+        std::fs::write(directory.path().join("Makefile"), &source).unwrap();
+        let result = Command::new(&make)
+            .current_dir(directory.path())
+            .args(["-rRn", "probe"])
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("GNUMAKEFLAGS")
+            .output()
+            .unwrap();
+        assert_eq!(result.status.success(), expected, "{directives}");
+        assert_eq!(
+            check(&source, &[("sources/input.txt", "input")]).is_empty(),
+            expected,
+            "{directives}"
+        );
+    }
+}
