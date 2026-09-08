@@ -120,7 +120,8 @@ This is a command-line integration interface, not a language server.
 
 Run `rumk server` for live diagnostics, safe quick fixes, fix-all actions,
 formatting, and symbols. Open buffers participate in include analysis, including
-unsaved files. See [editor setup and capabilities](docs/editor.md).
+unsaved files. The [VS Code extension](editors/vscode/README.md) integrates these
+features into the editor. See [editor setup and capabilities](docs/editor.md).
 
 ## SARIF reports
 

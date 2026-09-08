@@ -1,5 +1,15 @@
 # Native editor integration
 
+## Visual Studio Code
+
+The [Rumk extension](../editors/vscode/README.md) connects VS Code to this server
+with live diagnostics, quick fixes, fix-all, formatting, and target/variable
+symbols. Build and install its local VSIX from `editors/vscode`; see its README
+for setup and development instructions. Each platform-specific VSIX bundles
+the native server; no separate Rumk installation is required.
+
+## Language server
+
 Run `rumk server` as a stdio Language Server Protocol 3.17 server. Connect your
 editor's Makefile LSP client to that command; stdout contains only framed JSON-RPC.
 The server provides diagnostics, quick fixes, `source.fixAll.rumk`, document

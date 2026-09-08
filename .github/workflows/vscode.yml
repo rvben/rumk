@@ -1,0 +1,142 @@
+name: VS Code extension
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested preview packages to Visual Studio Marketplace
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vscode-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  extension:
+    name: Extension (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x64
+            rust-target: x86_64-unknown-linux-musl
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            rust-target: aarch64-unknown-linux-musl
+          - os: macos-15-intel
+            target: darwin-x64
+            rust-target: x86_64-apple-darwin
+          - os: macos-15
+            target: darwin-arm64
+            rust-target: aarch64-apple-darwin
+          - os: windows-2025
+            target: win32-x64
+            rust-target: x86_64-pc-windows-msvc
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
+        with:
+          toolchain: stable
+          targets: ${{ matrix.rust-target }}
+
+      - name: Cache Rust build data
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install static Linux linker
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Install extension dependencies
+        working-directory: editors/vscode
+        run: npm ci
+
+      - name: Bundle language server
+        working-directory: editors/vscode
+        run: npm run bundle
+
+      - name: Type-check and test
+        working-directory: editors/vscode
+        run: npm test
+
+      - name: Test in VS Code (Linux)
+        if: runner.os == 'Linux'
+        working-directory: editors/vscode
+        run: xvfb-run -a npm run test:integration
+
+      - name: Test in VS Code (macOS and Windows)
+        if: runner.os != 'Linux'
+        working-directory: editors/vscode
+        run: npm run test:integration
+
+      - name: Verify VSIX packaging
+        working-directory: editors/vscode
+        run: npm run package:pre-release
+
+      - name: Retain platform VSIX
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: rumk-vscode-${{ matrix.target }}
+          path: editors/vscode/rumk-*-${{ matrix.target }}.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish Marketplace preview
+    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    needs: extension
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out tested source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: editors/vscode/package-lock.json
+
+      - name: Install publication tooling
+        working-directory: editors/vscode
+        run: npm ci
+
+      - name: Download all five tested packages
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: rumk-vscode-*
+          path: editors/vscode/packages
+          merge-multiple: true
+
+      - name: Verify complete release set
+        working-directory: editors/vscode
+        run: python3 scripts/verify-vsix.py packages --revision "$GITHUB_SHA"
+
+      - name: Publish preview to Visual Studio Marketplace
+        working-directory: editors/vscode
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          test -n "$VSCE_PAT" || { echo '::error::Add the Marketplace VSCE_PAT repository secret before publishing.'; exit 1; }
+          node_modules/.bin/vsce verify-pat rvben
+          node_modules/.bin/vsce publish --packagePath packages/*.vsix

@@ -1,0 +1,150 @@
+{
+  "name": "rumk",
+  "displayName": "Rumk \u2014 Makefile Diagnostics & Formatting",
+  "description": "Find and fix Makefile bugs with fast, include-aware diagnostics, quick fixes, formatting, and target symbols.",
+  "version": "0.0.1",
+  "publisher": "rvben",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rvben/rumk.git",
+    "directory": "editors/vscode"
+  },
+  "homepage": "https://github.com/rvben/rumk",
+  "bugs": {
+    "url": "https://github.com/rvben/rumk/issues"
+  },
+  "engines": {
+    "vscode": "^1.91.0"
+  },
+  "categories": [
+    "Debuggers",
+    "Linters",
+    "Formatters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "Makefile",
+    "make",
+    "GNU Make",
+    "lint",
+    "format",
+    "diagnostics",
+    "rumk"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onLanguage:makefile"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Rumk starts a native executable configured by the workspace. Trust the workspace to enable it."
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Rumk needs filesystem access to resolve Makefile includes and configuration."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "rumk.restartServer",
+        "title": "Restart Language Server",
+        "category": "Rumk"
+      },
+      {
+        "command": "rumk.showOutput",
+        "title": "Show Output",
+        "category": "Rumk"
+      },
+      {
+        "command": "rumk.openSettings",
+        "title": "Open Settings",
+        "category": "Rumk"
+      },
+      {
+        "command": "rumk.fixAll",
+        "title": "Fix All Applicable Problems",
+        "category": "Rumk",
+        "enablement": "editorLangId == makefile && resourceScheme == file && !editorReadonly"
+      }
+    ],
+    "configuration": {
+      "title": "Rumk",
+      "properties": {
+        "rumk.enable": {
+          "type": "boolean",
+          "default": true,
+          "scope": "window",
+          "description": "Enable Rumk diagnostics, code actions, formatting, and symbols."
+        },
+        "rumk.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "description": "Leave empty to use the Rumk executable bundled with the extension. Set an absolute path or a command on PATH to override it. ${workspaceFolder} resolves to the first workspace folder. No shell expansion is performed."
+        },
+        "rumk.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "scope": "window",
+          "description": "Trace language-server communication in the Rumk output channel. Verbose traces include document contents."
+        }
+      }
+    },
+    "menus": {
+      "editor/context": [
+        {
+          "command": "rumk.fixAll",
+          "when": "editorLangId == makefile && resourceScheme == file",
+          "group": "1_modification@10"
+        }
+      ]
+    },
+    "languages": [
+      {
+        "id": "makefile",
+        "extensions": [
+          ".mk",
+          ".make"
+        ],
+        "filenames": [
+          "Makefile",
+          "makefile",
+          "GNUmakefile"
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "build": "node build.mjs",
+    "vscode:prepublish": "npm run check && npm run build && node scripts/verify-bundle.mjs",
+    "test": "npm run check && node --test test/*.test.cjs",
+    "test:integration": "npm run build && node test/run.cjs",
+    "package": "node scripts/package.mjs",
+    "package:pre-release": "node scripts/package.mjs --pre-release",
+    "bundle": "node scripts/bundle.mjs"
+  },
+  "dependencies": {
+    "vscode-languageclient": "10.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "3.9.2",
+    "esbuild": "0.28.2",
+    "typescript": "^5.9.3"
+  },
+  "preview": true
+}

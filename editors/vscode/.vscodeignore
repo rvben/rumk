@@ -1,0 +1,12 @@
+**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!dist/extension.js
+
+!dist/THIRD_PARTY_NOTICES.txt
+!bundled/rumk
+!bundled/rumk.exe
+!bundled/metadata.json
+!bundled/THIRD_PARTY_NOTICES.txt
