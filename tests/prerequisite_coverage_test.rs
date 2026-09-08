@@ -3,6 +3,51 @@ use rumk::rules::prerequisites::{coverage, MissingPrerequisite};
 use rumk::rules::Rule;
 
 #[test]
+fn relative_file_targets_do_not_exclude_roots_as_suffix_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    for target in [
+        "../lib/library.a",
+        "../../tests/helper",
+        "./build/library.a",
+        ".cache/library.a",
+    ] {
+        let source = format!("probe: missing.txt\n{target}:;\n");
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            source,
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        let report = coverage(&project);
+        assert!(
+            report.root_blockers.is_empty(),
+            "{target}: {:?}",
+            report.root_blockers
+        );
+        assert_eq!(report.outcomes.get("missing"), Some(&1));
+        assert_eq!(MissingPrerequisite.check_project(&project).len(), 1);
+    }
+    for rule in [
+        ".c.o:;\n",
+        "./.c.o:;\n",
+        ".SUFFIXES: input output\ninputoutput:;\n",
+        ".SUFFIXES: .dir/input .o\n.dir/input.o:;\n",
+    ] {
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            format!("probe: missing.txt\n{rule}"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            coverage(&project).root_blockers.contains_key("suffix_rule"),
+            "{rule}"
+        );
+        assert!(MissingPrerequisite.check_project(&project).is_empty());
+    }
+}
+
+#[test]
 fn coverage_accounts_for_each_visible_edge_and_matches_diagnostics() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("present.txt"), "input").unwrap();

@@ -355,6 +355,15 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
             add("unresolved_include");
         }
     }
+    // Nonstandard suffix names can contain paths or omit the leading dot.
+    // Keep those lists opaque rather than mistaking their conversions for files.
+    if index.targets.get(".SUFFIXES").is_some_and(|symbol| {
+        symbol.dependencies.iter().any(|edge| {
+            !edge.prerequisite.starts_with('.') || edge.prerequisite.contains(['/', '\\'])
+        })
+    }) {
+        add("suffix_rule");
+    }
     for (name, symbol) in &index.targets {
         if name == ".DEFAULT" {
             add("default_recipe");
@@ -362,7 +371,11 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
         if name == ".SECONDEXPANSION" {
             add("secondary_expansion");
         }
-        if name.starts_with('.') && !name.contains('%') && name[1..].contains('.') {
+        let suffix_name = normalized(name);
+        if suffix_name.starts_with('.')
+            && !suffix_name.contains(['%', '/'])
+            && suffix_name[1..].contains('.')
+        {
             add("suffix_rule");
         }
         if symbol
