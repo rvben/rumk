@@ -1,6 +1,24 @@
 # Measuring MK216 coverage
 
-Build the read-only contributor tool with:
+Use the installed CLI with the same configuration as a check:
+
+```sh
+rumk coverage Makefile
+rumk --config project/rumk.toml coverage project/Makefile
+rumk --no-config coverage Makefile
+```
+
+The JSON envelope has `schema_version: 1`, `analysis: "MK216"`, and a `roots`
+array. Each root reports whether MK216 is enabled plus its coverage, an explicit
+`ignored` marker, or an `error`. The audit runs independently of rule enablement.
+Configuration discovery follows the CLI working directory; include paths and
+predefined variables use that configuration. Exit 0 means the report was produced,
+not that all dependencies were analyzed or all recipes will succeed. Unreadable
+or invalid UTF-8 roots produce exit 1 while other roots continue; invalid
+configuration produces exit 2. No file is rewritten and no Make process is run.
+
+The older default-configuration contributor tool remains available:
+
 
 ```sh
 cargo build --example prerequisite-coverage
@@ -10,7 +28,7 @@ target/debug/examples/prerequisite-coverage Makefile
 This JSON view calls the same analysis as MK216, regardless of rule enablement.
 It lists every independent root blocker and gives each visible dependency one
 outcome, with its declaring file, line, target, and order-only status. It does
-not execute recipes or shell functions. It uses default project options, so it
+not execute recipes or shell functions. The contributor example uses default project options, so it
 is an audit of that configuration, not all possible build environments.
 
 To audit pinned local checkouts, run `scripts/audit-prerequisite-coverage.py`

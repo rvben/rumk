@@ -9,6 +9,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- `rumk coverage` reports MK216 blockers and dependency outcomes using the current
+  configuration, without executing Make or requiring the rule to be enabled.
+
 - MK216 follows static selective `vpath` searches, preserving directive expansion
   timing, include order, repeated patterns, and clearing behavior.
 

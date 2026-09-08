@@ -520,6 +520,10 @@ checkmake, unmake, and mbake executables. Run `make check-comparison` for its
 offline regression checks. `scripts/compare-linters.py` records cross-tool
 observations separately; generated results are local working material.
 
+Run `rumk coverage Makefile` to see static-analysis blockers and dependency
+outcomes under your configuration, including work hidden by dynamic expressions.
+See [coverage reporting](docs/prerequisite-coverage.md).
+
 For behavior-labeled defect/control pairs and per-rule coverage, see the
 [semantic benchmark](docs/semantic-benchmark.md). For pinned real-project
 cross-tool wall time and peak memory measurements, see the

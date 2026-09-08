@@ -45,6 +45,12 @@ struct Cli {
 enum Commands {
     /// Run the native language server over standard input/output
     Server,
+    /// Explain static prerequisite analysis coverage as JSON without running Make
+    Coverage {
+        /// Entry Makefiles to inspect, independently of MK216 enablement
+        #[arg(default_value = "Makefile")]
+        paths: Vec<PathBuf>,
+    },
     /// Lint Makefiles and print violations
     Check(CheckArgs),
     /// Lay Makefiles out, leaving what Make does with them to `check`
@@ -364,6 +370,10 @@ fn run() -> Result<u8> {
 
     match cli.command {
         Commands::Server => rumk::lsp::serve(cli.config, cli.no_config),
+        Commands::Coverage { paths } => {
+            let config = load_config(cli.config.as_deref(), cli.no_config)?;
+            show_coverage(&paths, &config)
+        }
         Commands::Init { output } => init_config(&output),
         Commands::Rule {
             rule,
@@ -432,6 +442,49 @@ fn configure_color(color: Color) {
         Color::Always => colored::control::set_override(true),
         Color::Never => colored::control::set_override(false),
     }
+}
+
+fn show_coverage(paths: &[PathBuf], config: &Config) -> Result<u8> {
+    let mut roots = Vec::new();
+    let mut failed = false;
+    for path in paths {
+        let root = display_path(path);
+        if config.is_path_ignored(path) {
+            roots.push(serde_json::json!({"root":root,"ignored":true}));
+            continue;
+        }
+        // An invalid or unreadable input cannot substantiate a coverage claim.
+        // Keep other roots useful while reporting each failure explicitly.
+        let inspected = (|| -> Result<_> {
+            let read = read_makefile(path)?;
+            if read.failure.is_some() {
+                bail!("Makefile is not valid UTF-8");
+            }
+            let project =
+                Project::load_with_root_content(path, read.text, &config.project_options(path))?;
+            Ok(rules::prerequisites::coverage(&project))
+        })();
+        match inspected {
+            Ok(coverage) => roots.push(serde_json::json!({
+                "root":root,
+                "rule_enabled":config.rules.iter().any(|r| r.id()=="MK216"),
+                "coverage":coverage,
+            })),
+            Err(error) => {
+                failed = true;
+                roots.push(serde_json::json!({"root":root,"error":error.to_string()}));
+            }
+        }
+    }
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "schema_version":1,
+            "analysis":"MK216",
+            "roots":roots,
+        }))?
+    );
+    Ok(if failed { VIOLATIONS_FOUND } else { SUCCESS })
 }
 
 fn load_config(path: Option<&Path>, no_config: bool) -> Result<Config> {
