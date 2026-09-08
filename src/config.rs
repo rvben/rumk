@@ -83,9 +83,16 @@ impl Default for Config {
 
 impl Config {
     pub fn from_file(path: &Path) -> Result<Self> {
+        Self::load_file(path)?
+            .with_context(|| format!("No [tool.rumk] table in {}", path.display()))
+    }
+
+    fn load_file(path: &Path) -> Result<Option<Self>> {
         let value = load_config_value(path, &mut Vec::new())
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
-        Self::from_value(value, Some(path.to_path_buf()))
+        value
+            .map(|value| Self::from_value(value, Some(path.to_path_buf())))
+            .transpose()
             .with_context(|| format!("Failed to parse config file: {}", path.display()))
     }
 
@@ -105,10 +112,13 @@ impl Config {
                 directory.join(".rumk.toml"),
                 directory.join("rumk.toml"),
                 directory.join(".config/rumk.toml"),
+                directory.join("pyproject.toml"),
             ];
             for candidate in candidates {
                 if candidate.is_file() {
-                    return Self::from_file(&candidate);
+                    if let Some(config) = Self::load_file(&candidate)? {
+                        return Ok(config);
+                    }
                 }
             }
 
@@ -499,7 +509,7 @@ impl Config {
     }
 }
 
-fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<toml::Value> {
+fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<Option<toml::Value>> {
     let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if stack.contains(&identity) {
         let cycle = stack
@@ -516,6 +526,19 @@ fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<toml::Valu
         .with_context(|| format!("Failed to read config file: {}", path.display()))?;
     let mut value: toml::Value = toml::from_str(&content)
         .with_context(|| format!("Invalid TOML in config file: {}", path.display()))?;
+    if path
+        .file_name()
+        .is_some_and(|name| name == "pyproject.toml")
+    {
+        let Some(settings) = value.get("tool").and_then(|tool| tool.get("rumk")) else {
+            stack.pop();
+            return Ok(None);
+        };
+        if !settings.is_table() {
+            bail!("[tool.rumk] must be a TOML table in {}", path.display());
+        }
+        value = settings.clone();
+    }
     let extends = value
         .as_table_mut()
         .context("Configuration root must be a TOML table")?
@@ -533,13 +556,14 @@ fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<toml::Valu
             }
         };
         let mut base = load_config_value(&extended_path, stack)
-            .with_context(|| format!("Failed to extend configuration from {extends}"))?;
+            .with_context(|| format!("Failed to extend configuration from {extends}"))?
+            .with_context(|| format!("No [tool.rumk] table in {}", extended_path.display()))?;
         merge_toml(&mut base, value);
         value = base;
     }
 
     stack.pop();
-    Ok(value)
+    Ok(Some(value))
 }
 
 fn merge_toml(base: &mut toml::Value, overlay: toml::Value) {

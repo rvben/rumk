@@ -46,7 +46,7 @@ Rumdl so existing users can reuse their workflow.
 - Preserves LF/CRLF line endings and final newlines during fixes
 - Uses Rumdl-style `check`, `fmt`, `rule`, `config`, `init`, and `explain` commands, with `fmt`
   responsible for layout alone and `check` for what Make does with the file
-- Discovers `.rumk.toml` upward through the project tree
+- Discovers TOML configuration, including `pyproject.toml`, upward through the project tree
 - Respects `.gitignore` by default
 - Supports rule selection, file globs, per-file ignores, severities, fix allowlists, and
   safe-versus-unsafe fix selection
@@ -246,12 +246,31 @@ comment at the top of the file:
 
 The versioned schema is also included in Cargo packages and native release archives.
 
-Configuration discovery checks `.rumk.toml`, `rumk.toml`, and `.config/rumk.toml` while walking
-upward, stopping at a Git project boundary. Use `--config <PATH>` for an explicit file or
+Configuration discovery checks `.rumk.toml`, `rumk.toml`, `.config/rumk.toml`, and
+`pyproject.toml`, in that order in each directory while walking upward, stopping at a Git
+project boundary. The first matching configuration is used; files are not automatically
+merged. A `pyproject.toml` without `[tool.rumk]` is skipped. Use `--config <PATH>` for an explicit file or
 `--no-config`/`--isolated` for built-in defaults.
+
+In `pyproject.toml`, put the same settings under `[tool.rumk]`:
+
+```toml
+[tool.rumk.global]
+disable = ["MK201"]
+
+[tool.rumk.MK101]
+line-length = 100
+```
+
+`--config pyproject.toml` also reads this section and reports an error if it is missing.
+`rumk init` continues to create a standalone `.rumk.toml` by default.
+`rumk init --output pyproject.toml` creates a new file with namespaced settings;
+it refuses to overwrite an existing project file.
 
 Configurations can inherit another file with `extends = "../.rumk.toml"`; nested tables are
 merged, child values win, relative paths resolve from the extending file, and cycles are rejected.
+In `pyproject.toml`, place `extends` directly under `[tool.rumk]`. Standalone configurations
+can also extend a `pyproject.toml` containing `[tool.rumk]`.
 
 Rules can be suppressed in Make comments without changing project configuration:
 

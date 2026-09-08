@@ -1684,13 +1684,27 @@ fn init_config(path: &Path) -> Result<u8> {
     if path.exists() {
         bail!("Configuration file already exists: {}", path.display());
     }
-    let content = r#"[global]
+    let prefix = if path
+        .file_name()
+        .is_some_and(|name| name == "pyproject.toml")
+    {
+        "tool.rumk."
+    } else {
+        ""
+    };
+    let content = format!(
+        "[{prefix}global]
 respect-gitignore = true
 
-[MK101]
+[{prefix}MK101]
 line-length = 120
-"#;
-    std::fs::write(path, content)
+"
+    );
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(content.as_bytes()))
         .with_context(|| format!("Failed to create configuration: {}", path.display()))?;
     println!("Created {}", path.display());
     Ok(SUCCESS)

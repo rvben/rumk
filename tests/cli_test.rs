@@ -834,6 +834,35 @@ fn rule_and_config_commands_provide_rumdl_style_introspection() {
 }
 
 #[test]
+fn pyproject_configuration_works_with_discovery_explicit_path_and_isolation() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("pyproject.toml"),
+        "[project]\nname = 'example'\n[tool.rumk.MK101]\nline-length = 88\n",
+    )
+    .unwrap();
+    for flags in [
+        vec![],
+        vec!["--config", "pyproject.toml"],
+        vec!["--isolated"],
+    ] {
+        let output = rumk()
+            .current_dir(directory.path())
+            .args(&flags)
+            .args(["config", "get", "MK101.line-length"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{:?}", output);
+        let expected = if flags.contains(&"--isolated") {
+            "120"
+        } else {
+            "88"
+        };
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), expected);
+    }
+}
+
+#[test]
 fn config_get_exposes_missing_phony_placement() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -949,21 +978,44 @@ fn cli_rule_selection_and_fix_policy_match_rumdl_semantics() {
 
 #[test]
 fn init_creates_a_valid_config_and_refuses_to_overwrite_it() {
+    for filename in [".rumk.toml", "pyproject.toml"] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join(filename);
+
+        let created = rumk()
+            .args(["init", "--output", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let repeated = rumk()
+            .args(["init", "--output", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        assert_eq!(created.status.code(), Some(0));
+        assert!(Config::from_file(&path).is_ok());
+        assert_eq!(repeated.status.code(), Some(2));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn init_does_not_follow_a_dangling_symlink() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join(".rumk.toml");
-
-    let created = rumk()
-        .args(["init", "--output", path.to_str().unwrap()])
+    let destination = directory.path().join("untouched.toml");
+    let link = directory.path().join(".rumk.toml");
+    std::os::unix::fs::symlink(&destination, &link).unwrap();
+    let output = rumk()
+        .arg("init")
+        .arg("--output")
+        .arg(&link)
         .output()
         .unwrap();
-    let repeated = rumk()
-        .args(["init", "--output", path.to_str().unwrap()])
-        .output()
-        .unwrap();
-
-    assert_eq!(created.status.code(), Some(0));
-    assert!(Config::from_file(&path).is_ok());
-    assert_eq!(repeated.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!destination.exists());
+    assert!(std::fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }
 
 #[test]

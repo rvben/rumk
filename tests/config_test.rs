@@ -175,6 +175,130 @@ fn discovery_walks_up_to_the_project_config() {
 }
 
 #[test]
+fn pyproject_loads_namespaced_settings_and_resolves_paths() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pyproject.toml");
+    std::fs::write(
+        &path,
+        r#"
+[project]
+name = "example"
+[tool.other]
+unknown = true
+[tool.rumk.global]
+enable = ["MK101"]
+include-paths = ["mk"]
+[tool.rumk.MK101]
+line-length = 3
+severity = "error"
+"#,
+    )
+    .unwrap();
+    let config = Config::from_file(&path).unwrap();
+    assert_eq!(config.rules.len(), 1);
+    assert_eq!(
+        diagnostics_for(&config, "MK101", "1234\n")[0].severity,
+        Severity::Error
+    );
+    assert_eq!(
+        config
+            .project_options(&directory.path().join("Makefile"))
+            .include_paths,
+        [directory.path().join("mk")]
+    );
+    assert_eq!(
+        Config::find_from(directory.path()).unwrap().source_path(),
+        Some(path.as_path())
+    );
+}
+
+#[test]
+fn pyproject_discovery_respects_proximity_precedence_and_git_boundaries() {
+    let directory = tempfile::tempdir().unwrap();
+    let nested = directory.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let parent = directory.path().join(".rumk.toml");
+    std::fs::write(&parent, "[MK101]\nline-length = 80\n").unwrap();
+    let pyproject = nested.join("pyproject.toml");
+    std::fs::write(&pyproject, "[project]\nname = 'example'\n").unwrap();
+    assert_eq!(
+        Config::find_from(&nested).unwrap().source_path(),
+        Some(parent.as_path())
+    );
+    std::fs::create_dir(nested.join(".git")).unwrap();
+    assert!(Config::find_from(&nested).unwrap().source_path().is_none());
+    std::fs::write(&pyproject, "[tool.rumk.MK101]\nline-length = 90\n").unwrap();
+    assert_eq!(
+        Config::find_from(&nested).unwrap().source_path(),
+        Some(pyproject.as_path())
+    );
+    std::fs::create_dir(nested.join(".config")).unwrap();
+    for filename in [".config/rumk.toml", "rumk.toml", ".rumk.toml"] {
+        let path = nested.join(filename);
+        std::fs::write(&path, "[MK101]\nline-length = 100\n").unwrap();
+        assert_eq!(
+            Config::find_from(&nested).unwrap().source_path(),
+            Some(path.as_path())
+        );
+    }
+}
+
+#[test]
+fn pyproject_extends_works_in_both_directions_and_rejects_cycles() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pyproject.toml");
+    let base = directory.path().join("base.toml");
+    let child = directory.path().join("child.toml");
+    std::fs::write(&base, "[MK101]\nline-length = 80\n").unwrap();
+    std::fs::write(
+        &path,
+        "[tool.rumk]\nextends = 'base.toml'\n[tool.rumk.MK101]\nseverity = 'error'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        &child,
+        "extends = 'pyproject.toml'\n[MK101]\nline-length = 90\n",
+    )
+    .unwrap();
+    let config = Config::from_file(&child).unwrap();
+    assert_eq!(config.get("MK101.line-length").as_deref(), Some("90"));
+    assert_eq!(config.get("MK101.severity").as_deref(), Some("error"));
+    assert_eq!(
+        Config::from_file(&path)
+            .unwrap()
+            .get("MK101.line-length")
+            .as_deref(),
+        Some("80")
+    );
+    std::fs::write(&base, "extends = 'pyproject.toml'\n").unwrap();
+    assert!(format!("{:#}", Config::from_file(&path).err().unwrap()).contains("extends cycle"));
+    std::fs::write(&path, "[project]\nname = 'example'\n").unwrap();
+    assert!(format!("{:#}", Config::from_file(&child).err().unwrap()).contains("No [tool.rumk]"));
+}
+
+#[test]
+fn pyproject_reports_invalid_configuration_and_explicit_missing_section() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("pyproject.toml");
+    std::fs::write(&path, "[project]\nname = 'example'\n").unwrap();
+    assert!(format!("{:#}", Config::from_file(&path).err().unwrap()).contains("No [tool.rumk]"));
+    for content in [
+        "[invalid TOML",
+        "[tool]\nrumk = false",
+        "[tool.rumk.global]\nunknown = true",
+    ] {
+        std::fs::write(&path, content).unwrap();
+        assert!(Config::from_file(&path).is_err(), "{content}");
+        assert!(Config::find_from(directory.path()).is_err(), "{content}");
+    }
+    std::fs::write(&path, "[tool.rumk]\n").unwrap();
+    assert_eq!(
+        Config::from_file(&path).unwrap().render(false, false),
+        Config::default().render(false, false)
+    );
+}
+
+#[test]
 fn effective_configuration_output_is_valid_and_can_be_reloaded() {
     let defaults = Config::default();
     let rendered = defaults.render(false, false);

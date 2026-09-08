@@ -9,6 +9,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Configuration discovery and explicit loading support `[tool.rumk]` in
+  `pyproject.toml`, with existing precedence, inheritance, and project boundaries.
+  `rumk init --output pyproject.toml` creates namespaced settings and atomically
+  refuses to overwrite an existing file or symlink.
+
 - `rumk coverage` reports MK216 blockers and dependency outcomes using the current
   configuration, without executing Make or requiring the rule to be enabled.
 
