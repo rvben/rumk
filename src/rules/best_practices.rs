@@ -257,7 +257,7 @@ fn literal_phony_names(text: &str) -> Vec<String> {
 }
 
 /// A conventional name can also be a real executable (for example `test`).
-/// Recognize direct compiler output intent rather than declaring that file
+/// Recognize direct compiler and stamp output intent rather than declaring that file
 /// phony. This deliberately does not interpret arbitrary shell programs.
 fn produces_named_file(
     rule: &crate::parser::Rule,
@@ -275,6 +275,17 @@ fn produces_named_file(
                 ShellToken::Word { text, .. } => words.push(text.as_str()),
                 ShellToken::Separator => return false,
             }
+        }
+        if words.first() == Some(&"touch") {
+            let arguments = &words[1..];
+            let operands = arguments.strip_prefix(&["--"]).unwrap_or(arguments);
+            // Options can name input files (touch -r) or prevent creation (-c).
+            // Restrict this proof to the unambiguous operand-only form.
+            return !operands.iter().any(|word| word.starts_with('-'))
+                && operands.iter().any(|name| {
+                    name.trim_start_matches("./") == target
+                        || matches!(*name, "$@" | "$(@)" | "${@}")
+                });
         }
         if !words.first().is_some_and(|word| {
             matches!(

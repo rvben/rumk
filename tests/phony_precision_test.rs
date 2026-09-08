@@ -129,6 +129,51 @@ fn named_compiler_outputs_are_not_command_targets() {
 }
 
 #[test]
+fn stamp_outputs_are_not_command_targets_but_touch_inputs_are_not_outputs() {
+    for command in [
+        "touch all",
+        "touch $@",
+        "touch '$@'",
+        "touch -- all",
+        "touch other ./all",
+    ] {
+        let source = format!("all:\n\t{command}\nclean:\n\trm -f all\n");
+        let findings = check(&source, None);
+        assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+        assert_eq!(
+            findings[0].message,
+            "Target 'clean' should be declared .PHONY"
+        );
+        assert_eq!(
+            MissingPhony::default().check(&parse(&source), &source)[0].message,
+            findings[0].message
+        );
+        assert_eq!(
+            check("include shared.mk\n", Some(&source))[0].message,
+            findings[0].message
+        );
+    }
+    for command in [
+        "touch unrelated",
+        "touch -r all unrelated",
+        "touch -c all",
+        "echo touch all",
+        "touch all; rm all",
+    ] {
+        let source = format!("all:\n\t{command}\n");
+        assert_eq!(check(&source, None).len(), 1, "{source}");
+    }
+    assert_eq!(
+        check(
+            "all:\nifeq (a,b)\n\ttouch all\nendif\n\t@echo command\n",
+            None
+        )
+        .len(),
+        1
+    );
+}
+
+#[test]
 fn compiler_lookalikes_and_other_output_names_still_get_checked() {
     for recipe in [
         "echo '$(CC) source.c -o $@'",
@@ -178,13 +223,14 @@ fn reviewed_phony_cases_agree_with_gnu_make_timestamp_behavior() {
     };
     // No recipe is executed: -q observes whether Make would rebuild the
     // existing output. The compiler spelling is the reduced upstream idiom.
-    let file_target = "test:\n\t$(CC) source.c -o $@\n";
-    assert!(check(file_target, None).is_empty());
-    assert_eq!(query(file_target).status.code(), Some(0));
-    assert_eq!(
-        query(&format!(".PHONY: test\n{file_target}")).status.code(),
-        Some(1)
-    );
+    for file_target in ["test:\n\t$(CC) source.c -o $@\n", "test:\n\ttouch $@\n"] {
+        assert!(check(file_target, None).is_empty());
+        assert_eq!(query(file_target).status.code(), Some(0));
+        assert_eq!(
+            query(&format!(".PHONY: test\n{file_target}")).status.code(),
+            Some(1)
+        );
+    }
     for declaration in [
         ".PHONY: test $(shell printf extra)\n",
         ".PHONY: $(shell printf extra) test\n",
