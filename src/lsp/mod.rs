@@ -45,6 +45,7 @@ enum Event {
     Finished(Finished),
     End,
     Error(String),
+    ParseError(String),
 }
 #[derive(Default)]
 struct Queue {
@@ -211,6 +212,12 @@ pub fn serve(config: Option<PathBuf>, no_config: bool) -> Result<u8> {
                     let _ = input_events.send(Event::End);
                     break;
                 }
+                Err(e) if e.is::<serde_json::Error>() => {
+                    // The complete body was consumed: the next frame is intact.
+                    if input_events.send(Event::ParseError(e.to_string())).is_err() {
+                        break;
+                    }
+                }
                 Err(e) => {
                     let _ = input_events.send(Event::Error(e.to_string()));
                     break;
@@ -254,6 +261,7 @@ fn session(
                 send(out, &error(Value::Null, -32700, e))?;
                 return Ok(1);
             }
+            Event::ParseError(e) => send(out, &error(Value::Null, -32700, e))?,
             Event::Finished(finished) => {
                 if let Some(request) = finished.request {
                     let id = request["id"].clone();
@@ -322,11 +330,58 @@ fn session(
                     )?;
                     continue;
                 }
+                let id = message.get("id").cloned();
+                if id.as_ref().is_some_and(|id| {
+                    !id.is_null() && !id.is_string() && !id.is_i64() && !id.is_u64()
+                }) {
+                    send(out, &error(Value::Null, -32600, "Invalid request ID"))?;
+                    continue;
+                }
                 let Some(method) = message["method"].as_str() else {
+                    // Responses to server requests (such as watcher registration)
+                    // do not have methods and must not provoke another response.
+                    if message.get("method").is_some()
+                        || id.is_none()
+                        || (message.get("result").is_some() == message.get("error").is_some())
+                    {
+                        send(
+                            out,
+                            &error(
+                                id.unwrap_or(Value::Null),
+                                -32600,
+                                "Missing or invalid method",
+                            ),
+                        )?;
+                    }
                     continue;
                 };
-                let id = message.get("id").cloned();
                 let params = &message["params"];
+                if !params.is_null() && !params.is_object() && !params.is_array() {
+                    if let Some(id) = id {
+                        send(out, &error(id, -32602, "Expected structured parameters"))?;
+                    }
+                    continue;
+                }
+                if matches!(method, "initialize" | "shutdown") && id.is_none() {
+                    continue;
+                }
+                if matches!(
+                    method,
+                    "exit"
+                        | "initialized"
+                        | "$/cancelRequest"
+                        | "textDocument/didOpen"
+                        | "textDocument/didChange"
+                        | "textDocument/didClose"
+                        | "textDocument/didSave"
+                        | "workspace/didChangeWatchedFiles"
+                        | "workspace/didChangeConfiguration"
+                ) {
+                    if let Some(id) = id {
+                        send(out, &error(id, -32600, "Method requires a notification"))?;
+                        continue;
+                    }
+                }
                 if method == "exit" {
                     return Ok(if shutdown { 0 } else { 1 });
                 }
@@ -581,8 +636,10 @@ mod tests {
     fn initialization_capabilities_and_stale_diagnostics_are_respected() {
         let (tx, rx) = mpsc::channel();
         for message in [
+            json!({"method":"initialize"}),
             json!({"id":0,"method":"textDocument/formatting"}),
             json!({"id":1,"method":"initialize","params":{"capabilities":{}}}),
+            json!({"id":"rumk/watch","result":null}),
             json!({"id":2,"method":"textDocument/codeAction","params":{}}),
         ] {
             let mut message = message;

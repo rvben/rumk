@@ -45,6 +45,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- The language server recovers from malformed JSON in complete frames while
+  retaining open buffers. Malformed requests and misclassified lifecycle messages
+  are rejected before changing server state; valid client responses remain silent.
+
 - MK301 accepts portable whitespace in the entry `.POSIX:` marker and reports
   forbidden commands and prerequisites on standard special targets. Assignment
   spacing checks use indexed logical statements, including continuations,

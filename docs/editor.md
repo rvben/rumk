@@ -37,3 +37,9 @@ bounded to 64 pending jobs. Limits are 128 open documents, 8 MiB per buffer or
 message, and 32 MiB of open text. Only local `file:` URIs are accepted. Unsupported
 requests receive the standard method-not-found response. Shutdown followed by
 exit returns status 0; an unexpected EOF or exit returns status 1.
+
+Malformed JSON inside a complete frame receives a parse-error response without
+discarding open buffers or ending the session. Invalid IDs, methods, and scalar
+parameters receive protocol errors before they can change server state. Lifecycle
+requests and notifications retain their distinct roles. Invalid or truncated
+framing remains fatal because the next message boundary cannot be trusted.

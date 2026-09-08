@@ -74,9 +74,12 @@ impl Server {
     fn send(&mut self, mut message: Value) {
         message["jsonrpc"] = json!("2.0");
         let bytes = serde_json::to_vec(&message).unwrap();
+        self.send_body(&bytes);
+    }
+    fn send_body(&mut self, bytes: &[u8]) {
         let input = self.child.stdin.as_mut().unwrap();
         write!(input, "Content-Length: {}\r\n\r\n", bytes.len()).unwrap();
-        input.write_all(&bytes).unwrap();
+        input.write_all(bytes).unwrap();
         input.flush().unwrap();
     }
     fn until(&self, predicate: impl Fn(&Value) -> bool) -> Value {
@@ -108,6 +111,65 @@ impl Server {
         self.send(json!({"method":"exit"}));
         assert!(self.child.wait().unwrap().success());
     }
+}
+
+#[test]
+fn malformed_json_and_requests_preserve_the_running_editor_session() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".rumk.toml"),
+        "[global]\nenable=['MK001']\n",
+    )
+    .unwrap();
+    let uri = uri(&dir.path().join("Makefile"));
+    let mut server = Server::new(dir.path());
+    server.open(&uri, "all:\n    @echo hello\n", 4);
+    server.diagnostics(&uri, 4);
+    for body in [
+        b"{".as_slice(),
+        b"",
+        b"\xff",
+        b"{\"jsonrpc\":\"2.0\"} trailing",
+    ] {
+        server.send_body(body);
+        let error = server.until(|m| m["error"]["code"] == -32700);
+        assert!(error["id"].is_null());
+    }
+    for (request, code) in [
+        (json!({"id":true,"method":"shutdown"}), -32600),
+        (json!({"id":1.5,"method":"shutdown"}), -32600),
+        (json!({"id":{},"method":"shutdown"}), -32600),
+        (json!({"id":[],"method":"shutdown"}), -32600),
+        (json!({"id":2,"method":17}), -32600),
+        (json!({"id":3}), -32600),
+        (json!({"id":4,"method":"shutdown","params":false}), -32602),
+        (json!({"id":5,"method":"exit"}), -32600),
+        (
+            json!({"id":6,"method":"textDocument/didClose","params":{"textDocument":{"uri":uri}}}),
+            -32600,
+        ),
+    ] {
+        let id = &request["id"];
+        let expected_id = if id.is_string() || id.is_i64() || id.is_u64() {
+            id.clone()
+        } else {
+            Value::Null
+        };
+        server.send(request);
+        assert_eq!(
+            server.until(|m| m["error"]["code"] == code)["id"],
+            expected_id
+        );
+    }
+    server.send(json!({"method":"shutdown"}));
+    server.send(json!({"id":"rumk/watch","result":null}));
+    server.send(json!({"id":7,"method":"textDocument/codeAction","params":{"textDocument":{"uri":uri},"context":{"only":["quickfix"],"diagnostics":[]}}}));
+    let result = server.until(|m| m["id"] == 7);
+    assert_eq!(
+        result["result"][0]["edit"]["documentChanges"][0]["textDocument"]["version"],
+        4
+    );
+    server.stop();
 }
 fn uri(path: &std::path::Path) -> String {
     let path = path.to_str().unwrap().replace('\\', "/");
