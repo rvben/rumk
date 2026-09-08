@@ -4,6 +4,18 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
+#[test]
+fn server_rejects_conflicting_configuration_flags_before_starting_protocol() {
+    let output = Command::new(env!("CARGO_BIN_EXE_rumk"))
+        .args(["--config", "unused.toml", "--no-config", "server"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("--config cannot be combined with --no-config"));
+}
+
 struct Server {
     child: Child,
     messages: Receiver<Value>,

@@ -192,6 +192,9 @@ fn worker(work: Work, events: mpsc::SyncSender<Event>) {
 
 /// Run until shutdown/exit or EOF. Stdout is exclusively framed JSON-RPC.
 pub fn serve(config: Option<PathBuf>, no_config: bool) -> Result<u8> {
+    if no_config && config.is_some() {
+        bail!("--config cannot be combined with --no-config");
+    }
     // Backpressure also bounds queued protocol bodies, not just parsed buffers.
     let (events, rx) = mpsc::sync_channel(16);
     let input_events = events.clone();
