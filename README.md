@@ -496,7 +496,8 @@ make check-gnu-fixtures
 
 Run `make benchmark` (Python 3.9+) for deterministic generated workloads: a
 1,002-file include graph, a 20,000-target Makefile, 10,000 indentation fixes,
-and a prerequisite fan-out with missing inputs and viable compiler-source controls.
+a prerequisite fan-out with missing inputs and viable compiler-source controls,
+and 20,000 POSIX.1-2024 assignments under the portability profile.
 The runner uses temporary files, restores fix inputs before each run, and reports
 medians after two warmups and seven measured runs. Timings include process startup,
 file access, linting, JSON output, and writes for the fix workload; generation and

@@ -45,6 +45,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- MK301 accepts portable whitespace in the entry `.POSIX:` marker and reports
+  forbidden commands and prerequisites on standard special targets. Assignment
+  spacing checks use indexed logical statements, including continuations,
+  instead of rescanning preceding physical lines for every assignment.
+
 - Editor analysis no longer adds file-local project-rule findings that contradict
   included declarations. Quick fixes honor selected edit spans and reject invalid
   ranges. Fix-all stabilizes overlapping edits while retaining unsaved includes

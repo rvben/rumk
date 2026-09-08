@@ -124,3 +124,63 @@ fn project_profile_checks_includes_and_requires_only_the_entry_marker() {
         .iter()
         .any(|d| d.message.contains("begin with .POSIX")));
 }
+
+#[test]
+fn entry_marker_accepts_portable_whitespace_but_not_other_rules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    for (marker, valid) in [
+        (".POSIX:", true),
+        (".POSIX : # mode", true),
+        (".POSIX\t:\t", true),
+        (".POSIX \\\n :", true),
+        (".POSIX: input", false),
+        (".POSIX other:", false),
+        (".POSIX::", false),
+        (".POSIX:; echo no", false),
+    ] {
+        std::fs::write(&root, format!("# entry\n{marker}\nall:\n\t@:\n")).unwrap();
+        let project = rumk::project::Project::load(&root, &Default::default()).unwrap();
+        for edition in [Edition::Posix2017, Edition::Posix2024] {
+            let diagnostics = PosixPortability(edition).check_project(&project);
+            assert_eq!(diagnostics.is_empty(), valid, "{marker}: {diagnostics:?}");
+        }
+    }
+}
+
+#[test]
+fn special_targets_reject_commands_without_rejecting_ordinary_recipes() {
+    for edition in [Edition::Posix2017, Edition::Posix2024] {
+        for target in [".IGNORE", ".POSIX", ".PRECIOUS", ".SILENT", ".SUFFIXES"] {
+            for recipe in ["; echo no\n", "\n\t@echo no\n"] {
+                let source = format!("{target}:{recipe}");
+                assert!(!check(&source, edition).is_empty(), "{source}");
+            }
+            assert!(check(&format!("{target}:\n"), edition).is_empty());
+        }
+        for target in [".DEFAULT", ".SCCS_GET", ".c.o", "all"] {
+            assert!(check(&format!("{target}:\n\t@echo ok\n"), edition).is_empty());
+        }
+        for target in [".POSIX", ".DEFAULT", ".SCCS_GET"] {
+            assert!(!check(&format!("{target}: input\n"), edition).is_empty());
+        }
+        for target in [".IGNORE", ".PRECIOUS", ".SILENT", ".SUFFIXES"] {
+            assert!(check(&format!("{target}: input\n"), edition).is_empty());
+        }
+    }
+}
+
+#[test]
+fn assignment_spacing_follows_continuations_and_preserves_source_locations() {
+    let valid = "NAME \\\n ::= value\nNEXT \\\n += more\n";
+    assert!(check(valid, Edition::Posix2024).is_empty());
+    let continued = "# header\nNAME\\\n::=value\n";
+    // A continuation supplies a separating blank even without literal blanks.
+    assert!(check(continued, Edition::Posix2024).is_empty());
+    let source = "# header\nNAME::=value \\\n continued\nNEXT+=more\n";
+    let diagnostics = PosixPortability(Edition::Posix2024).check(&parse(source), source);
+    assert_eq!(
+        diagnostics.iter().map(|d| d.line).collect::<Vec<_>>(),
+        vec![2, 4]
+    );
+}

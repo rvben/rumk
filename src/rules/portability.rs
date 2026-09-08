@@ -45,9 +45,21 @@ impl Rule for PosixPortability {
             .statements()
             .iter()
             .find(|s| !matches!(s.kind, LogicalKind::Blank | LogicalKind::Comment));
-        if !first
-            .is_some_and(|s| crate::logical::strip_top_level_comment(s.text()).trim() == ".POSIX:")
-        {
+        let marker = first.is_some_and(|statement| {
+            statement.kind == LogicalKind::Rule
+                && root.makefile.rules.iter().any(|rule| {
+                    rule.line == statement.start_line
+                        && rule.targets == [".POSIX"]
+                        && rule.prerequisites.is_empty()
+                        && rule.order_only_prerequisites.is_empty()
+                        && rule.recipes.is_empty()
+                        && !rule.double_colon
+                        && !rule.grouped
+                        && rule.target_pattern.is_none()
+                        && rule.target_assignment.is_none()
+                })
+        });
+        if !marker {
             diagnostics.push(
                 Diagnostic::new(
                     self.id(),
@@ -69,12 +81,18 @@ impl Rule for PosixPortability {
             "POSIX.1-2017"
         };
         let mut findings = BTreeSet::new();
+        let statements: std::collections::BTreeMap<_, _> = makefile
+            .logical
+            .statements()
+            .iter()
+            .map(|statement| (statement.start_line, statement.text()))
+            .collect();
         let mut flag = |line, column, feature: String| {
             findings.insert((line, column, feature));
         };
         for assignment in &makefile.assignments {
             if newer && assignment.operator != AssignmentOperator::Recursive {
-                if let Some(raw) = content.lines().nth(assignment.line.saturating_sub(1)) {
+                if let Some(raw) = statements.get(&assignment.line) {
                     if let Some((position, _)) = crate::logical::find_top_level_assignment(raw) {
                         if position > 0 && !raw[..position].ends_with([' ', '\t']) {
                             flag(
@@ -187,6 +205,29 @@ impl Rule for PosixPortability {
             ".SUFFIXES",
         ];
         for rule in &makefile.rules {
+            for target in &rule.targets {
+                if !rule.recipes.is_empty()
+                    && matches!(
+                        target.as_str(),
+                        ".IGNORE" | ".POSIX" | ".PRECIOUS" | ".SILENT" | ".SUFFIXES"
+                    )
+                {
+                    flag(
+                        rule.line,
+                        rule.column,
+                        format!("Commands on special target '{target}'"),
+                    );
+                }
+                if !rule.prerequisites.is_empty()
+                    && matches!(target.as_str(), ".POSIX" | ".DEFAULT" | ".SCCS_GET")
+                {
+                    flag(
+                        rule.line,
+                        rule.column,
+                        format!("Prerequisites on special target '{target}'"),
+                    );
+                }
+            }
             if newer
                 && rule
                     .targets

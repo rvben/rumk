@@ -39,6 +39,31 @@ fn advanced_fixture_is_accepted_by_gnu_make() {
 }
 
 #[test]
+fn portable_entry_marker_whitespace_is_accepted_by_gnu_make() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    for marker in [".POSIX : # mode", ".POSIX\t:\t", ".POSIX \\\n :"] {
+        std::fs::write(&path, format!("{marker}\nall:\n\t@:\n")).unwrap();
+        let output = match Command::new("make")
+            .current_dir(directory.path())
+            .args(["--no-builtin-rules", "--dry-run", "-f"])
+            .arg(&path)
+            .arg("all")
+            .output()
+        {
+            Ok(output) => output,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+            Err(error) => panic!("failed to launch GNU Make: {error}"),
+        };
+        assert!(
+            output.status.success(),
+            "{marker}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
 fn wrapped_phony_fix_is_accepted_by_gnu_make() {
     let content = concat!(
         ".PHONY: build test lint clean release\n",

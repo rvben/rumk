@@ -51,11 +51,19 @@ def generate(root, scale):
         "".join(f"missing{i}: absent{i}.txt\nworking{i}: source{i}.o\n" for i in range(inputs)),
         encoding="utf-8",
     )
+    portability = root / "portable.mk"
+    portability.write_text(
+        ".POSIX:\n" + "".join(f"VALUE_{i} ::= value\n" for i in range(2000 * scale)),
+        encoding="utf-8",
+    )
+    profile = root / "posix.toml"
+    profile.write_text("[global]\ndialect='posix2024'\nenable=['MK301']\n", encoding="utf-8")
     return [
         ("include-graph", graph / "Makefile", [], None),
         ("huge-file", huge, [], None),
         ("many-fixes", fixes, ["--fix", "--enable", "MK001"], original),
         ("prerequisite-fanout", prerequisites / "Makefile", ["--enable", "MK216"], None),
+        ("portable-assignments", portability, ["--config", str(profile)], None),
     ]
 
 
@@ -87,7 +95,8 @@ def main():
                 for binary in binaries[::1 if iteration % 2 == 0 else -1]:
                     if original is not None:
                         path.write_text(original, encoding="utf-8")
-                    command = [str(binary), "--no-config", "check", str(path),
+                    config = [] if "--config" in flags else ["--no-config"]
+                    command = [str(binary), *config, "check", str(path),
                                "--fail-on", "never", "--output-format", "json", *flags]
                     start = time.perf_counter()
                     completed = subprocess.run(command, cwd=path.parent, capture_output=True,
@@ -95,6 +104,8 @@ def main():
                     elapsed = time.perf_counter() - start
                     # Compare complete diagnostics and fixed bytes outside the timed region.
                     observed = (completed.stdout, completed.stderr, path.read_bytes())
+                    if name == "portable-assignments" and json.loads(completed.stdout) != []:
+                        raise RuntimeError("Portable assignment controls received diagnostics")
                     if name == "prerequisite-fanout":
                         diagnostics = json.loads(completed.stdout)
                         count = min(2000, 100 * args.scale)
