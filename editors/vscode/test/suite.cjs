@@ -32,6 +32,37 @@ exports.run = async () => {
   assert.ok(first.getText().includes('\techo hello'), 'fix changes the live buffer');
   assert.equal(first.isDirty, true, 'fix does not save the file');
   await until(() => !vscode.languages.getDiagnostics(first.uri).some(d => (d.code?.value || d.code) === 'MK001'), 'stale diagnostics remain');
+  // Exercise VS Code's actual save participants, not a direct code-action request.
+  const editorSettings = vscode.workspace.getConfiguration('editor', {
+    uri: first.uri, languageId: 'makefile',
+  });
+  await editorSettings.update('formatOnSave', false, vscode.ConfigurationTarget.Workspace, true);
+  const replaceFirst = async text => {
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(first.uri, new vscode.Range(first.positionAt(0), first.positionAt(first.getText().length)), text);
+    assert.equal(await vscode.workspace.applyEdit(edit), true);
+  };
+  const diskText = async () => Buffer.from(await vscode.workspace.fs.readFile(first.uri)).toString('utf8');
+  const broken = '.PHONY: all\nall:\n    echo saved\n';
+  await editorSettings.update('codeActionsOnSave', { 'source.fixAll.rumk': 'never' }, vscode.ConfigurationTarget.Workspace, true);
+  await replaceFirst(broken);
+  assert.equal(await first.save(), true);
+  assert.equal(await diskText(), broken, 'save leaves fixes opt-in');
+  await editorSettings.update('codeActionsOnSave', { 'source.fixAll.rumk': 'explicit' }, vscode.ConfigurationTarget.Workspace, true);
+  // Save immediately after editing: fixes must use the latest buffer even if
+  // diagnostics for that version have not arrived yet.
+  await replaceFirst(broken.replace('saved', 'latest'));
+  assert.equal(await first.save(), true);
+  const expected = '.PHONY: all\nall:\n\techo latest\n';
+  assert.equal(first.getText(), expected, 'save fixes the latest buffer');
+  assert.equal(await diskText(), expected, 'save writes the fixed text to disk');
+  assert.equal(first.isDirty, false, 'fixed document is saved');
+  await until(() => !vscode.languages.getDiagnostics(first.uri).some(d => (d.code?.value || d.code) === 'MK001'), 'saved fix leaves stale diagnostics');
+  await replaceFirst(expected + '# save again\n');
+  assert.equal(await first.save(), true);
+  assert.equal(await diskText(), expected + '# save again\n', 'saving clean content preserves it');
+  await editorSettings.update('codeActionsOnSave', undefined, vscode.ConfigurationTarget.Workspace, true);
+  await editorSettings.update('formatOnSave', undefined, vscode.ConfigurationTarget.Workspace, true);
   const formatting = await vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', second.uri, { tabSize: 4, insertSpaces: false });
   let formatted = second.getText();
   for (const edit of [...formatting].sort((a, b) => second.offsetAt(b.range.start) - second.offsetAt(a.range.start))) {
