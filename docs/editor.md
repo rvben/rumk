@@ -23,6 +23,13 @@ literal code actions and `workspaceEdit.documentChanges`. Formatting follows the
 standard unversioned formatting response contract. The client applies edits;
 the server never writes source files or invokes Make.
 
+Quick fixes match the selected diagnostic or edit span, including a cursor inside
+the affected text. Invalid or reversed ranges return invalid-params errors.
+Fix-all reanalyzes interacting edits until stable, retaining all unsaved include
+buffers and the configured fix safety policy. It returns one atomic, versioned
+replacement; cycles, oversized results, and failure to stabilize within ten
+passes return errors instead of partial edits.
+
 Analysis runs on a background worker with cached results for the current buffer
 generation. New diagnostic jobs coalesce, stale responses are discarded, and
 request cancellation is handled without waiting for analysis. Requests are

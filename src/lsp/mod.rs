@@ -458,6 +458,14 @@ fn session(
                             send(out, &error(id, -32602, "Document is not open"))?;
                             continue;
                         }
+                        if method == "textDocument/codeAction" {
+                            if let Err(e) =
+                                analysis::selection(&snapshot.documents[uri].text, params)
+                            {
+                                send(out, &error(id, -32602, e.to_string()))?;
+                                continue;
+                            }
+                        }
                         let mut task_snapshot = snapshot.clone();
                         task_snapshot.cancelled = Arc::default();
                         pending.insert(id.to_string(), (id, task_snapshot.cancelled.clone()));

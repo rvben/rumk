@@ -100,7 +100,9 @@ pub fn analyze(snapshot: &Snapshot) -> Result<Reports> {
             config,
             path: &doc.path,
             project_root: root,
-            contextual: !root,
+            // Every open buffer is covered by a project pass, including roots.
+            // A second file-local pass would ignore declarations in includes.
+            contextual: true,
             layout_only: false,
             covered_files: &covered,
         };
@@ -167,6 +169,63 @@ fn replacement(doc: &Document, fixed: &str) -> Value {
         "edits":[{"range":text::range(&doc.text,0,doc.text.len()),"newText":fixed}]}]})
 }
 
+pub fn selection(text: &str, params: &Value) -> Result<Option<(usize, usize)>> {
+    params
+        .get("range")
+        .map(|range| {
+            let start = text::offset(text, &range["start"])?;
+            let end = text::offset(text, &range["end"])?;
+            anyhow::ensure!(start <= end, "Reversed code action range");
+            Ok((start, end))
+        })
+        .transpose()
+}
+
+fn intersects(selected: (usize, usize), region: (usize, usize)) -> bool {
+    let (start, end) = selected;
+    let (a, b) = region;
+    if start == end {
+        a <= start && start <= b
+    } else if a == b {
+        start <= a && a < end
+    } else {
+        start < b && a < end
+    }
+}
+
+fn fix_all(snapshot: &Snapshot, doc: &Document, report: &Report) -> Result<String> {
+    let mut pending = snapshot.clone();
+    let mut current = doc.text.to_string();
+    let mut diagnostics = report.diagnostics.clone();
+    let mut seen = BTreeSet::from([current.clone()]);
+    for _ in 0..10 {
+        anyhow::ensure!(
+            !snapshot.cancelled.load(Ordering::Relaxed),
+            "Request cancelled"
+        );
+        let applied = crate::fix::apply_fixes(source(&current), &diagnostics);
+        let fixed = format!("{}{}", &current[..mark(&current)], applied.content);
+        if fixed == current {
+            return Ok(current);
+        }
+        anyhow::ensure!(
+            fixed.len() <= super::MAX_BUFFER,
+            "Fixed document exceeds buffer limit"
+        );
+        anyhow::ensure!(seen.insert(fixed.clone()), "Fix cycle detected");
+        current = fixed;
+        pending.documents.get_mut(&doc.uri).unwrap().text = current.clone().into();
+        diagnostics = analyze(&pending)?
+            .remove(&doc.path)
+            .map_or_else(Vec::new, |r| r.diagnostics);
+    }
+    anyhow::ensure!(
+        !diagnostics.iter().any(|d| d.fixable),
+        "Fixes did not stabilize after 10 iterations"
+    );
+    Ok(current)
+}
+
 pub fn request(
     snapshot: &Snapshot,
     method: &str,
@@ -194,15 +253,7 @@ pub fn request(
             };
             let mut actions = Vec::new();
             if permits("quickfix") {
-                let selected = params
-                    .get("range")
-                    .map(|r| -> Result<_> {
-                        Ok((
-                            text::offset(&doc.text, &r["start"])?,
-                            text::offset(&doc.text, &r["end"])?,
-                        ))
-                    })
-                    .transpose()?;
+                let selected = selection(&doc.text, params)?;
                 for d in &report.diagnostics {
                     if !d.fixable {
                         continue;
@@ -210,10 +261,23 @@ pub fn request(
                     let Some(fix) = &d.fix else {
                         continue;
                     };
-                    if let Some((start, end)) = selected {
+                    if let Some(selected) = selected {
                         let range = location(&doc.text, d);
-                        let point = text::offset(&doc.text, &range["start"])?;
-                        if point < start || point > end {
+                        let diagnostic_range = (
+                            text::offset(&doc.text, &range["start"])?,
+                            text::offset(&doc.text, &range["end"])?,
+                        );
+                        let touches_fix = fix
+                            .edits
+                            .iter()
+                            .filter_map(|edit| crate::fix::edit_byte_range(source(&doc.text), edit))
+                            .any(|(start, end)| {
+                                intersects(
+                                    selected,
+                                    (start + mark(&doc.text), end + mark(&doc.text)),
+                                )
+                            });
+                        if !intersects(selected, diagnostic_range) && !touches_fix {
                             continue;
                         }
                     }
@@ -230,9 +294,8 @@ pub fn request(
                 }
             }
             if permits("source.fixAll.rumk") {
-                let applied = crate::fix::apply_fixes(source(&doc.text), &report.diagnostics);
-                if !applied.fixed.is_empty() {
-                    let fixed = format!("{}{}", &doc.text[..mark(&doc.text)], applied.content);
+                let fixed = fix_all(snapshot, doc, report)?;
+                if fixed != doc.text.as_ref() {
                     actions.push(json!({"title":"Apply all applicable Rumk fixes","kind":"source.fixAll.rumk","edit":replacement(doc,&fixed)}));
                 }
             }

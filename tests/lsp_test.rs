@@ -119,6 +119,95 @@ fn uri(path: &std::path::Path) -> String {
 }
 
 #[test]
+fn quickfix_selection_uses_edit_spans_and_rejects_invalid_ranges() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join(".rumk.toml"),
+        "[global]\nenable=['MK001']\n",
+    )
+    .unwrap();
+    let uri = uri(&dir.path().join("Makefile"));
+    let mut server = Server::new(dir.path());
+    let input = "\u{feff}# 😀\r\nall:\r\n    @echo hello\r\n";
+    server.open(&uri, input, 1);
+    assert_eq!(server.diagnostics(&uri, 1)[0]["code"], "MK001");
+    for (id, start, end, expected) in [
+        (2, (2, 2), (2, 2), 1),
+        (3, (0, 0), (0, 1), 0),
+        (4, (2, 3), (2, 1), -1),
+        (5, (99, 0), (99, 0), -1),
+        (6, (2, 1), (2, 3), 1),
+    ] {
+        server.send(json!({"id":id,"method":"textDocument/codeAction","params":{"textDocument":{"uri":uri},"range":{"start":{"line":start.0,"character":start.1},"end":{"line":end.0,"character":end.1}},"context":{"diagnostics":[],"only":["quickfix"]}}}));
+        let response = server.until(|m| m["id"] == id);
+        if expected < 0 {
+            assert_eq!(response["error"]["code"], -32602, "{response}");
+        } else {
+            let actions = response["result"].as_array().expect("actions");
+            assert_eq!(actions.len(), expected as usize);
+            if expected == 1 {
+                assert_eq!(
+                    actions[0]["edit"]["documentChanges"][0]["edits"][0]["newText"],
+                    input.replace("    ", "\t")
+                );
+            }
+        }
+    }
+    server.stop();
+}
+
+#[test]
+fn fix_all_stabilizes_overlapping_edits_with_safety_and_unsaved_includes() {
+    for (unsafe_fixes, included) in [(true, false), (false, false), (true, true)] {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(".rumk.toml"),
+            format!("[global]\nenable=['MK106','MK201']\nunsafe-fixes={unsafe_fixes}\n"),
+        )
+        .unwrap();
+        let path = dir.path().join("Makefile");
+        let uri = uri(&path);
+        let mut server = Server::new(dir.path());
+        let prefix = if included { "include tasks.mk\n" } else { "" };
+        if included {
+            let child_uri = self::uri(&dir.path().join("tasks.mk"));
+            server.open(&child_uri, ".PHONY: clean\n", 1);
+            server.diagnostics(&child_uri, 1);
+        }
+        server.open(
+            &uri,
+            &format!("{prefix}.PHONY  : test\nclean: ;\ntest: ;\n"),
+            7,
+        );
+        server.diagnostics(&uri, 7);
+        server.send(json!({"id":2,"method":"textDocument/codeAction","params":{"textDocument":{"uri":uri},"context":{"diagnostics":[],"only":["source.fixAll"]}}}));
+        let response = server.until(|m| m["id"] == 2);
+        let changes = &response["result"][0]["edit"]["documentChanges"][0];
+        assert_eq!(changes["textDocument"]["version"], 7, "{response}");
+        let fixed = changes["edits"][0]["newText"].as_str().unwrap();
+        let targets = if unsafe_fixes && !included {
+            "test clean"
+        } else {
+            "test"
+        };
+        assert_eq!(
+            fixed,
+            format!("{prefix}.PHONY: {targets}\nclean: ;\ntest: ;\n")
+        );
+        server.send(json!({"method":"textDocument/didChange","params":{"textDocument":{"uri":uri,"version":8},"contentChanges":[{"text":fixed}]}}));
+        let remaining = server.diagnostics(&uri, 8);
+        assert_eq!(
+            remaining.as_array().unwrap().len(),
+            usize::from(!unsafe_fixes && !included)
+        );
+        server.send(json!({"id":3,"method":"textDocument/codeAction","params":{"textDocument":{"uri":uri},"context":{"diagnostics":[],"only":["source.fixAll"]}}}));
+        assert_eq!(server.until(|m| m["id"] == 3)["result"], json!([]));
+        assert!(!path.exists());
+        server.stop();
+    }
+}
+
+#[test]
 fn server_reports_versioned_diagnostics_actions_and_incremental_updates() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(

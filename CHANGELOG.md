@@ -45,6 +45,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Editor analysis no longer adds file-local project-rule findings that contradict
+  included declarations. Quick fixes honor selected edit spans and reject invalid
+  ranges. Fix-all stabilizes overlapping edits while retaining unsaved includes
+  and the configured safety policy.
+
 - MK216 no longer treats reuse of the same implicit rule within a chain as a
   possible producer for that rule’s missing input.
 
