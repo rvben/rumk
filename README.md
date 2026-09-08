@@ -55,15 +55,15 @@ Rumdl so existing users can reuse their workflow.
 ## Installation
 
 ```bash
-cargo install rumk --locked --version 0.0.7
+cargo install rumk --locked --version 0.0.8
 ```
 
 Or install the native executable from PyPI with a Python tool manager:
 
 ```bash
-uv tool install rumk==0.0.7
+uv tool install rumk==0.0.8
 # or
-pipx install rumk==0.0.7
+pipx install rumk==0.0.8
 ```
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
@@ -78,9 +78,9 @@ runs it, and leaves `rumk` on `PATH` for later steps:
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: rvben/rumk@v0.0.7
+  - uses: rvben/rumk@v0.0.8
     with:
-      version: 0.0.7
+      version: 0.0.8
       path: .
       report-type: annotations
 ```
@@ -138,13 +138,12 @@ duplicate alerts; see [GitHub's SARIF support documentation](https://docs.github
 
 The repository provides `rumk-fmt` and `rumk-check` hooks. Pre-commit builds the
 native executable from the selected repository revision using its Rust backend.
-Pin a commit containing the hook manifest or a release tag that includes it.
-The v0.0.7 release predates these hooks.
+Pin the release tag to keep hook behavior reproducible.
 
 ```yaml
 repos:
   - repo: https://github.com/rvben/rumk
-    rev: <commit-containing-the-hooks>
+    rev: v0.0.8
     hooks:
       - id: rumk-fmt
       - id: rumk-check
