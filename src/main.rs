@@ -43,6 +43,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run the native language server over standard input/output
+    Server,
     /// Lint Makefiles and print violations
     Check(CheckArgs),
     /// Lay Makefiles out, leaving what Make does with them to `check`
@@ -361,6 +363,7 @@ fn run() -> Result<u8> {
     configure_color(cli.color);
 
     match cli.command {
+        Commands::Server => rumk::lsp::serve(cli.config, cli.no_config),
         Commands::Init { output } => init_config(&output),
         Commands::Rule {
             rule,
@@ -696,6 +699,8 @@ fn run_stdin(
     if path == Path::new("-") || path.as_os_str().is_empty() || path.is_dir() {
         bail!("--stdin-filename must name a file");
     }
+    let buffer_path = rumk::paths::resolve_buffer_path(path)?;
+    let path = buffer_path.as_path();
     let mut bytes = Vec::new();
     std::io::stdin()
         .read_to_end(&mut bytes)

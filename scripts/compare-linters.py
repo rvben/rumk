@@ -89,7 +89,7 @@ def main():
                 directory = Path(temp)
                 shutil.copytree(CORPUS / case["name"], directory, dirs_exist_ok=True)
                 (directory / ".rumk.toml").write_text(
-                    f'[global]\nenable = {json.dumps(case["enable"])}\n'
+                    f'[global]\ndialect = {json.dumps(case["dialect"])}\nenable = {json.dumps(case["enable"])}\n'
                     '[MK104]\nmax-lines = 2\n[MK215]\nrequired = ["test"]\n')
                 (directory / "checkmake.ini").write_text('[minphony]\nrequired = test\n[maxbodylength]\nmaxBodyLength = 2\n')
                 (directory / "bake.toml").write_text('[formatter]\n')

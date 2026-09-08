@@ -89,8 +89,8 @@ def diagnostic_match(tool, result, case):
 
 def commands(tool, binary):
     return {
-        # A single profile for every case; MK208 and MK216 are added opt-in rules.
-        "rumk": [binary, "--config", "rumk.toml", "check", "--extend-enable", "MK208,MK216",
+        # A single profile for every case; MK208, MK216, and MK217 are added opt-in rules.
+        "rumk": [binary, "--config", "rumk.toml", "check", "--extend-enable", "MK208,MK216,MK217",
                  "--output-format", "json", "Makefile"],
         "checkmake": [binary, "--config", "checkmake.ini", "--output", "json", "Makefile"],
         "unmake": [binary, "Makefile"],
@@ -204,6 +204,20 @@ def benchmark(binaries, make, runs, command_targets=(), external_variables=()):
         "median_invocation_ms": statistics.median(v["median_seconds"] * 1000
             for r in report["results"] for v in r["tools"][tool].values()),
     } for tool in binaries}
+    for tool, totals in report["summary"].items():
+        detected = totals["defects_detected"]
+        false_alarms = totals["controls_flagged_for_named_defect"]
+        totals["paired_recall"] = detected / len(cases) if cases else None
+        totals["paired_precision"] = detected / (detected + false_alarms) if detected + false_alarms else None
+        totals["by_rule"] = {}
+        for rule in sorted({case["rule"] for case in cases}):
+            rows = [row for row in report["results"] if row["rule"] == rule]
+            totals["by_rule"][rule] = {
+                "defects": len(rows),
+                "detected": sum(row["tools"][tool]["broken"]["detected"] for row in rows),
+                "controls_flagged": sum(row["tools"][tool]["working"]["detected"] for row in rows),
+            }
+    report["known_rumk_coverage_gaps"] = [case["name"] for case in cases if not case["expected_rumk_detection"]]
     return report
 
 

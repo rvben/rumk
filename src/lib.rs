@@ -9,6 +9,7 @@ pub mod fix;
 pub mod inline_config;
 pub mod lint;
 pub mod logical;
+pub mod lsp;
 pub mod parser;
 pub mod paths;
 pub mod project;

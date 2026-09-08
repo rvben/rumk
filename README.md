@@ -116,6 +116,12 @@ Stdin must be valid UTF-8 and cannot be mixed with filesystem paths.
 `check --fix -` is rejected: use JSON edits for lint fixes or `fmt -` for layout.
 This is a command-line integration interface, not a language server.
 
+### Native language server
+
+Run `rumk server` for live diagnostics, safe quick fixes, fix-all actions,
+formatting, and symbols. Open buffers participate in include analysis, including
+unsaved files. See [editor setup and capabilities](docs/editor.md).
+
 ## SARIF reports
 
 Export diagnostics for code-scanning consumers:
@@ -203,7 +209,7 @@ Create a `.rumk.toml` file manually or run `rumk init`:
 
 ```toml
 [global]
-dialect = "gnu"
+dialect = "gnu" # or posix2017 (alias: posix), posix2024
 respect-gitignore = true
 exclude = ["vendor/**", "generated/**"]
 disable = ["MK101"]
@@ -339,6 +345,10 @@ Opt into assignment operator spacing by enabling MK105 in the config
 trailing whitespace, and leaves continuations, dynamic names, define bodies,
 and target-specific assignments alone. See [MK105](docs/mk105.md).
 
+Opt into static rule-header spacing with `rumk fmt --extend-enable MK106`.
+It preserves dependency order and inline recipes while leaving dynamic or
+ambiguous headers alone. See [MK106](docs/mk106.md).
+
 Every layout fix is safe, so `rumk fmt` has no unsafe fix to withhold and `--unsafe-fixes` makes
 no difference to it.
 
@@ -432,6 +442,7 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 
 - [MK104](docs/mk104.md) - Configurable logical recipe length (opt-in)
 - [MK105](docs/mk105.md) - Assignment operator spacing (opt-in, safe fix, run by `fmt`)
+- [MK106](docs/mk106.md) - Static rule-header spacing (opt-in, safe fix, run by `fmt`)
 
 ### Best practices
 
@@ -470,6 +481,9 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [MK217](docs/mk217.md) - Ordinary phony prerequisites force non-phony consumers to rebuild (opt-in)
 - [MK218](docs/mk218.md) - Repeated recipe command prefixes (opt-in, safe fix)
 
+- [MK301](docs/mk301.md) - Edition-specific POSIX portability (enabled by
+  `dialect = "posix2017"` or `"posix2024"`; no automatic fix)
+
 ## Development
 
 ```bash
@@ -505,6 +519,12 @@ new rules against exact expectations and supports reproducible runs of pinned
 checkmake, unmake, and mbake executables. Run `make check-comparison` for its
 offline regression checks. `scripts/compare-linters.py` records cross-tool
 observations separately; generated results are local working material.
+
+For behavior-labeled defect/control pairs and per-rule coverage, see the
+[semantic benchmark](docs/semantic-benchmark.md). For pinned real-project
+cross-tool wall time and peak memory measurements, see the
+[performance runner](docs/performance.md). These measure specific profiles and
+samples, not a universal quality ranking.
 
 The product-level compatibility contract is documented in
 [`docs/rumdl-compatibility.md`](docs/rumdl-compatibility.md).

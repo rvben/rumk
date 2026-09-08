@@ -19,8 +19,8 @@ fn comparison_corpus_matches_exact_rules_locations_and_exit_codes() {
         std::fs::write(
             directory.path().join(".rumk.toml"),
             format!(
-                "[global]\nenable = {}\n[MK104]\nmax-lines = 2\n[MK215]\nrequired = ['test']\n",
-                case["enable"]
+                "[global]\ndialect = {}\nenable = {}\n[MK104]\nmax-lines = 2\n[MK215]\nrequired = ['test']\n",
+                case["dialect"], case["enable"]
             ),
         )
         .unwrap();

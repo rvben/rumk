@@ -409,6 +409,16 @@ impl Config {
         }
 
         let mut settings = default_settings();
+        match global.dialect.as_deref().unwrap_or("gnu") {
+            "gnu" => {},
+            "posix" | "posix2017" | "posix2024" => {
+                settings.get_mut("MK301").unwrap().enabled = true;
+                if global.dialect.as_deref() != Some("posix2024") {
+                    settings.get_mut("MK201").unwrap().enabled = false;
+                }
+            },
+            other => bail!("Unsupported dialect '{other}'; use gnu, posix2017, or posix2024 (posix aliases posix2017)"),
+        }
         apply_global_selection(&mut settings, &global)?;
 
         if let Some(legacy_rules) = table.get("rules") {
@@ -957,6 +967,14 @@ fn build_rule(
             10,
         )?)),
         "MK105" => Box::new(rules::formatting::AssignmentSpacing),
+        "MK106" => Box::new(rules::formatting::RuleSpacing),
+        "MK301" => Box::new(rules::portability::PosixPortability(
+            if global.dialect.as_deref() == Some("posix2024") {
+                rules::portability::Edition::Posix2024
+            } else {
+                rules::portability::Edition::Posix2017
+            },
+        )),
         "MK214" => Box::new(rules::policy::GlobalIgnore),
         "MK215" => Box::new(rules::policy::RequiredTargets::new(
             required_targets_option(settings)?,

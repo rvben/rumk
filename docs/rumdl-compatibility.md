@@ -22,7 +22,9 @@ semantics require a different design.
 
 ## Make-specific equivalents
 
-- Rumdl flavors correspond to Rumk dialects: `gnu`, `posix`, and `bsd`.
+- Rumdl flavors correspond to Rumk source-syntax profiles: `gnu`, `posix2017`
+  (alias `posix`), and `posix2024`. Unsupported dialects are rejected.
+  See [MK301](mk301.md) for the portability boundary.
 - Inline controls use Make comments such as `# rumk-disable MK202`.
 - Project diagnostics retain the same flat output shape while setting `file` to the included
   Makefile that owns the finding.

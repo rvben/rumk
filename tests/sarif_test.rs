@@ -16,8 +16,8 @@ fn sarif_cli_matches_json_on_the_comparison_corpus() {
         std::fs::write(
             temp.path().join(".rumk.toml"),
             format!(
-                "[global]\nenable = {}\n[MK104]\nmax-lines = 2\n[MK215]\nrequired = ['test']\n",
-                case["enable"]
+                "[global]\ndialect = {}\nenable = {}\n[MK104]\nmax-lines = 2\n[MK215]\nrequired = ['test']\n",
+                case["dialect"], case["enable"]
             ),
         )
         .unwrap();
@@ -141,7 +141,9 @@ fn apply_sarif(input: &str, result: &Value) -> String {
                 .map_or(text.len() - start, |(index, _)| index)
             + bom_len
     };
-    let changes = result["fixes"][0]["artifactChanges"].as_array().unwrap();
+    let changes = result["fixes"][0]["artifactChanges"]
+        .as_array()
+        .unwrap_or_else(|| panic!("Missing exported edits: {result}"));
     assert_eq!(changes.len(), 1);
     let mut edits: Vec<_> = changes[0]["replacements"]
         .as_array()

@@ -1,0 +1,3 @@
+.POSIX:
+X := value
+all:;

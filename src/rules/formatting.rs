@@ -88,3 +88,98 @@ impl Rule for AssignmentSpacing {
             .collect()
     }
 }
+
+/// Normalize only static, single-line explicit rule headers. The recipe and
+/// comment suffix are copied exactly; expansions and escapes remain untouched.
+pub struct RuleSpacing;
+impl Rule for RuleSpacing {
+    fn id(&self) -> &'static str {
+        "MK106"
+    }
+    fn name(&self) -> &'static str {
+        "Use consistent spacing in static rule headers"
+    }
+    fn description(&self) -> &'static str {
+        "Remove whitespace before a rule colon and use single spaces between literal targets and prerequisites. Preserve inline recipes, comments, and line endings. Skip expansions, escapes, patterns, continuations, and target-specific assignments."
+    }
+    fn category(&self) -> RuleCategory {
+        RuleCategory::Style
+    }
+    fn layout(&self) -> bool {
+        true
+    }
+    fn fixable(&self) -> bool {
+        true
+    }
+    fn check(&self, makefile: &Makefile, content: &str) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        for statement in makefile.logical.statements() {
+            if statement.kind != LogicalKind::Rule || statement.start_line != statement.end_line {
+                continue;
+            }
+            let raw = statement.raw(content).trim_end_matches(['\r', '\n']);
+            if raw.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let suffix = raw.find([';', '#']).unwrap_or(raw.len());
+            let header = &raw[..suffix];
+            // This alphabet cannot hide Make expansions, quoting, assignment
+            // operators, archive syntax, or escaped separators.
+            if !header
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_./-: |\t".contains(c))
+            {
+                continue;
+            }
+            let Some(colon) = header.find(':') else {
+                continue;
+            };
+            if header[colon + 1..].contains(':') {
+                continue;
+            }
+            let targets = header[..colon]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            if targets.is_empty() {
+                continue;
+            }
+            let prerequisites = header[colon + 1..]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut fixed = format!(
+                "{targets}:{}{}",
+                if prerequisites.is_empty() { "" } else { " " },
+                prerequisites
+            );
+            // Keep the original suffix byte-for-byte. A space before it makes
+            // comments and semicolons visually distinct from the header.
+            if suffix < raw.len() {
+                fixed.push(' ');
+            }
+            if fixed == header {
+                continue;
+            }
+            diagnostics.push(
+                Diagnostic::new(
+                    self.id(),
+                    Severity::Warning,
+                    "Use consistent spacing in the static rule header",
+                    statement.start_line,
+                    1,
+                )
+                .with_fix(
+                    Fix::new("Normalize static rule header spacing").add_edit(Edit::new(
+                        statement.start_line,
+                        1,
+                        statement.start_line,
+                        header.chars().count() + 1,
+                        fixed,
+                    )),
+                ),
+            );
+        }
+        diagnostics
+    }
+}

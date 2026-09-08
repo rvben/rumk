@@ -421,6 +421,90 @@
         "MK218"
       ],
       "expected": []
+    },
+    {
+      "name": "rule-spacing",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK106"
+      ],
+      "expected": [
+        {
+          "rule": "MK106",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "rule-spacing-control",
+      "category": "formatting",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK106"
+      ],
+      "expected": []
+    },
+    {
+      "name": "posix2017-assignment",
+      "category": "portability",
+      "dialect": "posix2017",
+      "entry": "Makefile",
+      "enable": [
+        "MK301"
+      ],
+      "expected": [
+        {
+          "rule": "MK301",
+          "line": 2,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "posix2024-assignment",
+      "category": "portability",
+      "dialect": "posix2024",
+      "entry": "Makefile",
+      "enable": [
+        "MK301"
+      ],
+      "expected": []
+    },
+    {
+      "name": "posix2024-gnu-assignment",
+      "category": "portability",
+      "dialect": "posix2024",
+      "entry": "Makefile",
+      "enable": [
+        "MK301"
+      ],
+      "expected": [
+        {
+          "rule": "MK301",
+          "line": 2,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "posix-marker",
+      "category": "portability",
+      "dialect": "posix2017",
+      "entry": "Makefile",
+      "enable": [
+        "MK301"
+      ],
+      "expected": [
+        {
+          "rule": "MK301",
+          "line": 1,
+          "file": "Makefile"
+        }
+      ]
     }
   ]
 }

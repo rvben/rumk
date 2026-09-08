@@ -611,7 +611,7 @@ fn mk006_accepts_a_deferred_reference_gnu_make_never_expands() {
         "ifdef X\nY = $(FOO\nendif\nY = fine\nall:\n\t@echo $(Y)\n",
     ];
     for source in unexpanded {
-        assert_eq!(mk006_lines(source), [], "{source:?}");
+        assert_eq!(mk006_lines(source), Vec::<usize>::new(), "{source:?}");
     }
 }
 
@@ -635,7 +635,7 @@ fn mk006_accepts_a_reference_in_a_branch_gnu_make_never_reads() {
         "Y = $(FOO\nifeq (a,a)\nelse\nX := $(Y)\nendif\n",
     ];
     for source in never_read {
-        assert_eq!(mk006_lines(source), [], "{source:?}");
+        assert_eq!(mk006_lines(source), Vec::<usize>::new(), "{source:?}");
     }
     assert_eq!(mk006_lines("Y = $(FOO\nifdef X\nX := $(Y)\nendif\n"), [1]);
     assert_eq!(
@@ -657,7 +657,7 @@ fn mk006_follows_which_function_arguments_gnu_make_expands() {
     ];
     for value in never_expanded {
         let source = format!("Y = $(FOO\n{value}\n");
-        assert_eq!(mk006_lines(&source), [], "{value}");
+        assert_eq!(mk006_lines(&source), Vec::<usize>::new(), "{value}");
     }
     let expanded = [
         "X := $(if $(Z),$(Y),ok)",
@@ -757,7 +757,7 @@ fn a_comment_after_a_define_header_is_not_part_of_it() {
     let source = "define FOO # := note\n$(BROKEN\nendef\nall: ; @echo ok\n";
     let makefile = parse(source);
 
-    assert_eq!(mk006_lines(source), []);
+    assert_eq!(mk006_lines(source), Vec::<usize>::new());
     assert_eq!(makefile.definitions[0].name, "FOO");
     assert_eq!(
         makefile.definitions[0].operator,
@@ -936,7 +936,7 @@ fn mk006_reports_an_exported_broken_variable_when_a_recipe_runs() {
     // `unexport` cancels only a bare `export`.
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport BROKEN\nunexport BROKEN\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport BROKEN\nunexport\nall: ; @echo ok\n"),
@@ -944,35 +944,47 @@ fn mk006_reports_an_exported_broken_variable_when_a_recipe_runs() {
     );
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport\nunexport BROKEN\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport\nunexport\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     // Only a name a shell accepts is exported by a bare `export`.
-    assert_eq!(mk006_lines("BROKEN.X = $(X\nexport\nall: ; @echo ok\n"), []);
+    assert_eq!(
+        mk006_lines("BROKEN.X = $(X\nexport\nall: ; @echo ok\n"),
+        Vec::<usize>::new()
+    );
     // A rule whose recipe runs nothing builds no environment.
-    assert_eq!(mk006_lines("BROKEN = $(X\nexport BROKEN\nall: ;\n"), []);
-    assert_eq!(mk006_lines("BROKEN = $(X\nexport BROKEN\nall:\n\t\n"), []);
-    assert_eq!(mk006_lines("BROKEN = $(X\nexport BROKEN\n"), []);
+    assert_eq!(
+        mk006_lines("BROKEN = $(X\nexport BROKEN\nall: ;\n"),
+        Vec::<usize>::new()
+    );
+    assert_eq!(
+        mk006_lines("BROKEN = $(X\nexport BROKEN\nall:\n\t\n"),
+        Vec::<usize>::new()
+    );
+    assert_eq!(
+        mk006_lines("BROKEN = $(X\nexport BROKEN\n"),
+        Vec::<usize>::new()
+    );
     // A rebinding before the recipe runs replaces the broken value.
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport BROKEN\nBROKEN = ok\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     assert_eq!(
         mk006_lines("BROKEN = $(X\nexport BROKEN\nall: BROKEN = ok\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     // A directive in a branch GNU Make never reads exports nothing, and a
     // computed name is not followed.
     assert_eq!(
         mk006_lines("BROKEN = $(X\nifeq (a,b)\nexport BROKEN\nendif\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
     assert_eq!(
         mk006_lines("BROKEN = $(X\nNAME = BROKEN\nexport $(NAME)\nall: ; @echo ok\n"),
-        []
+        Vec::<usize>::new()
     );
 }

@@ -11,6 +11,9 @@ check that explicit phony declarations and real compiler outputs are not confuse
 with missing command-target declarations. `tests/phony_precision_test.rs` covers
 includes, inactive branches, output lookalikes, and GNU Make behavior as well.
 
+The edition-specific portability and static-header spacing pairs also exercise
+MK301 and MK106, with the declared dialect applied to Rumk configuration.
+
 `manifest.json` states the purpose, dialect, selected rumk rules, and exact
 expected rule/file/line tuples. Every defect has valid lookalikes. The runner
 uses temporary copies, records input hashes and commands, and rejects input

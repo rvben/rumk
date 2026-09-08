@@ -9,6 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Native `rumk server` provides stdio LSP diagnostics, versioned quick fixes,
+  fix-all actions, formatting, and symbols with UTF-16 incremental buffers,
+  unsaved include overlays, cancellation, and configuration invalidation.
+- `MK301` checks explicit POSIX.1-2017 and POSIX.1-2024 source-syntax profiles.
+- Opt-in `MK106` safely normalizes static rule-header spacing.
+- The semantic benchmark now includes 35 defect/control pairs and per-rule paired
+  metrics. A pinned real-project comparison runner records startup, wall time,
+  independent process peak RSS, stable output, and input integrity.
 - Opt-in `MK217` detects phony prerequisites that force non-phony targets to rebuild,
   with include-aware locations and exclusions for uncertain graphs.
 - Opt-in `MK218` safely removes repeated literal recipe command prefixes while
@@ -17,6 +25,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   buffers and governed by existing fix safety and allowlist settings.
 - GNU Make behavior tests and shared comparison fixtures for rebuild dependencies
   and recipe-prefix fixes; SARIF consumer tests cover Unicode, BOM, CRLF, and multiple edits.
+
+### Changed
+
+- `global.dialect` accepts `gnu`, `posix2017` (alias `posix`), and `posix2024`.
+  Unknown values, including the previously ineffective `bsd`, now fail validation.
+  POSIX profiles enable MK301; the 2017 profile disables GNU `.PHONY` advice by
+  default. Explicit rule configuration still overrides these defaults.
+
+### Fixed
+
+- Unsaved buffers resolve their existing parent directory before analysis, so
+  Windows path spelling and symlink aliases cannot detach SARIF/JSON edits from
+  the buffer that owns them.
 
 ## [0.0.8] - 2026-09-08
 

@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 
@@ -172,7 +172,7 @@ pub struct Project {
 
 impl Project {
     pub fn load(path: &Path, options: &ProjectOptions) -> Result<Self> {
-        let content = read_source(path)
+        let content = read_source(&canonical_or_normalized(path)?, options)
             .with_context(|| format!("Failed to read Makefile: {}", path.display()))?;
         Self::load_with_root_content(path, content, options)
     }
@@ -257,6 +257,9 @@ impl Project {
 
 #[derive(Debug, Clone)]
 pub struct ProjectOptions {
+    /// Unsaved UTF-8 buffers keyed by canonical or normalized absolute paths.
+    /// These take precedence over disk and can supply not-yet-created includes.
+    pub source_overrides: BTreeMap<PathBuf, Arc<str>>,
     /// Directory GNU Make would run from. Relative includes and include search
     /// paths are interpreted from here. Defaults to the root Makefile's parent.
     pub working_directory: Option<PathBuf>,
@@ -270,6 +273,7 @@ pub struct ProjectOptions {
 impl Default for ProjectOptions {
     fn default() -> Self {
         Self {
+            source_overrides: BTreeMap::new(),
             working_directory: None,
             include_paths: Vec::new(),
             predefined_variables: BTreeMap::new(),
@@ -732,7 +736,11 @@ impl<'a> Loader<'a> {
         }
 
         let candidates = include_candidates(&self.working_directory, expression, self.options);
-        let Some(path) = candidates.iter().find(|candidate| candidate.is_file()) else {
+        let Some(path) = candidates.iter().find(|candidate| {
+            candidate.is_file()
+                || canonical_or_normalized(candidate)
+                    .is_ok_and(|path| self.options.source_overrides.contains_key(&path))
+        }) else {
             return (
                 IncludeResolution::Missing {
                     searched: candidates,
@@ -762,7 +770,7 @@ impl<'a> Loader<'a> {
             return (IncludeResolution::LimitExceeded, None);
         }
 
-        let content = match read_source(&path) {
+        let content = match read_source(&path, self.options) {
             Ok(content) => content,
             Err(error) => {
                 return (
@@ -805,7 +813,13 @@ impl<'a> Loader<'a> {
 /// UTF-8 is decoded lossily instead of counting as unreadable, so an include
 /// GNU Make follows is analyzed rather than reported as missing, and a leading
 /// byte order mark is read past the way Make 4.3 and later read past it.
-fn read_source(path: &Path) -> std::io::Result<String> {
+fn read_source(path: &Path, options: &ProjectOptions) -> std::io::Result<String> {
+    if let Some(content) = options.source_overrides.get(path) {
+        return Ok(content
+            .strip_prefix(crate::source::BYTE_ORDER_MARK)
+            .unwrap_or(content)
+            .to_string());
+    }
     let read = std::fs::read(path)?;
     let (bytes, _) = crate::source::split_byte_order_mark(&read);
     Ok(String::from_utf8_lossy(bytes).into_owned())
@@ -905,7 +919,7 @@ fn phony_prerequisites(text: &str) -> Option<&str> {
     Some(rest.split('#').next().unwrap_or(rest).trim())
 }
 
-fn canonical_or_normalized(path: &Path) -> Result<PathBuf> {
+pub(crate) fn canonical_or_normalized(path: &Path) -> Result<PathBuf> {
     if path.exists() {
         return dunce::canonicalize(path)
             .with_context(|| format!("Failed to resolve path: {}", path.display()));

@@ -7,6 +7,7 @@ pub mod best_practices;
 pub mod formatting;
 mod phony;
 pub mod policy;
+pub mod portability;
 pub mod prerequisites;
 pub mod project;
 pub mod rebuild;
@@ -16,8 +17,9 @@ pub mod syntax;
 
 pub const RULE_IDS: &[&str] = &[
     "MK001", "MK002", "MK003", "MK004", "MK005", "MK006", "MK007", "MK101", "MK102", "MK103",
-    "MK104", "MK105", "MK201", "MK202", "MK203", "MK204", "MK205", "MK206", "MK207", "MK208",
-    "MK209", "MK210", "MK211", "MK212", "MK213", "MK214", "MK215", "MK216", "MK217", "MK218",
+    "MK104", "MK105", "MK106", "MK201", "MK202", "MK203", "MK204", "MK205", "MK206", "MK207",
+    "MK208", "MK209", "MK210", "MK211", "MK212", "MK213", "MK214", "MK215", "MK216", "MK217",
+    "MK218", "MK301",
 ];
 
 /// Why the content Rumk lints is not the file exactly as it is on disk.
@@ -134,6 +136,7 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(style::TargetNaming::new(style::NamingStyle::Lower)),
         Box::new(policy::RecipeLength::new(10)),
         Box::new(formatting::AssignmentSpacing),
+        Box::new(formatting::RuleSpacing),
         Box::new(best_practices::MissingPhony::default()),
         Box::new(best_practices::HardcodedPath),
         Box::new(best_practices::RecursiveMake),
@@ -152,6 +155,9 @@ pub fn get_all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(prerequisites::MissingPrerequisite),
         Box::new(rebuild::PhonyPrerequisite),
         Box::new(recipe_prefixes::RepeatedRecipePrefix),
+        Box::new(portability::PosixPortability(
+            portability::Edition::Posix2017,
+        )),
     ]
 }
 

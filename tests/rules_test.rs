@@ -584,6 +584,7 @@ fn fix_corpus() -> Vec<String> {
         "all clean:\n\tmake -C sub && gmake test\n".to_string(),
         format!(".PHONY: {}\n", ["target"; 40].join(" ")),
         "DEST := $PREFIX/share\n".to_string(),
+        "all  :  dep   other\n".to_string(),
         "all:\n\t@@+-+--echo build\n".to_string(),
     ]
 }

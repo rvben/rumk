@@ -942,6 +942,91 @@
       "safe_fix": "withheld",
       "expected_rumk_detection": true,
       "source_reduction": "git/Makefile:3514,3525 at the pinned corpus revision; reduced spelling effect, not an upstream build execution"
+    },
+    {
+      "name": "phony-rebuild-literal",
+      "title": "A phony setup prerequisite forces an existing output to rebuild",
+      "dialect": "GNU Make",
+      "rule": "MK217",
+      "files": {
+        "probe": "existing\n"
+      },
+      "args": [
+        "--silent",
+        "probe"
+      ],
+      "broken": ".PHONY: setup\nprobe: setup\n\t@echo rebuilt\n",
+      "working": ".PHONY: setup\nprobe: | setup\n\t@echo rebuilt\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "rebuilt\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ""
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "phony-rebuild-expanded",
+      "title": "A phony setup prerequisite forces an existing output to rebuild",
+      "dialect": "GNU Make",
+      "rule": "MK217",
+      "files": {
+        "probe": "existing\n"
+      },
+      "args": [
+        "--silent",
+        "probe"
+      ],
+      "broken": "PREP = setup\n.PHONY: $(PREP)\nprobe: $(PREP)\n\t@echo rebuilt\n",
+      "working": "PREP = setup\n.PHONY: $(PREP)\nprobe: | $(PREP)\n\t@echo rebuilt\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "rebuilt\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ""
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "phony-rebuild-included",
+      "title": "A phony setup prerequisite forces an existing output to rebuild",
+      "dialect": "GNU Make",
+      "rule": "MK217",
+      "files": {
+        "tasks.mk": ".PHONY: setup\n",
+        "probe": "existing\n"
+      },
+      "args": [
+        "--silent",
+        "probe"
+      ],
+      "broken": "include tasks.mk\nprobe: setup\n\t@echo rebuilt\n",
+      "working": "include tasks.mk\nprobe: | setup\n\t@echo rebuilt\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 0,
+          "stdout": "rebuilt\n"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ""
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
     }
   ]
 }

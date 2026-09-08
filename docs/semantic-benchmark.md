@@ -1,6 +1,6 @@
 # Behavior-verified linter benchmark
 
-`scripts/semantic-benchmark.py` measures twenty-two pairs of authored broken and
+`scripts/semantic-benchmark.py` measures thirty-five pairs of authored broken and
 working Makefiles. Labels describe observable GNU Make behavior before examining linter
 output: overwritten recipes, discarded cycles, missing prerequisites, recursive
 dry runs, lost directories, ignored failures, early expansion, invalid indentation,
@@ -27,7 +27,7 @@ with a restricted environment and a timeout. Fixtures are trusted executable
 test code: review source changes accordingly. Do not add destructive recipes,
 network calls, uncontrolled Make functions, or recursive include loops.
 
-All cases use Rumk defaults plus opt-in MK208 and MK216, with an explicit
+All cases use Rumk defaults plus opt-in MK208, MK216, and MK217, with an explicit
 configuration.
 Checkmake has an empty required-target list; unmake uses static checks, never
 dry-run validation; mbake uses `format --check`, never `--validate`. The GNU
@@ -97,3 +97,13 @@ The optional-setting typo pair intentionally flags its working control in the
 unconfigured profile; `expected_rumk_control_flag` records that limitation and
 is not used to derive scores. The configured profile must still catch `TSET`.
 A reduced Git spelling error provides a real-corpus defect control.
+
+Three phony-rebuild pairs distinguish normal prerequisites from order-only setup,
+including expanded names and included declarations. Existing output files supply
+the GNU Make oracle; changing those edges is deliberately not an automatic fix.
+
+The summary includes per-rule broken/control counts, paired recall (detected
+broken cases divided by all cases), and paired precision (detections divided by
+detections plus named control flags). These are **authored-pair metrics**, not
+population estimates or whole-output precision. `known_rumk_coverage_gaps` lists
+expected misses explicitly; a high paired score is not proof of complete coverage.
