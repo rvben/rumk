@@ -1,18 +1,46 @@
 const assert = require('node:assert/strict');
-const vscode = require('vscode');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+
+const cases = [
+  ['MK001', 'all:\n    echo hello\n', '\techo hello', false],
+  ['MK101', '.PHONY: alpha beta gamma delta epsilon\n', '\\\n', false, '[MK101]\nline-length=24\n'],
+  ['MK105', 'VALUE=hello  \n', 'VALUE = hello  \n', false],
+  ['MK106', 'all  : ;\n', 'all: ;\n', false],
+  ['MK218', 'all:\n\t@@echo hello\n', '\t@echo hello', false],
+  ['MK201', 'clean:;\n', '.PHONY: clean', true],
+  ['MK203', 'all:\n\tmake -C sub && make -C other\n', '$(MAKE) -C sub && $(MAKE) -C other', true],
+  ['MK211', 'NAME=hello\nVALUE=$NAME\n', 'VALUE=$(NAME)', true],
+];
+
+const original = '# 😀 café\r\nVALUE=hello  \r\n.PHONY: all\r\nall  :\r\n    @@echo $(VALUE)\r\n';
+
+// Create fixtures before the language server starts so filesystem notifications
+// cannot cancel the code-action requests whose results this suite asserts.
+exports.prepare = async root => {
+  const directory = path.join(root, 'fix quality');
+  await fs.mkdir(directory);
+  await fs.writeFile(path.join(directory, '.rumk.toml'), "[global]\nenable=['MK001','MK105','MK106','MK218']\n");
+  await fs.writeFile(path.join(directory, 'Makefile'), original);
+  for (const [rule, input, , unsafe, extra = ''] of cases) {
+    for (const policy of ['default', 'enabled', 'unfixable']) {
+      if (!unsafe && policy === 'enabled') continue;
+      const folder = path.join(root, `${rule}-${policy}`);
+      await fs.mkdir(folder);
+      await fs.writeFile(path.join(folder, '.rumk.toml'),
+        `[global]\nenable=['${rule}']\nunsafe-fixes=${policy !== 'default'}\n` +
+        (policy === 'unfixable' ? `unfixable=['${rule}']\n` : '') + extra);
+      await fs.writeFile(path.join(folder, 'Makefile'), input);
+    }
+  }
+};
 
 exports.run = async (root, until) => {
-  const directory = vscode.Uri.joinPath(root, 'fix quality');
-  await vscode.workspace.fs.createDirectory(directory);
-  await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(directory, '.rumk.toml'), Buffer.from(
-    "[global]\nenable=['MK001','MK105','MK106','MK218']\n",
-  ));
-  const path = vscode.Uri.joinPath(directory, 'Makefile');
-  const original = '# 😀 café\r\nVALUE=hello  \r\n.PHONY: all\r\nall  :\r\n    @@echo $(VALUE)\r\n';
-  await vscode.workspace.fs.writeFile(path, Buffer.from(original));
+  const vscode = require('vscode');
+  const path = vscode.Uri.joinPath(root, 'fix quality', 'Makefile');
   const doc = await vscode.workspace.openTextDocument(path);
   const uri = doc.uri;
-  await vscode.window.showTextDocument(doc);
+  await vscode.window.showTextDocument(doc, { preview: false });
   const hasIndentError = () => vscode.languages.getDiagnostics(uri).some(d => (d.code?.value || d.code) === 'MK001');
   await until(hasIndentError, 'fix-quality fixture diagnostics missing');
   const quickFix = async () => {
@@ -46,30 +74,16 @@ exports.run = async (root, until) => {
   assert.equal(doc.getText(), newer, 'one undo restores all fixes while retaining the preceding user edit');
 
   // Every currently fixable rule must reach the editor through the same policy.
-  const cases = [
-    ['MK001', 'all:\n    echo hello\n', '\techo hello', false],
-    ['MK101', '.PHONY: alpha beta gamma delta epsilon\n', '\\\n', false, '[MK101]\nline-length=24\n'],
-    ['MK105', 'VALUE=hello  \n', 'VALUE = hello  \n', false],
-    ['MK106', 'all  : ;\n', 'all: ;\n', false],
-    ['MK218', 'all:\n\t@@echo hello\n', '\t@echo hello', false],
-    ['MK201', 'clean:;\n', '.PHONY: clean', true],
-    ['MK203', 'all:\n\tmake -C sub && make -C other\n', '$(MAKE) -C sub && $(MAKE) -C other', true],
-    ['MK211', 'NAME=hello\nVALUE=$NAME\n', 'VALUE=$(NAME)', true],
-  ];
-  for (const [rule, input, fragment, unsafe, extra = ''] of cases) {
+  for (const [rule, input, fragment, unsafe] of cases) {
     for (const policy of ['default', 'enabled', 'unfixable']) {
       if (!unsafe && policy === 'enabled') continue;
       const folder = vscode.Uri.joinPath(root, `${rule}-${policy}`);
-      await vscode.workspace.fs.createDirectory(folder);
       const allowed = policy !== 'unfixable' && (!unsafe || policy === 'enabled');
-      await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, '.rumk.toml'), Buffer.from(
-        `[global]\nenable=['${rule}']\nunsafe-fixes=${policy !== 'default'}\n` +
-        (policy === 'unfixable' ? `unfixable=['${rule}']\n` : '') + extra,
-      ));
       const path = vscode.Uri.joinPath(folder, 'Makefile');
-      await vscode.workspace.fs.writeFile(path, Buffer.from(input));
       const document = await vscode.workspace.openTextDocument(path);
-      await vscode.window.showTextDocument(document);
+      // Keep fixtures open: replacing a preview tab sends didClose, which can
+      // invalidate an in-flight project-wide code-action request.
+      await vscode.window.showTextDocument(document, { preview: false });
       const file = document.uri;
       await until(() => vscode.languages.getDiagnostics(file).some(d => (d.code?.value || d.code) === rule), `${rule}/${policy}: diagnostic missing`);
       const range = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));

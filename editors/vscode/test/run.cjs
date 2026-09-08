@@ -12,6 +12,7 @@ const { runTests } = require('@vscode/test-electron');
     await fs.mkdir(second);
     await fs.writeFile(path.join(first, 'Makefile'), 'all:\n    echo hello\n');
     await fs.writeFile(path.join(second, 'Makefile'), 'other:\n    echo world\n');
+    await require('./fixes.cjs').prepare(first);
     const binary = process.env.RUMK_TEST_BINARY;
     const workspace = path.join(temporary, 'test.code-workspace');
     await fs.writeFile(workspace, JSON.stringify({ folders: [{ path: first }, { path: second }], settings: binary ? { 'rumk.path': binary } : {} }));
