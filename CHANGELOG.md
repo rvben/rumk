@@ -34,6 +34,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- MK216 indexes declared targets and possible implicit input names per analysis,
+  avoiding repeated full-directory scans while preserving uncertainty. The
+  generated benchmark now includes missing-prerequisite fan-out and working controls.
+
 - `global.dialect` accepts `gnu`, `posix2017` (alias `posix`), and `posix2024`.
   Unknown values, including the previously ineffective `bsd`, now fail validation.
   POSIX profiles enable MK301; the 2017 profile disables GNU `.PHONY` advice by

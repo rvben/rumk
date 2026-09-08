@@ -42,10 +42,20 @@ def generate(root, scale):
     fixes = root / "fixes.mk"
     original = "".join(f"target{i}:\n    echo {i}\n" for i in range(1000 * scale))
     fixes.write_text(original, encoding="utf-8")
+    prerequisites = root / "prerequisites"
+    prerequisites.mkdir()
+    inputs = min(2000, 100 * scale)
+    for i in range(inputs):
+        (prerequisites / f"source{i}.c").write_text("/* source */\n", encoding="utf-8")
+    (prerequisites / "Makefile").write_text(
+        "".join(f"missing{i}: absent{i}.txt\nworking{i}: source{i}.o\n" for i in range(inputs)),
+        encoding="utf-8",
+    )
     return [
         ("include-graph", graph / "Makefile", [], None),
         ("huge-file", huge, [], None),
         ("many-fixes", fixes, ["--fix", "--enable", "MK001"], original),
+        ("prerequisite-fanout", prerequisites / "Makefile", ["--enable", "MK216"], None),
     ]
 
 
@@ -85,6 +95,11 @@ def main():
                     elapsed = time.perf_counter() - start
                     # Compare complete diagnostics and fixed bytes outside the timed region.
                     observed = (completed.stdout, completed.stderr, path.read_bytes())
+                    if name == "prerequisite-fanout":
+                        diagnostics = json.loads(completed.stdout)
+                        count = min(2000, 100 * args.scale)
+                        if len(diagnostics) != count or any(d["rule"] != "MK216" or "absent" not in d["message"] for d in diagnostics):
+                            raise RuntimeError("Prerequisite workload lost defects or flagged a working source")
                     if expected is None:
                         expected = observed
                     elif observed != expected:

@@ -1,5 +1,8 @@
 //! A deliberately incomplete proof of missing ordinary prerequisites.
 //! Unknown build mechanisms cost coverage, never an invented error.
+mod inputs;
+use inputs::InputIndex;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -105,6 +108,7 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 .flat_map(|(_, paths)| paths.iter().cloned()),
         )
         .collect();
+    let inputs = InputIndex::new(project);
     let mut seen = BTreeSet::new();
     let mut diagnostics = Vec::new();
     for target in index.targets.values() {
@@ -120,7 +124,7 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 "inactive_or_unknown_edge"
             } else if !literal(name) {
                 "unsupported_name"
-            } else if index.targets.keys().any(|key| normalized(key) == name) {
+            } else if inputs.declared(name) {
                 "declared_target"
             } else if directories
                 .iter()
@@ -135,9 +139,9 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 .any(|directory| may_exist(&directory.join(name)))
             {
                 "file_or_io_uncertainty"
-            } else if plausible_implicit_input(project, name, &implicit_directories) {
+            } else if inputs.plausible(name, &implicit_directories) {
                 "possible_builtin_input"
-            } else if possible_pattern_producer(project, name, &implicit_directories) {
+            } else if possible_pattern_producer(project, name, &implicit_directories, &inputs) {
                 "possible_pattern_producer"
             } else if !seen.insert((edge.location, name.to_string())) {
                 "duplicate_finding"
@@ -426,9 +430,14 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
 // but their chains are deliberately not expanded recursively.
 const PATTERN_SEARCH_STEPS: usize = 10_000;
 
-fn possible_pattern_producer(project: &Project, name: &str, directories: &[PathBuf]) -> bool {
+fn possible_pattern_producer(
+    project: &Project,
+    name: &str,
+    directories: &[PathBuf],
+    inputs: &InputIndex<'_>,
+) -> bool {
     let mut budget = PATTERN_SEARCH_STEPS;
-    pattern_producer(project, name, directories, true, &mut budget, None)
+    pattern_producer(project, name, directories, true, &mut budget, None, inputs)
 }
 
 fn pattern_producer(
@@ -438,6 +447,7 @@ fn pattern_producer(
     inspect_inputs: bool,
     budget: &mut usize,
     excluded: Option<crate::project_analysis::SourceLocation>,
+    inputs: &InputIndex<'_>,
 ) -> bool {
     project
         .analysis()
@@ -508,6 +518,7 @@ fn pattern_producer(
                         parent,
                         directories,
                         budget,
+                        inputs,
                     );
                 }
                 let path = Path::new(candidate);
@@ -554,6 +565,7 @@ fn declaration_may_build(
     parent: &Path,
     directories: &[PathBuf],
     budget: &mut usize,
+    inputs: &InputIndex<'_>,
 ) -> bool {
     symbol.declarations.iter().any(|declaration| {
         let Some(remaining) = budget.checked_sub(1) else {
@@ -596,16 +608,12 @@ fn declaration_may_build(
                 };
                 let input = normalized(&input);
                 !literal(input)
-                    || project
-                        .analysis()
-                        .targets
-                        .keys()
-                        .any(|key| normalized(key) == input)
+                    || inputs.declared(input)
                     || directories
                         .iter()
                         .any(|directory| may_exist(&directory.join(input)))
                     || (!declaration.double_colon
-                        && (plausible_implicit_input(project, input, directories)
+                        && (inputs.plausible(input, directories)
                             || pattern_producer(
                                 project,
                                 input,
@@ -613,6 +621,7 @@ fn declaration_may_build(
                                 false,
                                 budget,
                                 Some(declaration.location),
+                                inputs,
                             )))
             })
     })
@@ -653,62 +662,6 @@ fn may_exist(path: &Path) -> bool {
     !matches!(std::fs::symlink_metadata(path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
 }
 
-fn related(candidate: &str, filename: &str) -> bool {
-    // Withhold on case variants too: the filesystem may be case-insensitive
-    // even though Make's target table is not. Non-ASCII spellings may also
-    // compare equal through filesystem normalization, which we do not model.
-    if !candidate.is_ascii() || !filename.is_ascii() {
-        return true;
-    }
-    let candidate = candidate.to_ascii_lowercase();
-    let filename = filename.to_ascii_lowercase();
-    let stem = Path::new(&filename)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or(&filename);
-    candidate == stem
-        || candidate == format!("s.{filename}")
-        || candidate.starts_with(&format!("{stem}."))
-        || candidate.starts_with(&format!("{filename},"))
-}
-
-// GNU's built-in conversions retain a basename. Any same-stem source, including
-// a declared but not-yet-created source, is enough to withhold this warning.
-// This deliberately overapproximates instead of copying a host's rule database.
-fn plausible_implicit_input(project: &Project, name: &str, directories: &[PathBuf]) -> bool {
-    let path = Path::new(name);
-    let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
-        return true;
-    };
-    let parent = path.parent().unwrap_or(Path::new(""));
-    if project.analysis().targets.keys().any(|key| {
-        let candidate = Path::new(normalized(key));
-        candidate.parent() == Some(parent)
-            && candidate
-                .file_name()
-                .and_then(|s| s.to_str())
-                .is_some_and(|candidate| related(candidate, filename))
-    }) {
-        return true;
-    }
-    directories.iter().any(|directory| {
-        let directory = directory.join(parent);
-        if may_exist(&directory.join("RCS")) || may_exist(&directory.join("SCCS")) {
-            return true;
-        }
-        match std::fs::read_dir(directory) {
-            Ok(entries) => entries.into_iter().any(|entry| match entry {
-                Ok(entry) => entry
-                    .file_name()
-                    .to_str()
-                    .is_none_or(|candidate| related(candidate, filename)),
-                Err(_) => true,
-            }),
-            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,12 +700,14 @@ mod tests {
                 true,
                 &mut budget,
                 None,
+                &InputIndex::new(&project),
             ));
         }
         assert!(!possible_pattern_producer(
             &project,
             "generated/output.dat",
-            &directories
+            &directories,
+            &InputIndex::new(&project),
         ));
     }
 }
