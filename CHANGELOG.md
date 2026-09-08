@@ -7,8 +7,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-09-08
+
 ### Added
 
+- `MK007` reports unreadable paths and invalid UTF-8 without stopping checks of other files.
+- `MK211` catches unparenthesized multi-character variable references, `MK212` detects recipe
+  lines that lose a directory change, and opt-in `MK213` detects repeated shell expansion.
+- `MK214` reports global error suppression. Opt-in `MK104`, `MK105`, and `MK215` provide
+  logical recipe-length limits, safe assignment spacing, and required project-target policies.
+- Opt-in `MK216` reports missing static prerequisites when no visible file, declared target,
+  built-in possibility, or supported pattern producer can satisfy them. Bounded pattern analysis
+  handles terminal rules and order-only inputs conservatively; uncertain graphs remain excluded.
+- `MK201.command-targets` supports explicit project command names. `MK208.external-variables`
+  declares exact external names without inventing values or hiding read-before-definition errors.
+- `rumk fmt` applies layout-only fixes. Stdin support checks and formats unsaved Makefiles, and
+  SARIF output supports code-scanning integrations.
+- Pre-commit hooks, a GNU Make behavioral benchmark with 32 defect/control pairs, pinned audits
+  of 69 upstream Makefiles, prerequisite-coverage tooling, and lint/fix fuzz targets.
 - `MK006` reports statements GNU Make refuses to read: missing separators (with the same hints
   GNU Make prints for eight-space indentation and `ifeq(` without whitespace), recipes before
   the first target, unterminated variable and function references, empty variable names, and
@@ -17,6 +33,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Changed
 
+- Fixes distinguish safe from unsafe changes. `check --fix` applies safe fixes by default;
+  behavior-changing fixes such as `.PHONY` insertion and recursive Make replacement require
+  `--unsafe-fixes`. JSON diagnostics expose applicability and complete edit replacements.
+- Project parsing and analysis reuse cached work, avoid redundant scans and allocations, and
+  check independent inputs in parallel.
+- `MK208` tracks when include and assignment references are read, with conservative handling
+  of unresolved or potentially rebuilt includes and independently checked fragments.
 - `rumk::parser::parse` no longer fails on a Makefile GNU Make would reject. It returns the
   parsed file with the problems collected in `Makefile::syntax_errors`, so every other rule
   still runs on it.
@@ -31,6 +54,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- GNU Make compatibility for inline recipes, assignment modifiers and flavors, target-specific
+  bindings, escaped paths, byte order marks, nested references, and expansion limits.
+- Include-producer analysis respects pattern chains, terminal rules, static pattern declarations,
+  match-anything rules, and path normalization. Recipe analysis respects active `.ONESHELL` state.
+- Safe fixes preserve symlink destinations and active recipe prefixes, combine interacting
+  `.PHONY` edits, and report only edits actually applied.
+- `MK216` accepts resolved `.PHONY` lists and excludes unknown assignments used only by recipes
+  from its graph-level uncertainty checks, expanding audited coverage without new corpus warnings.
 - A `;` inside a trailing comment on a rule line is no longer parsed as an inline recipe.
 - Recipe-prefixed lines that GNU Make reads as ordinary statements when no rule is open, such as
   an indented assignment, are parsed as those statements instead of being dropped.
@@ -144,5 +175,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Release artifacts are checksummed and prepared for GitHub build-provenance attestations.
 
 [Unreleased]: https://github.com/rvben/rumk/commits/main
+[0.0.8]: https://github.com/rvben/rumk/releases/tag/v0.0.8
 [0.0.7]: https://github.com/rvben/rumk/releases/tag/v0.0.7
 [0.0.6]: https://github.com/rvben/rumk/releases/tag/v0.0.6
