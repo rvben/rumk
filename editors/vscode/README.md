@@ -45,6 +45,33 @@ those applicable actions in the editor. Edits stay in the buffer until you save.
 This extension helps diagnose Makefile bugs. It does not provide breakpoints,
 recipe stepping, or a Debug Adapter Protocol implementation.
 
+## Understand a diagnostic
+
+Click the rule code, such as **MK206**, in a diagnostic hover or the Problems
+panel to open its documentation. Rule pages explain the cause, repair options,
+configuration, and the limits of the analysis. Include-related findings can
+point into another Makefile; follow the reported file and line when investigating.
+
+A missing lightbulb does not mean the extension is broken. Some repairs require
+you to choose build behavior, such as which duplicate recipe to keep or which
+dependency breaks a cycle. Other fixes are withheld by the project's `unfixable`
+settings, unsafe-fix policy, or incomplete include context. **Fix All** applies
+only the fixes currently allowed; **Format Document** handles layout rules.
+
+For behavior that is intentional, use the rule's configuration or a narrow
+suppression with an explanation. For example, to retain an intentional force
+dependency while MK217 is enabled:
+
+```makefile
+.PHONY: force
+force:
+
+# Always rerun this check, even when its output exists.
+# rumk-disable-next-line MK217
+report: force
+	./write-report > report
+```
+
 ## Settings
 
 ```jsonc

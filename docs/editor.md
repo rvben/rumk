@@ -2,11 +2,19 @@
 
 ## Visual Studio Code
 
-The [Rumk extension](../editors/vscode/README.md) connects VS Code to this server
-with live diagnostics, quick fixes, fix-all, formatting, and target/variable
-symbols. Build and install its local VSIX from `editors/vscode`; see its README
-for setup and development instructions. Each platform-specific VSIX bundles
-the native server; no separate Rumk installation is required.
+The [Rumk extension](https://marketplace.visualstudio.com/items?itemName=rvben.rumk)
+connects VS Code to this server with live diagnostics, quick fixes, fix-all,
+formatting, and target/variable symbols. Install its preview from the
+Marketplace, or build a local VSIX from
+`editors/vscode`; see its [README](../editors/vscode/README.md) for setup and
+development instructions. Each platform-specific VSIX bundles the native
+server; no separate Rumk installation is required.
+
+Click a diagnostic's rule code in the hover or Problems panel to open the rule
+documentation. Pages include manual repair guidance for findings without a
+quick fix. An intentional exception can use rule configuration or an inline
+suppression; a missing quick fix can also reflect the project's fix policy or
+incomplete analysis context.
 
 ## Language server
 
