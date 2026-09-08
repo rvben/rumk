@@ -10,7 +10,7 @@ const { serverCommand } = loaded.exports;
 
 test('resolves workspace paths, including spaces, without splitting shell arguments', () => {
   const root = path.resolve('project with spaces');
-  assert.equal(serverCommand('${workspaceFolder}/bin/rumk', root), path.join(root, 'bin/rumk'));
+  assert.equal(path.normalize(serverCommand('${workspaceFolder}/bin/rumk', root)), path.join(root, 'bin/rumk'));
   assert.equal(serverCommand('./bin/rumk', root), path.join(root, 'bin/rumk'));
   assert.equal(serverCommand(' rumk '), 'rumk');
   assert.equal(serverCommand('rumk;echo-secret'), 'rumk;echo-secret');
@@ -28,4 +28,16 @@ test('uses the bundled executable by default and honors explicit overrides', () 
   assert.equal(resolveServerCommand('   ', extension, undefined, 'win32'), path.join(extension, 'bundled', 'rumk.exe'));
   assert.equal(resolveServerCommand('rumk', extension), 'rumk');
   assert.equal(resolveServerCommand('./my-rumk', extension, extension), path.join(extension, 'my-rumk'));
+});
+
+test('Windows workspace substitutions preserve valid mixed separators', () => {
+  const windowsModule = { exports: {} };
+  new Function('require', 'module', 'exports', source)(
+    name => name === 'node:path' ? path.win32 : require(name), windowsModule, windowsModule.exports,
+  );
+  const { serverCommand: resolve } = windowsModule.exports;
+  const root = String.raw`C:\project with spaces`;
+  assert.equal(path.win32.normalize(resolve('${workspaceFolder}/bin/rumk.exe', root)), path.win32.join(root, 'bin', 'rumk.exe'));
+  assert.equal(resolve('./rumk.exe', root), path.win32.join(root, 'rumk.exe'));
+  assert.equal(resolve('rumk.exe', root), 'rumk.exe');
 });
