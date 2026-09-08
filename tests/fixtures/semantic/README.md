@@ -46,3 +46,8 @@ active orphan recipe fails, while static and shell-derived inactive controls
 succeed. Rumk never evaluates the shell expression; unknown branch activity
 withholds a definite syntax error. These pairs supplement the source-hash-bound
 production review labels.
+
+The comment and function-prefix pairs prove that inert Make comments and ordinary
+variable names do not hide missing inputs. Separate coverage regressions retain
+exclusions for actual calls, including nested calls and recipe comments, and
+verify that analysis never creates their sentinel files.

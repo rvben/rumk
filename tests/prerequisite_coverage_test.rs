@@ -3,6 +3,64 @@ use rumk::rules::prerequisites::{coverage, MissingPrerequisite};
 use rumk::rules::Rule;
 
 #[test]
+fn comments_and_function_prefix_variables_do_not_obscure_static_inputs() {
+    for prefix in [
+        "# $(shell touch sentinel) ${eval probe:} $(file >sentinel,x)\n",
+        "VALUE = literal # $(shell touch sentinel)\n",
+        "shell_flags = literal\nevaluation = literal\nfilename = literal\nVALUE := $(shell_flags) ${evaluation} $(filename)\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            format!("{prefix}probe: missing.txt\n"),
+            &ProjectOptions::default(),
+        ).unwrap();
+        assert!(coverage(&project).root_blockers.is_empty(), "{prefix}: {:?}", coverage(&project).root_blockers);
+        assert_eq!(MissingPrerequisite.check_project(&project).len(), 1, "{prefix}");
+        assert!(!dir.path().join("sentinel").exists());
+    }
+}
+
+#[test]
+fn function_exclusions_keep_nested_deferred_and_recipe_expansions() {
+    for (prefix, reason) in [
+        ("VALUE := $(shell touch sentinel)\n", "shell_function"),
+        ("VALUE := ${shell\ttouch sentinel}\n", "shell_function"),
+        (
+            "VALUE = $(if yes,$(shell touch sentinel))\n",
+            "shell_function",
+        ),
+        ("VALUE = $$(shell touch sentinel)\n", "shell_function"),
+        ("VALUE = \\# $(shell touch sentinel)\n", "shell_function"),
+        ("other:; # $(shell touch sentinel)\n", "shell_function"),
+        ("other:\n\t# $(shell touch sentinel)\n", "shell_function"),
+        (
+            "define VALUE\n# $(shell touch sentinel)\nendef\n",
+            "shell_function",
+        ),
+        ("VALUE = $(eval probe: generated.txt)\n", "eval_function"),
+        ("VALUE = ${file >sentinel,x}\n", "file_function"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            format!("{prefix}probe: missing.txt\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert!(
+            coverage(&project).root_blockers.contains_key(reason),
+            "{prefix}"
+        );
+        assert!(
+            MissingPrerequisite.check_project(&project).is_empty(),
+            "{prefix}"
+        );
+        assert!(!dir.path().join("sentinel").exists());
+    }
+}
+
+#[test]
 fn relative_file_targets_do_not_exclude_roots_as_suffix_rules() {
     let dir = tempfile::tempdir().unwrap();
     for target in [

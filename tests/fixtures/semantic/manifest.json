@@ -1112,6 +1112,64 @@
       "safe_fix": "withheld",
       "expected_rumk_detection": true,
       "source_reduction": "zstd/contrib/diagnose_corruption/Makefile:26-31 at the pinned corpus revision"
+    },
+    {
+      "name": "commented-functions-do-not-hide-inputs",
+      "title": "Make comments do not execute functions",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "# $(shell touch sentinel) ${eval probe:} $(file >sentinel,x)\nVALUE = literal # $(shell touch sentinel)\nprobe: soruce.txt\n\t@:\n",
+      "working": "# $(shell touch sentinel) ${eval probe:} $(file >sentinel,x)\nVALUE = literal # $(shell touch sentinel)\nprobe: source.txt\n\t@:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "No rule to make target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "function-prefix-variables-do-not-hide-inputs",
+      "title": "Ordinary variable names are not function calls",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "shell_flags = literal\nevaluation = literal\nfilename = literal\nVALUE := $(shell_flags) ${evaluation} $(filename)\nprobe: soruce.txt\n\t@:\n",
+      "working": "shell_flags = literal\nevaluation = literal\nfilename = literal\nVALUE := $(shell_flags) ${evaluation} $(filename)\nprobe: source.txt\n\t@:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "No rule to make target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
     }
   ]
 }

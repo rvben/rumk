@@ -388,6 +388,15 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
     }
     for file in project.files() {
         for statement in file.makefile.logical.statements() {
+            // Tab-prefixed comments may be recipe text even when the logical
+            // lexer classifies them as comments. Make expands their references.
+            let recipe_comment =
+                statement.kind == LogicalKind::Comment && statement.text().starts_with('\t');
+            if statement.kind == LogicalKind::Blank
+                || (statement.kind == LogicalKind::Comment && !recipe_comment)
+            {
+                continue;
+            }
             let activity = project.evaluation().activity(file.id, statement.start_line);
             if activity == Truth::False {
                 continue;
@@ -395,16 +404,30 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
             if activity == Truth::Unknown {
                 add("unknown_activity");
             }
-            let text = statement.text().trim_start();
+            let raw = statement.text().trim_start();
+            // Make comments are inert, but a recipe's shell comment and a
+            // define body's '#' are still subject to Make expansion.
+            let text = if recipe_comment
+                || matches!(
+                    statement.kind,
+                    LogicalKind::Recipe | LogicalKind::DefineBody
+                )
+                || (statement.kind == LogicalKind::Rule
+                    && crate::logical::inline_recipe_separator(raw).is_some())
+            {
+                raw
+            } else {
+                crate::logical::strip_top_level_comment(raw)
+            };
             if matches!(statement.kind, LogicalKind::Unknown) {
                 add("opaque_syntax");
             }
-            for (round, brace, reason) in [
-                ("$(eval", "${eval", "eval_function"),
-                ("$(shell", "${shell", "shell_function"),
-                ("$(file", "${file", "file_function"),
+            for (function, reason) in [
+                ("eval", "eval_function"),
+                ("shell", "shell_function"),
+                ("file", "file_function"),
             ] {
-                if text.contains(round) || text.contains(brace) {
+                if may_call_function(text, function) {
                     add(reason);
                 }
             }
@@ -436,6 +459,19 @@ fn root_blockers(project: &Project) -> BTreeMap<&'static str, usize> {
         }
     }
     reasons
+}
+
+// Keep nested and dollar-escaped calls: deferred expansion can make them
+// executable later. Only discard prefixes proven to be ordinary variable names.
+fn may_call_function(text: &str, function: &str) -> bool {
+    ["$(", "${"].iter().any(|opening| {
+        text.match_indices(opening).any(|(offset, _)| {
+            text[offset + 2..]
+                .strip_prefix(function)
+                .and_then(|tail| tail.chars().next())
+                .is_some_and(|next| next.is_ascii_whitespace() || matches!(next, ')' | '}'))
+        })
+    })
 }
 
 // Bound declaration and prerequisite work per checked edge. Exhaustion is
