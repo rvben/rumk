@@ -276,6 +276,58 @@ impl Rule for InvalidSyntax {
         RuleCategory::Syntax
     }
 
+    fn project_aware(&self) -> bool {
+        true
+    }
+
+    fn check_project(&self, project: &crate::project::Project) -> Vec<Diagnostic> {
+        project
+            .files()
+            .iter()
+            .flat_map(|file| {
+                if file.makefile.syntax_errors.is_empty() {
+                    return Vec::new();
+                }
+                let statements: std::collections::BTreeMap<_, _> = file.makefile.logical
+                    .statements().iter().map(|statement| (statement.start_line, statement)).collect();
+                // Make tracks conditional nesting even in skipped branches. Other
+                // syntax only fails if Make actually reads the offending statement.
+                let structural: std::collections::BTreeSet<_> = file
+                    .makefile
+                    .syntax_errors
+                    .iter()
+                    .filter(|error| {
+                        matches!(
+                            error.kind,
+                            SyntaxErrorKind::UnterminatedConditional { .. }
+                                | SyntaxErrorKind::UnterminatedDefine { .. }
+                                | SyntaxErrorKind::UnexpectedEndef
+                                | SyntaxErrorKind::UnexpectedElse
+                                | SyntaxErrorKind::UnexpectedEndif
+                                | SyntaxErrorKind::SecondElse
+                        )
+                    })
+                    .map(|error| (error.line, error.column))
+                    .collect();
+                self.check(&file.makefile, &file.content)
+                    .into_iter()
+                    .filter(|diagnostic| {
+                        let statement = statements.range(..=diagnostic.line).next_back().map(|(_, statement)| *statement);
+                        structural.contains(&(diagnostic.line, diagnostic.column))
+                            // The condition expression itself is read before its
+                            // branch activity is determined. Continuation errors
+                            // inherit the activity of their logical statement.
+                            || statement.is_some_and(|statement| {
+                                matches!(statement.kind, crate::logical::LogicalKind::Conditional(_))
+                                    || project.evaluation().activity(file.id, statement.start_line) == crate::eval::Truth::True
+                            })
+                    })
+                    .map(|diagnostic| diagnostic.with_source(file.path.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let mut expansions = None;
         makefile
