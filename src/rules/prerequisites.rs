@@ -392,10 +392,10 @@ fn pattern_producer(
                     // the target table. Do not assume those names are unrelated.
                     return true;
                 };
-                let Some(candidate) = candidate.to_str() else {
+                let Some(candidate) = make_path(candidate) else {
                     return true;
                 };
-                let candidate = normalized(candidate);
+                let candidate = normalized(&candidate);
                 let pattern = normalized(pattern);
                 let full_candidate = candidate;
                 let candidate = if pattern.contains('/') {
@@ -448,10 +448,10 @@ fn pattern_producer(
                 let prefix = pattern.split('%').next().unwrap_or("");
                 for base in [filename, stem] {
                     let source_prefix = parent.join(format!("{base}."));
-                    let Some(source_prefix) = source_prefix.to_str() else {
+                    let Some(source_prefix) = make_path(&source_prefix) else {
                         return true;
                     };
-                    if source_prefix.starts_with(prefix) || prefix.starts_with(source_prefix) {
+                    if source_prefix.starts_with(prefix) || prefix.starts_with(&*source_prefix) {
                         return true;
                     }
                 }
@@ -463,9 +463,7 @@ fn pattern_producer(
                 ]
                 .iter()
                 .any(|source| {
-                    source
-                        .to_str()
-                        .is_none_or(|source| pattern_stem(pattern, source).is_some())
+                    make_path(source).is_none_or(|source| pattern_stem(pattern, &source).is_some())
                 })
             })
         })
@@ -506,6 +504,9 @@ fn declaration_may_build(
                     return true;
                 };
                 *budget = remaining;
+                if edge.prerequisite.contains('\\') {
+                    return true;
+                }
                 let input = edge.prerequisite.replacen('%', stem, 1);
                 // Only prerequisite patterns regain the stripped directory;
                 // literal inputs stay relative to the working directory.
@@ -514,10 +515,10 @@ fn declaration_may_build(
                 } else {
                     PathBuf::from(input)
                 };
-                let Some(input) = input.to_str() else {
+                let Some(input) = make_path(&input) else {
                     return true;
                 };
-                let input = normalized(input);
+                let input = normalized(&input);
                 !literal(input)
                     || project
                         .analysis()
@@ -531,6 +532,19 @@ fn declaration_may_build(
                         && (plausible_implicit_input(project, input, directories)
                             || pattern_producer(project, input, directories, false, budget)))
             })
+    })
+}
+
+// Paths assembled by the host must use Make's slash spelling when compared
+// with target names. Do not rewrite raw Make expressions, where backslashes
+// can be escapes rather than directory separators.
+fn make_path(path: &Path) -> Option<std::borrow::Cow<'_, str>> {
+    path.to_str().map(|name| {
+        if cfg!(windows) {
+            std::borrow::Cow::Owned(name.replace('\\', "/"))
+        } else {
+            std::borrow::Cow::Borrowed(name)
+        }
     })
 }
 

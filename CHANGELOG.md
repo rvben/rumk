@@ -54,6 +54,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Fixed
 
+- Windows prerequisite analysis compares host-generated paths using Make's slash spelling,
+  preserving possible VPATH and pattern producers instead of reporting false missing inputs.
 - GNU Make compatibility for inline recipes, assignment modifiers and flavors, target-specific
   bindings, escaped paths, byte order marks, nested references, and expansion limits.
 - Include-producer analysis respects pattern chains, terminal rules, static pattern declarations,
