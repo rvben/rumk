@@ -39,3 +39,9 @@ class BenchmarkTest(unittest.TestCase):
         self.assertIsNone(report["median_seconds"])
         self.assertIsNone(report["median_peak_rss_bytes"])
         self.assertEqual(report["timed_out_samples"], 1)
+
+    def test_failed_executable_launch_has_no_performance_score(self):
+        report = BENCH.summary([{"seconds": 0.001, "peak_rss_bytes": 100, "exit_code": 127}])
+        self.assertIsNone(report["median_seconds"])
+        self.assertIsNone(report["median_peak_rss_bytes"])
+        self.assertEqual(report["launch_failure_samples"], 1)

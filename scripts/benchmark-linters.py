@@ -77,9 +77,11 @@ def measured(command, directory, timeout):
 def summary(samples):
     memory = [s["peak_rss_bytes"] for s in samples if s["peak_rss_bytes"] is not None]
     timeouts = sum(s.get("timed_out", False) for s in samples)
-    return {"median_seconds": None if timeouts else statistics.median(s["seconds"] for s in samples),
-            "median_peak_rss_bytes": statistics.median(memory) if not timeouts and len(memory) == len(samples) else None,
-            "timed_out_samples": timeouts,
+    launch_failures = sum(s["exit_code"] in (126, 127) for s in samples)
+    incomplete = timeouts or launch_failures
+    return {"median_seconds": None if incomplete else statistics.median(s["seconds"] for s in samples),
+            "median_peak_rss_bytes": statistics.median(memory) if not incomplete and len(memory) == len(samples) else None,
+            "timed_out_samples": timeouts, "launch_failure_samples": launch_failures,
             "exit_codes": sorted(set(s["exit_code"] for s in samples if s["exit_code"] is not None)), "samples": samples}
 
 
@@ -137,16 +139,21 @@ def benchmark(binaries, projects, manifest, runs, warmups, timeout):
             }
             records = {tool: [] for tool in binaries}
             observations = {}
-            timed_out_tools = set()
+            stopped_tools = set()
             for iteration in range(runs + warmups):
                 for tool in list(binaries)[::1 if iteration % 2 == 0 else -1]:
-                    if tool in timed_out_tools:
+                    if tool in stopped_tools:
                         continue
                     result = measured([binaries[tool], *commands[tool]], directory, timeout)
                     if COMPARE.snapshot(directory) != before:
                         raise RuntimeError(f"{tool} mutated {project.name} during checking")
+                    if result["exit_code"] in (126, 127):
+                        stopped_tools.add(tool)
+                        records[tool].append(result)
+                        report["failures"].append(f"Executable failed to start: {project.name}/{tool}")
+                        continue
                     if result["timed_out"]:
-                        timed_out_tools.add(tool)
+                        stopped_tools.add(tool)
                         records[tool].append(result)
                         report["resource_limits"].append(f"{project.name}/{tool} exceeded {timeout}s; remaining repetitions skipped")
                         continue
@@ -156,9 +163,16 @@ def benchmark(binaries, projects, manifest, runs, warmups, timeout):
                     observations[tool] = observation
                     if iteration >= warmups:
                         records[tool].append(result)
-            print(f"Measured {project.name}; timed out: {', '.join(sorted(timed_out_tools)) or 'none'}", flush=True)
+            print(f"Measured {project.name}; stopped early: {', '.join(sorted(stopped_tools)) or 'none'}", flush=True)
             report["projects"][project.name] = {"revision": revision, "inputs": before, "entry": entry,
                 "tools": {tool: dict(summary(samples), command=[tool, *(arg.replace(str(directory), "<project>") for arg in commands[tool])]) for tool, samples in records.items()}}
+    for tool, binary in binaries.items():
+        try:
+            unchanged = hashlib.sha256(Path(binary).read_bytes()).hexdigest() == report["tools"][tool]["executable_sha256"]
+        except OSError:
+            unchanged = False
+        if not unchanged:
+            report["failures"].append(f"Executable changed or disappeared during measurement: {tool}")
     return report
 
 
@@ -185,7 +199,7 @@ def main():
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     for project, record in report["projects"].items():
         for tool, result in record["tools"].items():
-            timing = "timeout (no median)" if result["median_seconds"] is None else f"{result['median_seconds']*1000:.2f} ms"
+            timing = "incomplete (no median)" if result["median_seconds"] is None else f"{result['median_seconds']*1000:.2f} ms"
             print(f"{project}/{tool}: {timing}, RSS {result['median_peak_rss_bytes']} bytes, exits {result['exit_codes']}")
     return bool(report["failures"])
 

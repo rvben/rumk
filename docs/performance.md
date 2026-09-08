@@ -21,7 +21,7 @@ into a temporary directory. It checks the root Makefile with each tool's static
 mode, never invoking Make or upstream recipes. Input hashes before and after
 every command detect mutations. Explicit configurations isolate the measured
 profiles from personal configuration. Competitor versions and executable hashes
-are recorded; dependencies of interpreter-based executables are not fully pinned.
+are recorded and rechecked after measurement; dependencies of interpreter-based executables are not fully pinned.
 
 Five measured samples follow two warmups, alternating tool order. Wall time
 includes process startup, linting, output serialization, and the system `time`
@@ -40,5 +40,7 @@ turn their timings into an equal-feature ranking. Compare raw samples, workload
 size, output, and machine load. Stable diagnostics are checked between repetitions;
 checkmake's JSON order is normalized without dropping duplicates.
 
-Reports stay outside version control. Re-run on the same machine with matching
+Use an isolated release binary when other work may rebuild or clean `target/`.
+Changed or missing executables invalidate the report; launch failures receive no
+performance median. Reports stay outside version control. Re-run on the same machine with matching
 input and executable hashes to assess variance before claiming an improvement.
