@@ -83,5 +83,6 @@ exports.run = async () => {
   await settings.update('path', originalPath, vscode.ConfigurationTarget.Workspace);
   await vscode.commands.executeCommand('rumk.restartServer');
   await until(() => vscode.languages.getDiagnostics(second.uri).some(d => (d.code?.value || d.code) === 'MK001'), 'correcting executable path did not recover');
+  await require('./fixes.cjs').run(folders[0].uri, until);
   console.log('Rumk extension integration checks passed.');
 };
