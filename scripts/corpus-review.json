@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "profile": {
+    "extra_rules": [
+      "MK216",
+      "MK217"
+    ],
+    "external_variables": []
+  },
+  "cases": [
+    {
+      "id": "redis-conditional-guard",
+      "project": "redis",
+      "revision": "60b4364fef859de5c639546bcdd08091876f502c",
+      "root": "modules/common.mk",
+      "root_sha256": "ccfc8533a510e1ae2ed381dd8b311726d21652af1c242a64642cdd41189ac7f3",
+      "file": "modules/common.mk",
+      "file_sha256": "ccfc8533a510e1ae2ed381dd8b311726d21652af1c242a64642cdd41189ac7f3",
+      "rule": "MK006",
+      "line": 41,
+      "column": 1,
+      "classification": "false_positive",
+      "reason": "The tab-prefixed error expression is inside a branch whose architecture value comes from a shell function. Rumk cannot prove that Make reads this branch. Authored conditional-syntax reductions distinguish active, inactive, and unknown guards."
+    },
+    {
+      "id": "lua-all-stamp",
+      "project": "lua",
+      "revision": "7579fc9d7ed90240487251dfb69168f8e64e9294",
+      "root": "makefile",
+      "root_sha256": "d3f3235ee44daaf87f2e69ddf757fb13fccf5018313c6992d922feb4b6b8f2f3",
+      "file": "makefile",
+      "file_sha256": "d3f3235ee44daaf87f2e69ddf757fb13fccf5018313c6992d922feb4b6b8f2f3",
+      "rule": "MK201",
+      "line": 113,
+      "column": 1,
+      "classification": "partly_false_positive",
+      "reason": "The grouped finding incorrectly includes all: its recipe touches the literal all stamp file. clean in the same finding remains conventional command advice. Stamp-output regressions preserve the file-target behavior."
+    },
+    {
+      "id": "hiredis-recursive-coverage",
+      "project": "redis",
+      "revision": "60b4364fef859de5c639546bcdd08091876f502c",
+      "root": "deps/hiredis/Makefile",
+      "root_sha256": "003275c391c78ffc8d52524320968e98773be6b7ad3517edc901e6c33eb4b558",
+      "file": "deps/hiredis/Makefile",
+      "file_sha256": "003275c391c78ffc8d52524320968e98773be6b7ad3517edc901e6c33eb4b558",
+      "rule": "MK203",
+      "line": 350,
+      "column": 2,
+      "classification": "actionable",
+      "reason": "The coverage recipe directly invokes make check while nearby recipes use $(MAKE). The recursive-dry-run GNU behavior pair demonstrates the recursive-command behavior lost by this spelling; no upstream build was executed."
+    },
+    {
+      "id": "zstd-library-refresh",
+      "project": "zstd",
+      "revision": "d9c0c7e2cf8a8bf9fb98d3bee546dcf8dc9ac59a",
+      "root": "contrib/diagnose_corruption/Makefile",
+      "root_sha256": "5b17879fb741e34891569bfa4a0b69a234826bfd0bd9332bc13f60babcee96f9",
+      "file": "contrib/diagnose_corruption/Makefile",
+      "file_sha256": "5b17879fb741e34891569bfa4a0b69a234826bfd0bd9332bc13f60babcee96f9",
+      "rule": "MK217",
+      "line": 30,
+      "column": 1,
+      "classification": "intentional",
+      "reason": "The prerequisite library is explicitly declared phony and its recipe delegates freshness checking to a sub-make. The rebuild edge is real; replacing it with order-only could skip necessary relinking. This is an explicit build policy, not a confirmed defect."
+    },
+    {
+      "id": "cjson-test-alias",
+      "project": "cJSON",
+      "revision": "fb16e5cf358798aabb049655975cde8427101056",
+      "root": "Makefile",
+      "root_sha256": "410bdeb55e6b8ecd49a6d34f61ce53e2e7643136c8aebe148ba1baa28c505b94",
+      "file": "Makefile",
+      "file_sha256": "410bdeb55e6b8ecd49a6d34f61ce53e2e7643136c8aebe148ba1baa28c505b94",
+      "rule": "MK201",
+      "line": 79,
+      "column": 1,
+      "classification": "intentional",
+      "reason": "test depends on tests, which is declared phony. This prerequisite already forces the test recipe to run despite a same-named file. The missing .PHONY declaration is convention advice, not proof of a skipped test."
+    },
+    {
+      "id": "bbolt-build-command",
+      "project": "bbolt",
+      "revision": "e8305cf81c86819f78a04f4e119aad25495af018",
+      "root": "Makefile",
+      "root_sha256": "3fb950b2a03b27135bd7eb610e10402d32f3c7eef3f3ccce7be47f753d54ee1e",
+      "file": "Makefile",
+      "file_sha256": "3fb950b2a03b27135bd7eb610e10402d32f3c7eef3f3ccce7be47f753d54ee1e",
+      "rule": "MK201",
+      "line": 68,
+      "column": 1,
+      "classification": "needs_context",
+      "reason": "build invokes go build with an output below bin rather than producing build itself. The naming heuristic applies, but whether collisions with a file named build matter is project intent; no build failure is established."
+    },
+    {
+      "id": "lua-test-libraries-stamp",
+      "project": "lua",
+      "revision": "7579fc9d7ed90240487251dfb69168f8e64e9294",
+      "root": "testes/libs/makefile",
+      "root_sha256": "dd2d944547e929033d8a8117719575dba135299d706cc9813e5304f9904b28c2",
+      "file": "testes/libs/makefile",
+      "file_sha256": "dd2d944547e929033d8a8117719575dba135299d706cc9813e5304f9904b28c2",
+      "rule": "MK201",
+      "line": 11,
+      "column": 1,
+      "classification": "false_positive",
+      "reason": "The all recipe touches the literal all stamp after producing the test libraries. Declaring it phony discards the intended timestamp behavior; the stamp-output GNU query regression verifies the distinction."
+    }
+  ]
+}

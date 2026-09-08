@@ -40,3 +40,9 @@ Without that configuration, its working control deliberately warns. The
 `expected_rumk_control_flag` field records this; scores still use observed output.
 The Coccinelle variable pair reduces a nearby definition/reference spelling
 mismatch from the pinned Git Makefile. No upstream build is executed.
+
+The conditional-syntax pairs reduce Redis's architecture guard: a definitely
+active orphan recipe fails, while static and shell-derived inactive controls
+succeed. Rumk never evaluates the shell expression; unknown branch activity
+withholds a definite syntax error. These pairs supplement the source-hash-bound
+production review labels.

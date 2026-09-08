@@ -22,5 +22,17 @@
   "musl": {
     "repository": "https://git.musl-libc.org/git/musl",
     "revision": "5e9972eaef08ccf55dabe254ac829a30329793d3"
+  },
+  "xxHash": {
+    "repository": "https://github.com/Cyan4973/xxHash",
+    "revision": "c0b5ea995d66691734b1a79ad89e73a0d2fd5a53"
+  },
+  "cJSON": {
+    "repository": "https://github.com/DaveGamble/cJSON",
+    "revision": "fb16e5cf358798aabb049655975cde8427101056"
+  },
+  "tree-sitter": {
+    "repository": "https://github.com/tree-sitter/tree-sitter",
+    "revision": "8351896bea2e3359ed2fd893ffb051e9f9ebc69b"
   }
 }

@@ -1027,6 +1027,91 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": true
+    },
+    {
+      "name": "conditional-syntax-static",
+      "title": "A guarded orphan recipe only fails when its branch is read",
+      "dialect": "GNU Make",
+      "rule": "MK006",
+      "files": {},
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "MODE =\nifeq ($(MODE),)\n\techo invalid\nendif\nprobe:; @:\n",
+      "working": "MODE = native\nifeq ($(MODE),)\n\techo invalid\nendif\nprobe:; @:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "before first target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "before first target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "redis/modules/common.mk:39-42 at the pinned corpus revision"
+    },
+    {
+      "name": "conditional-syntax-dynamic",
+      "title": "A guarded orphan recipe only fails when its branch is read",
+      "dialect": "GNU Make",
+      "rule": "MK006",
+      "files": {},
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "MODE =\nifeq ($(MODE),)\n\techo invalid\nendif\nprobe:; @:\n",
+      "working": "MODE := $(shell printf native)\nifeq ($(MODE),)\n\techo invalid\nendif\nprobe:; @:\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "before first target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": ":\n",
+          "stderr_absent": "before first target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "redis/modules/common.mk:39-42 at the pinned corpus revision"
+    },
+    {
+      "name": "relative-library-is-not-suffix-rule",
+      "title": "A relative library target must not hide an unrelated missing input",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "source.txt": "input\n"
+      },
+      "args": [
+        "--dry-run",
+        "probe"
+      ],
+      "broken": "probe: soruce.txt ../lib/library.a\n../lib/library.a:;\n",
+      "working": "probe: source.txt ../lib/library.a\n../lib/library.a:;\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "No rule to make target"
+        },
+        "working": {
+          "exit_code": 0,
+          "stderr_absent": "No rule to make target"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "source_reduction": "zstd/contrib/diagnose_corruption/Makefile:26-31 at the pinned corpus revision"
     }
   ]
 }
