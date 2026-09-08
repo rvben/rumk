@@ -9,6 +9,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ### Added
 
+- Per-Makefile configuration discovery for CLI linting, formatting, and coverage,
+  with local directory filters and command-line overrides applied to nested configs.
+- `rumk config file <PATH> --explain` reports the selected, inherited, and shadowed
+  configurations; CLI discovery warns once per selected config about shadowed files.
+- `rumk init --pyproject` safely adds settings to existing Python project files,
+  preserving comments, formatting, permissions, and other tools' settings.
+- Configuration errors identify inherited files and use namespaced pyproject settings.
+
 - Configuration discovery and explicit loading support `[tool.rumk]` in
   `pyproject.toml`, with existing precedence, inheritance, and project boundaries.
   `rumk init --output pyproject.toml` creates namespaced settings and atomically

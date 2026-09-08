@@ -6,7 +6,9 @@ The server provides diagnostics, quick fixes, `source.fixAll.rumk`, document
 formatting, and target/variable symbols. It uses the same configuration discovery,
 rules, suppressions, fix allowlists, and safety policy as the CLI. Start with
 `rumk --config path/to/rumk.toml server` or `rumk --no-config server` to override
-discovery. Formatting uses the safe layout rules selected in your configuration.
+discovery. Both CLI and editor resolve configuration from each Makefile's directory,
+including `[tool.rumk]` in nested `pyproject.toml` files. An explicit `--config` applies to
+all files. Formatting uses the safe layout rules selected in your configuration.
 
 Open buffers override disk contents throughout the include graph, including new
 unsaved files named by static includes. Wildcard discovery still uses disk. Buffer changes invalidate dependent diagnostics. Closing a

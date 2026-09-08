@@ -248,9 +248,16 @@ The versioned schema is also included in Cargo packages and native release archi
 
 Configuration discovery checks `.rumk.toml`, `rumk.toml`, `.config/rumk.toml`, and
 `pyproject.toml`, in that order in each directory while walking upward, stopping at a Git
-project boundary. The first matching configuration is used; files are not automatically
-merged. A `pyproject.toml` without `[tool.rumk]` is skipped. Use `--config <PATH>` for an explicit file or
-`--no-config`/`--isolated` for built-in defaults.
+project boundary. Configuration is resolved per Makefile for linting, formatting, and
+coverage, so a nested project uses its nearest configuration regardless of where you run
+Rumk. Directory discovery also uses local include, exclude, and gitignore settings.
+Ignored and hidden directories are not traversed unless explicitly requested.
+The first matching configuration is used; files are not automatically merged. When multiple
+Rumk configurations share a directory, the CLI warns about the shadowed files (unless
+`--silent` is set). A `pyproject.toml` without `[tool.rumk]` is skipped. Use `--config <PATH>` for an explicit file or
+`--no-config`/`--isolated` for built-in defaults. An explicit config applies to every input,
+and command-line setting overrides apply to every discovered configuration. Relative paths
+inside an explicit config still resolve from that config's directory.
 
 In `pyproject.toml`, put the same settings under `[tool.rumk]`:
 
@@ -265,7 +272,19 @@ line-length = 100
 `--config pyproject.toml` also reads this section and reports an error if it is missing.
 `rumk init` continues to create a standalone `.rumk.toml` by default.
 `rumk init --output pyproject.toml` creates a new file with namespaced settings;
-it refuses to overwrite an existing project file.
+it refuses to overwrite an existing project file. Use `rumk init --pyproject` to create
+or add settings to an existing `pyproject.toml`, preserving comments, formatting, and other
+tools' settings. It refuses an existing `tool.rumk` section or invalid TOML, validates the
+result before writing, and atomically replaces an existing file while preserving permissions.
+
+To see which config applies to a file or directory, including explicit inheritance and
+shadowed files:
+
+```bash
+rumk config file nested/Makefile --explain
+```
+
+Without `--explain`, the command prints only the selected file path (or a defaults message).
 
 Configurations can inherit another file with `extends = "../.rumk.toml"`; nested tables are
 merged, child values win, relative paths resolve from the extending file, and cycles are rejected.

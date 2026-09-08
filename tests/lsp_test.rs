@@ -387,3 +387,38 @@ fn unsaved_include_resolves_through_symlinked_workspace() {
     assert_eq!(server.diagnostics(&root_uri, 1), json!([]));
     server.stop();
 }
+
+#[test]
+fn nested_pyproject_matches_cli_and_reloads_after_configuration_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let nested = dir.path().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    std::fs::write(dir.path().join(".rumk.toml"), "[global]\nenable=[]\n").unwrap();
+    let config = nested.join("pyproject.toml");
+    std::fs::write(&config, "[tool.rumk.global]\nenable=['MK001']\n").unwrap();
+    let path = nested.join("Makefile");
+    let source = "all:\n    echo hi\n";
+    std::fs::write(&path, source).unwrap();
+    let cli = Command::new(env!("CARGO_BIN_EXE_rumk"))
+        .current_dir(dir.path())
+        .args(["check", ".", "--output-format", "json"])
+        .output()
+        .unwrap();
+    let cli: Value = serde_json::from_slice(&cli.stdout).unwrap();
+    let file_uri = uri(&path);
+    let mut server = Server::new(dir.path());
+    server.open(&file_uri, source, 1);
+    let reported = server.diagnostics(&file_uri, 1);
+    assert_eq!(
+        reported.as_array().unwrap().len(),
+        cli.as_array().unwrap().len()
+    );
+    assert_eq!(reported[0]["code"], cli[0]["rule"]);
+    std::fs::write(&config, "[tool.rumk.global]\nenable=[]\n").unwrap();
+    server.send(json!({"method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":uri(&config),"type":2}]}}));
+    assert_eq!(server.diagnostics(&file_uri, 1), json!([]));
+    std::fs::write(&config, "[tool.rumk.global]\nenable=['MK001']\n").unwrap();
+    server.send(json!({"method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":uri(&config),"type":2}]}}));
+    assert_eq!(server.diagnostics(&file_uri, 1)[0]["code"], "MK001");
+    server.stop();
+}

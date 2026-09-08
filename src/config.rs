@@ -19,6 +19,8 @@ pub struct Config {
     settings: BTreeMap<String, RuleSettings>,
     per_file_ignores: BTreeMap<String, Vec<String>>,
     source_path: Option<PathBuf>,
+    source_paths: Vec<PathBuf>,
+    shadowed_paths: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -88,10 +90,15 @@ impl Config {
     }
 
     fn load_file(path: &Path) -> Result<Option<Self>> {
-        let value = load_config_value(path, &mut Vec::new())
+        let mut sources = Vec::new();
+        let value = load_config_value(path, &mut Vec::new(), &mut sources)
             .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
         value
-            .map(|value| Self::from_value(value, Some(path.to_path_buf())))
+            .map(|value| -> Result<Self> {
+                let mut config = Self::from_value(value, Some(path.to_path_buf()))?;
+                config.source_paths = sources;
+                Ok(config)
+            })
             .transpose()
             .with_context(|| format!("Failed to parse config file: {}", path.display()))
     }
@@ -101,6 +108,10 @@ impl Config {
     }
 
     pub fn find_from(start: &Path) -> Result<Self> {
+        let start = std::env::current_dir()
+            .context("Failed to determine current directory")?
+            .join(start);
+        let start = start.as_path();
         let mut directory = if start.is_file() {
             start.parent().unwrap_or(start).to_path_buf()
         } else {
@@ -114,9 +125,30 @@ impl Config {
                 directory.join(".config/rumk.toml"),
                 directory.join("pyproject.toml"),
             ];
-            for candidate in candidates {
+            for (index, candidate) in candidates.iter().enumerate() {
                 if candidate.is_file() {
-                    if let Some(config) = Self::load_file(&candidate)? {
+                    if let Some(mut config) = Self::load_file(candidate)? {
+                        config.shadowed_paths = candidates[index + 1..]
+                            .iter()
+                            .filter(|path| {
+                                path.is_file()
+                                    && (path
+                                        .file_name()
+                                        .is_none_or(|name| name != "pyproject.toml")
+                                        || std::fs::read_to_string(path)
+                                            .ok()
+                                            .and_then(|text| {
+                                                toml::from_str::<toml::Value>(&text).ok()
+                                            })
+                                            .is_some_and(|value| {
+                                                value
+                                                    .get("tool")
+                                                    .and_then(|tool| tool.get("rumk"))
+                                                    .is_some()
+                                            }))
+                            })
+                            .cloned()
+                            .collect();
                         return Ok(config);
                     }
                 }
@@ -132,6 +164,16 @@ impl Config {
 
     pub fn source_path(&self) -> Option<&Path> {
         self.source_path.as_deref()
+    }
+
+    /// Selected configuration followed by its explicit inheritance chain.
+    pub fn source_paths(&self) -> &[PathBuf] {
+        &self.source_paths
+    }
+
+    /// Lower-priority configurations in the selected configuration's directory.
+    pub fn shadowed_paths(&self) -> &[PathBuf] {
+        &self.shadowed_paths
     }
 
     pub fn project_options(&self, makefile: &Path) -> ProjectOptions {
@@ -400,6 +442,15 @@ impl Config {
     }
 
     fn from_value(value: toml::Value, source_path: Option<PathBuf>) -> Result<Self> {
+        let prefix = if source_path
+            .as_ref()
+            .and_then(|path| path.file_name())
+            .is_some_and(|name| name == "pyproject.toml")
+        {
+            "tool.rumk."
+        } else {
+            ""
+        };
         let table = value
             .as_table()
             .context("Configuration root must be a TOML table")?;
@@ -407,7 +458,8 @@ impl Config {
             .get("global")
             .cloned()
             .map(toml::Value::try_into)
-            .transpose()?
+            .transpose()
+            .with_context(|| format!("Invalid {prefix}global settings"))?
             .unwrap_or_default();
         validate_rule_ids(&global.disable)?;
         validate_rule_ids(&global.extend_enable)?;
@@ -453,12 +505,14 @@ impl Config {
             }
             let rule_id = key.to_ascii_uppercase();
             if !ALL_RULES.contains(&rule_id.as_str()) {
-                bail!("Unknown configuration section: {key}");
+                bail!("Unknown configuration section: {prefix}{key}");
             }
-            parse_rule_section(&rule_id, value, &mut settings)?;
+            parse_rule_section(&rule_id, value, &mut settings)
+                .with_context(|| format!("Invalid {prefix}{key} settings"))?;
         }
 
         Self::from_parts(global, settings, per_file_ignores, source_path)
+            .map_err(|error| anyhow::anyhow!("{prefix}{error}"))
     }
 
     fn from_parts(
@@ -473,6 +527,8 @@ impl Config {
             settings,
             per_file_ignores,
             source_path,
+            source_paths: Vec::new(),
+            shadowed_paths: Vec::new(),
         };
         config.rebuild_rules()?;
         Ok(config)
@@ -509,7 +565,11 @@ impl Config {
     }
 }
 
-fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<Option<toml::Value>> {
+fn load_config_value(
+    path: &Path,
+    stack: &mut Vec<PathBuf>,
+    sources: &mut Vec<PathBuf>,
+) -> Result<Option<toml::Value>> {
     let identity = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if stack.contains(&identity) {
         let cycle = stack
@@ -539,11 +599,14 @@ fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<Option<tom
         }
         value = settings.clone();
     }
+    sources.push(path.to_path_buf());
     let extends = value
         .as_table_mut()
         .context("Configuration root must be a TOML table")?
         .remove("extends");
 
+    Config::from_value(value.clone(), Some(path.to_path_buf()))
+        .with_context(|| format!("Invalid configuration in {}", path.display()))?;
     if let Some(extends) = extends {
         let extends = extends.as_str().context("extends must be a string path")?;
         let parent = path.parent().unwrap_or_else(|| Path::new("."));
@@ -555,7 +618,7 @@ fn load_config_value(path: &Path, stack: &mut Vec<PathBuf>) -> Result<Option<tom
                 parent.join(candidate)
             }
         };
-        let mut base = load_config_value(&extended_path, stack)
+        let mut base = load_config_value(&extended_path, stack, sources)
             .with_context(|| format!("Failed to extend configuration from {extends}"))?
             .with_context(|| format!("No [tool.rumk] table in {}", extended_path.display()))?;
         merge_toml(&mut base, value);
@@ -1066,13 +1129,14 @@ fn integer_option(
     let Some(value) = settings.options.get(name) else {
         return Ok(default);
     };
+    let name = public_option_key(rule_id, name);
     let Some(value) = value.as_integer() else {
-        bail!("Option '{name}' for rule {rule_id} must be an integer");
+        bail!("{rule_id}.{name} must be an integer");
     };
     usize::try_from(value)
         .ok()
         .filter(|value| *value > 0)
-        .with_context(|| format!("Option '{name}' for rule {rule_id} must be positive"))
+        .with_context(|| format!("{rule_id}.{name} must be positive"))
 }
 
 fn boolean_option(
@@ -1086,7 +1150,7 @@ fn boolean_option(
     };
     value
         .as_bool()
-        .with_context(|| format!("Option '{name}' for rule {rule_id} must be a boolean"))
+        .with_context(|| format!("{rule_id}.{name} must be a boolean"))
 }
 
 fn phony_placement_option(
@@ -1097,7 +1161,7 @@ fn phony_placement_option(
         return Ok(rules::best_practices::PhonyPlacement::Auto);
     };
     let Some(value) = value.as_str() else {
-        bail!("Option 'placement' for rule {rule_id} must be a string");
+        bail!("{rule_id}.placement must be a string");
     };
     match value.to_ascii_lowercase().replace('_', "-").as_str() {
         "auto" => Ok(rules::best_practices::PhonyPlacement::Auto),
@@ -1118,7 +1182,7 @@ fn naming_style_option(
         return Ok(default);
     };
     let Some(value) = value.as_str() else {
-        bail!("Option 'style' for rule {rule_id} must be a string");
+        bail!("{rule_id}.style must be a string");
     };
 
     match value.to_ascii_lowercase().replace('_', "-").as_str() {

@@ -60,6 +60,9 @@ enum Commands {
         /// Output file path
         #[arg(short, long, default_value = ".rumk.toml")]
         output: PathBuf,
+        /// Add [tool.rumk] to pyproject.toml, preserving existing content
+        #[arg(long, conflicts_with = "output")]
+        pyproject: bool,
     },
     /// Show information about a rule or list all rules
     Rule {
@@ -105,7 +108,13 @@ enum ConfigCommand {
     /// Query one effective configuration key
     Get { key: String },
     /// Show the loaded configuration file
-    File,
+    File {
+        /// File or directory whose configuration should be resolved
+        path: Option<PathBuf>,
+        /// Also show inherited and shadowed configuration files
+        #[arg(long)]
+        explain: bool,
+    },
 }
 
 #[derive(Args)]
@@ -370,11 +379,14 @@ fn run() -> Result<u8> {
 
     match cli.command {
         Commands::Server => rumk::lsp::serve(cli.config, cli.no_config),
-        Commands::Coverage { paths } => {
-            let config = load_config(cli.config.as_deref(), cli.no_config)?;
-            show_coverage(&paths, &config)
+        Commands::Coverage { paths } => show_coverage(&paths, cli.config.as_deref(), cli.no_config),
+        Commands::Init { output, pyproject } => {
+            if pyproject {
+                init_pyproject(Path::new("pyproject.toml"))
+            } else {
+                init_config(&output)
+            }
         }
-        Commands::Init { output } => init_config(&output),
         Commands::Rule {
             rule,
             fixable,
@@ -403,11 +415,24 @@ fn run() -> Result<u8> {
             if defaults && no_defaults {
                 bail!("--defaults and --no-defaults cannot be used together");
             }
-            let config = load_config(cli.config.as_deref(), cli.no_config)?;
+            let config = match &subcommand {
+                Some(ConfigCommand::File {
+                    path: Some(path), ..
+                }) if cli.config.is_none() && !cli.no_config => {
+                    let start = if path.is_dir() {
+                        path.as_path()
+                    } else {
+                        path.parent().unwrap_or(Path::new("."))
+                    };
+                    Config::find_from(start)?
+                }
+                _ => load_config(cli.config.as_deref(), cli.no_config)?,
+            };
+            warn_config(&config, false);
             show_config(&config, subcommand, defaults, no_defaults, output)
         }
         Commands::Check(args) => {
-            let mut config = load_input_config(cli.config.as_deref(), cli.no_config, &args.shared)?;
+            let mut config = load_run_config(cli.config.as_deref(), cli.no_config)?;
             apply_shared_args(&mut config, &args.shared, args.unsafe_fixes())?;
             let operation = if args.fix {
                 Operation::CheckFix
@@ -416,10 +441,18 @@ fn run() -> Result<u8> {
             } else {
                 Operation::Check
             };
-            run_files(args.paths, &config, &args.shared, operation, args.fail_on)
+            run_files(
+                args.paths.clone(),
+                &config,
+                &args.shared,
+                operation,
+                args.fail_on,
+                cli.config.is_none() && !cli.no_config,
+                args.unsafe_fixes(),
+            )
         }
         Commands::Fmt(args) => {
-            let mut config = load_input_config(cli.config.as_deref(), cli.no_config, &args.shared)?;
+            let mut config = load_run_config(cli.config.as_deref(), cli.no_config)?;
             // Formatting is not a decision about what Make does, so `fmt` never
             // applies a fix that can change it, whatever the configuration says.
             // `check --fix --unsafe-fixes` is where those are agreed to.
@@ -431,7 +464,15 @@ fn run() -> Result<u8> {
             } else {
                 Operation::Format
             };
-            run_files(args.paths, &config, &args.shared, operation, FailOn::Never)
+            run_files(
+                args.paths,
+                &config,
+                &args.shared,
+                operation,
+                FailOn::Never,
+                cli.config.is_none() && !cli.no_config,
+                Some(false),
+            )
         }
     }
 }
@@ -444,10 +485,28 @@ fn configure_color(color: Color) {
     }
 }
 
-fn show_coverage(paths: &[PathBuf], config: &Config) -> Result<u8> {
+fn show_coverage(paths: &[PathBuf], explicit: Option<&Path>, no_config: bool) -> Result<u8> {
+    let fixed = if explicit.is_some() || no_config {
+        Some(load_config(explicit, no_config)?)
+    } else {
+        None
+    };
+    let mut warned = BTreeSet::new();
     let mut roots = Vec::new();
     let mut failed = false;
     for path in paths {
+        let discovered;
+        let config = if let Some(config) = &fixed {
+            config
+        } else {
+            discovered = Config::find_from(path.parent().unwrap_or(Path::new(".")))?;
+            &discovered
+        };
+        if let Some(source) = config.source_path() {
+            if warned.insert(source.to_path_buf()) {
+                warn_config(config, false);
+            }
+        }
         let root = display_path(path);
         if config.is_path_ignored(path) {
             roots.push(serde_json::json!({"root":root,"ignored":true}));
@@ -500,14 +559,13 @@ fn load_config(path: Option<&Path>, no_config: bool) -> Result<Config> {
     }
 }
 
-fn load_input_config(path: Option<&Path>, no_config: bool, args: &SharedArgs) -> Result<Config> {
+fn load_run_config(path: Option<&Path>, no_config: bool) -> Result<Config> {
     if path.is_none() && !no_config {
-        if let Some(filename) = &args.stdin_filename {
-            let absolute = std::env::current_dir()?.join(filename);
-            return Config::find_from(absolute.parent().unwrap_or(Path::new(".")));
-        }
+        // Automatic discovery happens at each input, not at the invocation directory.
+        Ok(Config::default())
+    } else {
+        load_config(path, no_config)
     }
-    load_config(path, no_config)
 }
 
 fn apply_shared_args(
@@ -556,10 +614,24 @@ fn run_files(
     args: &SharedArgs,
     operation: Operation,
     fail_on: FailOn,
+    discover_config: bool,
+    unsafe_fixes: Option<bool>,
 ) -> Result<u8> {
     if paths.iter().any(|path| path == Path::new("-")) {
         if paths.len() != 1 {
             bail!("stdin ('-') cannot be combined with other paths");
+        }
+        if discover_config {
+            let mut config = Config::find_from(
+                args.stdin_filename
+                    .as_deref()
+                    .and_then(Path::parent)
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new(".")),
+            )?;
+            apply_shared_args(&mut config, args, unsafe_fixes)?;
+            warn_config(&config, args.silent);
+            return run_stdin(&config, args, operation, fail_on);
         }
         return run_stdin(config, args, operation, fail_on);
     }
@@ -573,10 +645,25 @@ fn run_files(
         bail!("--diff and --check require text output");
     }
 
+    let mut configurations = FileConfigurations {
+        fallback: config,
+        current_dir: std::env::current_dir().context("Failed to determine current directory")?,
+        discover: discover_config,
+        args,
+        unsafe_fixes,
+        cache: BTreeMap::new(),
+        warned: BTreeSet::new(),
+    };
     let Discovery {
         files,
         unreadable_paths,
-    } = discover_files(&paths, config)?;
+    } = discover_files(&paths, &mut configurations)?;
+    for path in files
+        .iter()
+        .chain(unreadable_paths.iter().map(|(path, _)| path))
+    {
+        configurations.for_file(path)?;
+    }
     let mut project_roots = paths
         .iter()
         .filter(|path| path.is_file())
@@ -602,8 +689,15 @@ fn run_files(
     let display = PathDisplay::default();
     let mut included_files = BTreeSet::new();
     let mut root_reports = BTreeMap::new();
-    if !operation.formats() && config.rules.iter().any(|rule| rule.project_aware()) {
+    if !operation.formats() {
         for root in &project_roots {
+            if !files.contains_key(root) {
+                continue;
+            }
+            let config = configurations.loaded_file(root);
+            if !config.rules.iter().any(|rule| rule.project_aware()) {
+                continue;
+            }
             let resolved = files
                 .get(root)
                 .cloned()
@@ -649,6 +743,7 @@ fn run_files(
         }
     }
     let process = |&(path, resolved): &(&PathBuf, &PathBuf)| {
+        let config = configurations.loaded_file(path);
         let project_root = project_roots.contains(path);
         let context = LintContext {
             config,
@@ -689,7 +784,13 @@ fn run_files(
             kind: path_kind(&path),
             error,
         };
-        unreadable_report(&path, config, &failure, &message, args.silent)
+        unreadable_report(
+            &path,
+            configurations.loaded_file(&path),
+            &failure,
+            &message,
+            args.silent,
+        )
     }));
     reports.sort_by(|left, right| left.path.cmp(&right.path));
     deduplicate_diagnostics(&mut reports);
@@ -856,12 +957,76 @@ struct Discovery {
     unreadable_paths: Vec<(PathBuf, std::io::Error)>,
 }
 
-fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
-    let filter = config.path_filter();
+/// Cache once per directory, before the parallel lint pass. CLI overrides are
+/// applied to every discovered configuration, including nested projects.
+struct FileConfigurations<'a> {
+    fallback: &'a Config,
+    current_dir: PathBuf,
+    discover: bool,
+    args: &'a SharedArgs,
+    unsafe_fixes: Option<bool>,
+    cache: BTreeMap<PathBuf, Config>,
+    warned: BTreeSet<PathBuf>,
+}
+
+impl FileConfigurations<'_> {
+    fn directory(&self, path: &Path) -> PathBuf {
+        self.current_dir.join(path)
+    }
+
+    fn for_directory(&mut self, directory: &Path) -> Result<&Config> {
+        if !self.discover {
+            return Ok(self.fallback);
+        }
+        let directory = self.directory(directory);
+        if !self.cache.contains_key(&directory) {
+            let mut config = Config::find_from(&directory)?;
+            apply_shared_args(&mut config, self.args, self.unsafe_fixes)?;
+            if let Some(source) = config.source_path() {
+                if self.warned.insert(source.to_path_buf()) {
+                    warn_config(&config, self.args.silent);
+                }
+            }
+            self.cache.insert(directory.clone(), config);
+        }
+        Ok(&self.cache[&directory])
+    }
+
+    fn for_file(&mut self, path: &Path) -> Result<&Config> {
+        self.for_directory(path.parent().unwrap_or(Path::new(".")))
+    }
+
+    fn loaded_file(&self, path: &Path) -> &Config {
+        if self.discover {
+            &self.cache[&self.directory(path.parent().unwrap_or(Path::new(".")))]
+        } else {
+            self.fallback
+        }
+    }
+}
+
+fn warn_config(config: &Config, silent: bool) {
+    if !silent && !config.shadowed_paths().is_empty() {
+        eprintln!(
+            "[config warning] using {}; ignoring {}",
+            config.source_path().unwrap().display(),
+            config
+                .shadowed_paths()
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
+fn discover_files(
+    paths: &[PathBuf],
+    configurations: &mut FileConfigurations<'_>,
+) -> Result<Discovery> {
     let mut files = BTreeSet::new();
     let mut unreadable_paths = Vec::new();
-    let current_dir = std::env::current_dir().context("Failed to determine current directory")?;
-
+    let mut directories = Vec::new();
     for path in paths {
         let metadata = match std::fs::metadata(path) {
             Ok(metadata) => metadata,
@@ -869,35 +1034,37 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
                 "Path '{}' is neither a file nor a directory",
                 path.display()
             ),
-            // A path Rumk may not even inspect, such as one below a directory
-            // it cannot search, was asked for by name: it is handed to the
-            // reader, which reports the failure as MK007, and the other paths
-            // are still checked. Its name says nothing about its type, so the
-            // Makefile-name filter does not apply.
             Err(_) => {
-                let relative = path.strip_prefix(&current_dir).unwrap_or(path);
-                if !filter.is_path_excluded(relative) {
+                if !configurations.for_file(path)?.is_path_excluded(path) {
                     files.insert(path.clone());
                 }
                 continue;
             }
         };
         if metadata.is_file() {
-            let relative = path.strip_prefix(&current_dir).unwrap_or(path);
-            if is_makefile(path) && !filter.is_path_excluded(relative) {
+            if is_makefile(path) && !configurations.for_file(path)?.is_path_excluded(path) {
                 files.insert(path.clone());
             }
-            continue;
-        }
-        if !metadata.is_dir() {
+        } else if metadata.is_dir() {
+            directories.push(path.clone());
+        } else {
             bail!(
                 "Path '{}' is neither a file nor a directory",
                 path.display()
             );
         }
-
-        let mut builder = WalkBuilder::new(path);
+    }
+    let mut visited = BTreeSet::new();
+    while let Some(directory) = directories.pop() {
+        if !visited.insert(configurations.directory(&directory)) {
+            continue;
+        }
+        let config = configurations.for_directory(&directory)?;
+        let mut builder = WalkBuilder::new(&directory);
+        // Walk one level at a time so child settings also govern gitignore.
+        // Ignored/hidden directories stay pruned unless explicitly requested.
         builder
+            .max_depth(Some(1))
             .git_ignore(config.global.respect_gitignore)
             .git_exclude(config.global.respect_gitignore)
             .git_global(config.global.respect_gitignore)
@@ -906,43 +1073,38 @@ fn discover_files(paths: &[PathBuf], config: &Config) -> Result<Discovery> {
         for entry in builder.build() {
             let entry = match entry {
                 Ok(entry) => entry,
-                // A path Rumk may not read can hide Makefiles, so the run
-                // reports it and walks on instead of aborting or reporting a
-                // success it cannot vouch for.
                 Err(error) => match unreadable_path(error) {
-                    Ok(unreadable) => {
-                        // A path the configuration excludes hides nothing the
-                        // run would have checked, so not reading it costs the
-                        // report nothing.
-                        let relative = unreadable
-                            .0
-                            .strip_prefix(path)
-                            .unwrap_or(&unreadable.0)
-                            .to_path_buf();
-                        if !filter.is_path_excluded(&relative)
-                            && !filter.excludes_everything_below(&relative)
+                    Ok((path, error)) => {
+                        let config = configurations.for_file(&path)?;
+                        if !config.is_path_excluded(&path)
+                            && !config.excludes_everything_below(&path)
                         {
-                            unreadable_paths.push(unreadable);
+                            unreadable_paths.push((path, error));
                         }
                         continue;
                     }
                     Err(error) => {
                         return Err(anyhow::Error::new(error)).with_context(|| {
-                            format!("Failed to walk directory: {}", path.display())
-                        });
+                            format!("Failed to walk directory: {}", directory.display())
+                        })
                     }
                 },
             };
-            if !entry.file_type().is_some_and(|kind| kind.is_file()) || !is_makefile(entry.path()) {
+            if entry.depth() == 0 {
                 continue;
             }
-            let relative = entry.path().strip_prefix(path).unwrap_or(entry.path());
-            if !filter.is_path_ignored(relative) {
+            if entry.file_type().is_some_and(|kind| kind.is_dir()) {
+                directories.push(entry.into_path());
+            } else if entry.file_type().is_some_and(|kind| kind.is_file())
+                && is_makefile(entry.path())
+                && !configurations
+                    .for_file(entry.path())?
+                    .is_path_ignored(entry.path())
+            {
                 files.insert(entry.into_path());
             }
         }
     }
-
     unreadable_paths.sort_by(|left, right| left.0.cmp(&right.0));
     unreadable_paths.dedup_by(|left, right| left.0 == right.0);
     Ok(Discovery {
@@ -1256,7 +1418,7 @@ fn with_byte_order_mark(text: &str, present: bool) -> std::borrow::Cow<'_, str> 
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     let permissions = std::fs::metadata(path)
-        .with_context(|| format!("Failed to inspect Makefile: {}", path.display()))?
+        .with_context(|| format!("Failed to inspect file: {}", path.display()))?
         .permissions();
     let mut temporary = tempfile::NamedTempFile::new_in(parent)
         .with_context(|| format!("Failed to create temporary file beside {}", path.display()))?;
@@ -1274,7 +1436,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
     temporary
         .persist(path)
         .map_err(|error| error.error)
-        .with_context(|| format!("Failed to atomically replace Makefile: {}", path.display()))?;
+        .with_context(|| format!("Failed to atomically replace file: {}", path.display()))?;
     Ok(())
 }
 
@@ -1680,6 +1842,78 @@ fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     }
 }
 
+fn init_pyproject(path: &Path) -> Result<u8> {
+    // Resolve existing symlinks so an atomic replacement updates the target,
+    // without replacing the link itself. Never follow a dangling symlink.
+    if !path.exists() {
+        return init_config(path);
+    }
+    let resolved = dunce::canonicalize(path)
+        .with_context(|| format!("Failed to resolve {}", path.display()))?;
+    let original = std::fs::read_to_string(&resolved)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&original).with_context(|| format!("Invalid TOML in {}", path.display()))?;
+    if value
+        .get("tool")
+        .and_then(|tool| tool.get("rumk"))
+        .is_some()
+    {
+        bail!("[tool.rumk] already exists in {}", path.display());
+    }
+    let newline = if original.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let separator = if original.is_empty() || original.ends_with(&format!("{newline}{newline}")) {
+        "".to_string()
+    } else if original.ends_with('\n') {
+        newline.to_string()
+    } else {
+        newline.repeat(2)
+    };
+    let mut content = format!(
+        "{original}{separator}{}",
+        starter_config("tool.rumk.").replace('\n', newline)
+    );
+    // Inline tables are closed in TOML. Insert inside an inline `tool` table
+    // using parser-provided byte spans, preserving every pre-existing byte.
+    if toml::from_str::<toml::Value>(&content).is_err() {
+        let entries: BTreeMap<String, toml::Spanned<toml::Value>> = toml::from_str(&original)?;
+        let tool = entries
+            .get("tool")
+            .context("Cannot add [tool.rumk] to this TOML layout")?;
+        let span = tool.span();
+        let text = &original[span.clone()];
+        let table = tool
+            .get_ref()
+            .as_table()
+            .context("tool must be a TOML table")?;
+        if !text.starts_with('{') || !text.ends_with('}') {
+            bail!("Cannot add [tool.rumk] to this TOML layout");
+        }
+        let separator = if table.is_empty() { "" } else { "," };
+        content = original.clone();
+        content.insert_str(span.end - 1, &format!("{separator} rumk = {{ global = {{ respect-gitignore = true }}, MK101 = {{ line-length = 120 }} }} "));
+    }
+    toml::from_str::<toml::Value>(&content)
+        .context("Failed to prepare valid pyproject.toml; original file was not changed")?;
+    if std::fs::read_to_string(&resolved)? != original {
+        bail!(
+            "{} changed while preparing configuration; retry",
+            path.display()
+        );
+    }
+    atomic_write(&resolved, &content)?;
+    println!("Added [tool.rumk] to {}", path.display());
+    Ok(SUCCESS)
+}
+
+fn starter_config(prefix: &str) -> String {
+    format!("[{prefix}global]\nrespect-gitignore = true\n\n[{prefix}MK101]\nline-length = 120\n")
+}
+
 fn init_config(path: &Path) -> Result<u8> {
     if path.exists() {
         bail!("Configuration file already exists: {}", path.display());
@@ -1692,14 +1926,7 @@ fn init_config(path: &Path) -> Result<u8> {
     } else {
         ""
     };
-    let content = format!(
-        "[{prefix}global]
-respect-gitignore = true
-
-[{prefix}MK101]
-line-length = 120
-"
-    );
+    let content = starter_config(prefix);
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1805,10 +2032,20 @@ fn show_config(
                     .with_context(|| format!("Unknown configuration key: {key}"))?
             );
         }
-        Some(ConfigCommand::File) => match config.source_path() {
-            Some(path) => println!("{}", path.display()),
-            None => println!("No configuration file found (using built-in defaults)"),
-        },
+        Some(ConfigCommand::File { explain, .. }) => {
+            match config.source_path() {
+                Some(path) => println!("{}", path.display()),
+                None => println!("No configuration file found (using built-in defaults)"),
+            }
+            if explain {
+                for path in config.source_paths().iter().skip(1) {
+                    println!("  extends: {}", path.display());
+                }
+                for path in config.shadowed_paths() {
+                    println!("  shadowed: {}", path.display());
+                }
+            }
+        }
         None => {
             let rendered = config.render(defaults, no_defaults);
             match output {
