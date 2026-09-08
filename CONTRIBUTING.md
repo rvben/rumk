@@ -41,3 +41,15 @@ so the offline hook installation can reuse downloaded crate dependencies.
 For real upstream checkouts, follow [corpus verification](docs/corpus-verification.md).
 The pinned sample and audit runner check repeatability, editor-buffer parity,
 formatting idempotence, and input integrity without running upstream Makefiles.
+
+When building outside the workspace's `target/` directory, select those binaries
+for the Python regression suite so it does not skip integration checks or use a
+stale workspace build:
+
+```sh
+RUMK_TEST_BINARY=/path/to/build/debug/rumk \
+RUMK_COVERAGE_BINARY=/path/to/build/debug/examples/prerequisite-coverage \
+python3 -m unittest discover -s scripts -p 'test_*.py'
+```
+
+Without these overrides, the tests use the usual `target/debug` paths.

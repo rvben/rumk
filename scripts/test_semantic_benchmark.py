@@ -55,9 +55,9 @@ class SemanticIntegrationTest(unittest.TestCase):
         cls.make = os.environ.get("GNU_MAKE") or shutil.which("make")
         if not cls.make or "GNU Make" not in subprocess.check_output([cls.make, "--version"], text=True):
             raise unittest.SkipTest("GNU Make is required for semantic probes")
-        cls.binary = SEMANTIC.ROOT / "target/debug/rumk"
+        cls.binary = Path(os.environ.get("RUMK_TEST_BINARY", SEMANTIC.ROOT / "target/debug/rumk")).resolve()
         if not cls.binary.exists():
-            raise unittest.SkipTest("Build target/debug/rumk first")
+            raise unittest.SkipTest(f"Build the selected Rumk binary first: {cls.binary}")
 
     def test_pairs_and_safe_fixes_with_one_fixed_lint_profile(self):
         report = SEMANTIC.benchmark({"rumk": str(self.binary)}, self.make, 1)

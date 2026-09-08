@@ -1,5 +1,6 @@
 """Coverage accounting and read-only tooling integration."""
 import importlib.util
+import os
 from pathlib import Path
 import tempfile
 import subprocess
@@ -24,7 +25,7 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(report["visible_edges"], 2)
 
     def test_example_is_repeatable_and_never_executes_make(self):
-        binary = ROOT / "target/debug/examples/prerequisite-coverage"
+        binary = Path(os.environ.get("RUMK_COVERAGE_BINARY", ROOT / "target/debug/examples/prerequisite-coverage")).resolve()
         if not binary.exists():
             self.skipTest("Build --example prerequisite-coverage first")
         with tempfile.TemporaryDirectory() as temp:
