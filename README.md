@@ -50,7 +50,7 @@ Rumdl so existing users can reuse their workflow.
 - Respects `.gitignore` by default
 - Supports rule selection, file globs, per-file ignores, severities, fix allowlists, and
   safe-versus-unsafe fix selection
-- Emits text, flat JSON, and GitHub Actions annotations
+- Emits text, flat JSON, GitHub Actions annotations, and SARIF with applicable fixes
 
 ## Installation
 
@@ -126,9 +126,15 @@ rumk check . --output-format sarif --fail-on never > /tmp/rumk.sarif
 
 The SARIF 2.1.0 report includes stable rule IDs, documentation links, severities,
 include-file locations, URI-encoded paths, and explicit Unicode column units.
-Stdin checking supports this format too. It reports fix availability and safety;
-use JSON output for edit payloads. Run from the repository root when preparing
-reports for upload. Rumk creates the report; uploading it is a separate CI step.
+Stdin checking supports this format too. Each applicable fix includes SARIF
+`artifactChanges` and its complete edit set, with Unicode text coordinates that
+exclude an encoding BOM. Apply each set atomically against the checked buffer.
+Unsafe fixes are included only when unsafe fixes are enabled; disabled fixes and findings
+whose source buffer is not available have no edit payload. Includes checked only
+through a parent remain diagnostic-only; checking the directory also checks their
+own buffers. JSON continues to provide byte-based edit payloads. Run from the
+repository root when preparing reports for upload. Rumk creates the report;
+uploading it is a separate CI step.
 
 The GitHub `upload-sarif` action can populate missing fingerprints from the
 checkout. Direct API uploads may need caller-supplied fingerprints to avoid
@@ -461,6 +467,8 @@ the GNU Make, POSIX, or Rumk convention on which it is based.
 - [MK214](docs/mk214.md) - Global `.IGNORE` suppresses recipe failures (**default**)
 - [MK215](docs/mk215.md) - Required project targets must be defined and phony (opt-in)
 - [MK216](docs/mk216.md) - Missing static prerequisites with no visible producer (opt-in)
+- [MK217](docs/mk217.md) - Ordinary phony prerequisites force non-phony consumers to rebuild (opt-in)
+- [MK218](docs/mk218.md) - Repeated recipe command prefixes (opt-in, safe fix)
 
 ## Development
 

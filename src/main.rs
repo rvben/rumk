@@ -1320,15 +1320,18 @@ fn output_reports(
             let paths_and_diagnostics: Vec<_> = reports
                 .iter()
                 .flat_map(|report| {
-                    report
-                        .diagnostics
-                        .iter()
-                        .map(|diagnostic| (diagnostic_path(report, diagnostic), diagnostic))
+                    report.diagnostics.iter().map(move |diagnostic| {
+                        (diagnostic_path(report, diagnostic), diagnostic, report)
+                    })
                 })
                 .collect();
             let findings: Vec<_> = paths_and_diagnostics
                 .iter()
-                .map(|(path, diagnostic)| sarif::Finding { path, diagnostic })
+                .map(|(path, diagnostic, report)| sarif::Finding {
+                    path,
+                    diagnostic,
+                    content: (path == &report.path).then_some(report.content.as_str()),
+                })
                 .collect();
             println!(
                 "{}",

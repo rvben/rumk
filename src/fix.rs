@@ -1,4 +1,4 @@
-use crate::diagnostic::{Diagnostic, Edit};
+use crate::diagnostic::{Diagnostic, Edit, Fix};
 
 /// A text with the fixes that fitted into it applied.
 #[derive(Debug, Clone)]
@@ -25,7 +25,7 @@ pub fn apply_fixes(content: &str, diagnostics: &[Diagnostic]) -> Applied {
         .filter(|(_, diagnostic)| diagnostic.fix.is_some())
         .filter_map(|(index, diagnostic)| {
             let positions = positions.get_or_insert_with(|| LineIndex::new(content));
-            Some((index, resolve_fix(positions, diagnostic)?))
+            Some((index, resolve_fix(positions, diagnostic.fix.as_ref()?)?))
         })
         .collect();
 
@@ -77,16 +77,11 @@ struct ResolvedFix<'a> {
     end: usize,
 }
 
-/// Resolves the fix `diagnostic` carries, or reports `None` where it cannot be
+/// Resolves a fix, or reports `None` where it cannot be
 /// applied as a whole: an edit that does not resolve against this text, or two
 /// edits of the same fix wanting the same span, would leave half a fix behind.
-fn resolve_fix<'a>(
-    positions: &LineIndex<'_>,
-    diagnostic: &'a Diagnostic,
-) -> Option<ResolvedFix<'a>> {
-    let mut edits = diagnostic
-        .fix
-        .as_ref()?
+fn resolve_fix<'a>(positions: &LineIndex<'_>, fix: &'a Fix) -> Option<ResolvedFix<'a>> {
+    let mut edits = fix
         .edits
         .iter()
         .map(|edit| resolve_edit(positions, edit))
@@ -128,6 +123,12 @@ fn resolve_edit<'a>(positions: &LineIndex<'_>, edit: &'a Edit) -> Option<Resolve
 
 pub fn edit_byte_range(content: &str, edit: &Edit) -> Option<(usize, usize)> {
     resolve_edit(&LineIndex::new(content), edit).map(|edit| (edit.start, edit.end))
+}
+
+/// Validate the entire edit set without allocating a rewritten source buffer.
+/// Report exporters must reject overlaps just as the fix engine does.
+pub fn fix_is_valid(content: &str, fix: &Fix) -> bool {
+    resolve_fix(&LineIndex::new(content), fix).is_some()
 }
 
 struct LineIndex<'a> {

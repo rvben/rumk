@@ -10,6 +10,8 @@ use std::path::Path;
 pub struct Finding<'a> {
     pub path: &'a str,
     pub diagnostic: &'a Diagnostic,
+    /// The exact checked text, without a leading BOM. None for foreign sources.
+    pub content: Option<&'a str>,
 }
 
 /// Produce deterministic SARIF. Columns count Unicode code points, just as
@@ -80,6 +82,9 @@ pub fn report(
             if let Some(fix) = &diagnostic.fix {
                 result["properties"]["fixApplicability"] = json!(fix.applicability.as_str());
             }
+            if let Some(fix) = exported_fix(finding) {
+                result["fixes"] = json!([fix]);
+            }
             result
         })
         .collect();
@@ -101,6 +106,51 @@ pub fn report(
             "results": results
         }]
     })
+}
+
+/// Export only fixes permitted by the run's safety and fixability policy. All
+/// edits must validate together against the checked buffer, never reread disk.
+fn exported_fix(finding: &Finding<'_>) -> Option<Value> {
+    let diagnostic = finding.diagnostic;
+    if !diagnostic.fixable {
+        return None;
+    }
+    let content = finding.content?;
+    let fix = diagnostic.fix.as_ref()?;
+    if !rumk::fix::fix_is_valid(content, fix) {
+        return None;
+    }
+    let replacements: Option<Vec<_>> = fix
+        .edits
+        .iter()
+        .map(|edit| {
+            let (start, end) = rumk::fix::edit_byte_range(content, edit)?;
+            let (start_line, start_column) = position(content, start);
+            let (end_line, end_column) = position(content, end);
+            Some(json!({
+                "deletedRegion": {
+                    "startLine": start_line, "startColumn": start_column,
+                    "endLine": end_line, "endColumn": end_column
+                },
+                "insertedContent": {"text": edit.replacement}
+            }))
+        })
+        .collect();
+    Some(json!({
+        "description": {"text": fix.description},
+        "artifactChanges": [{
+            "artifactLocation": {"uri": artifact_uri(finding.path)},
+            "replacements": replacements?
+        }]
+    }))
+}
+
+// SARIF text regions do not count an encoding BOM (section 3.57.1).
+fn position(content: &str, offset: usize) -> (usize, usize) {
+    let before = &content[..offset];
+    let line = before.bytes().filter(|byte| *byte == b'\n').count() + 1;
+    let column = before.rsplit('\n').next().unwrap_or("").chars().count() + 1;
+    (line, column)
 }
 
 /// URI-encode filesystem bytes, including '%' and '#' so paths cannot become
@@ -136,12 +186,42 @@ fn artifact_uri(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rumk::diagnostic::{Edit, Fix};
+
+    #[test]
+    fn sarif_rejects_invalid_or_overlapping_fix_sets_atomically() {
+        for fix in [
+            Fix::new("empty"),
+            Fix::new("invalid line").add_edit(Edit::new(9, 1, 9, 2, "x")),
+            Fix::new("overlap")
+                .add_edit(Edit::new(1, 1, 1, 3, "x"))
+                .add_edit(Edit::new(1, 2, 1, 4, "y")),
+        ] {
+            let diagnostic = Diagnostic::new("MK105", Severity::Warning, "Fix", 1, 1).with_fix(fix);
+            let finding = Finding {
+                path: "Makefile",
+                diagnostic: &diagnostic,
+                content: Some("CC=cc\n"),
+            };
+            assert!(exported_fix(&finding).is_none());
+        }
+        let diagnostic = Diagnostic::new("MK105", Severity::Warning, "Fix", 1, 1)
+            .with_fix(Fix::new("valid").add_edit(Edit::new(1, 3, 1, 4, " = ")));
+        let finding = Finding {
+            path: "other.mk",
+            diagnostic: &diagnostic,
+            content: None,
+        };
+        assert!(exported_fix(&finding).is_none());
+    }
+
     #[test]
     fn sarif_encodes_paths_and_links_stable_rule_descriptors() {
         let diagnostic = Diagnostic::new("MK105", Severity::Info, "Spacing near 😀", 2, 8);
         let findings = [Finding {
             path: "a space/é#100%.mk",
             diagnostic: &diagnostic,
+            content: None,
         }];
         let cwd = std::env::current_dir().unwrap();
         let value = report(&findings, &cwd, true);

@@ -17,10 +17,16 @@ uses temporary copies, records input hashes and commands, and rejects input
 mutations in check mode. Fixtures must remain harmless even if a validator
 invokes Make; never include destructive recipes or side-effecting Make functions.
 
+The `phony-rebuild`, `phony-order-only`, and `phony-consumer` cases distinguish
+ordinary phony dependencies from order-only setup and phony consumers. The
+recipe-prefix cases distinguish repeated flags from unique flags and shell text
+on continuation lines. GNU Make behavior tests live in `rebuild_test.rs` and
+`recipe_prefixes_test.rs`.
+
 Run the offline regression suite:
 
 ```sh
-cargo test --test comparison_corpus_test --test formatting_test --test policy_test --test phony_precision_test
+cargo test --test comparison_corpus_test --test formatting_test --test policy_test --test phony_precision_test --test rebuild_test --test recipe_prefixes_test
 ```
 
 Run all four tools after installing the pinned versions explicitly:

@@ -349,6 +349,78 @@
           "file": "Makefile"
         }
       ]
+    },
+    {
+      "name": "phony-rebuild",
+      "category": "incremental-build",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK217"
+      ],
+      "expected": [
+        {
+          "rule": "MK217",
+          "line": 2,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "phony-order-only",
+      "category": "incremental-build",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK217"
+      ],
+      "expected": []
+    },
+    {
+      "name": "phony-consumer",
+      "category": "incremental-build",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK217"
+      ],
+      "expected": []
+    },
+    {
+      "name": "repeated-prefix",
+      "category": "recipe-prefix",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK218"
+      ],
+      "expected": [
+        {
+          "rule": "MK218",
+          "line": 2,
+          "file": "Makefile"
+        }
+      ]
+    },
+    {
+      "name": "unique-prefix",
+      "category": "recipe-prefix",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK218"
+      ],
+      "expected": []
+    },
+    {
+      "name": "continued-prefix-lookalike",
+      "category": "recipe-prefix",
+      "dialect": "gnu",
+      "entry": "Makefile",
+      "enable": [
+        "MK218"
+      ],
+      "expected": []
     }
   ]
 }

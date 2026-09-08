@@ -52,7 +52,8 @@ check-gnu-fixtures:
 	$(CARGO) test --test gnu_make_test
 
 check-comparison:
-	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test --test phony_precision_test
+	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test --test phony_precision_test \
+		--test rebuild_test --test recipe_prefixes_test
 
 check-semantic:
 	$(CARGO) build --bin rumk

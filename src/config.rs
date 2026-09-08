@@ -929,6 +929,8 @@ fn build_rule(
                 .command_targets(command_targets_option(settings)?),
         ),
         "MK216" => Box::new(rules::prerequisites::MissingPrerequisite),
+        "MK217" => Box::new(rules::rebuild::PhonyPrerequisite),
+        "MK218" => Box::new(rules::recipe_prefixes::RepeatedRecipePrefix),
         "MK202" => Box::new(rules::best_practices::HardcodedPath),
         "MK203" => Box::new(rules::best_practices::RecursiveMake),
         "MK204" => Box::new(rules::best_practices::DuplicateRecipe),

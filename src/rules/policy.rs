@@ -135,7 +135,7 @@ impl Rule for RequiredTargets {
 
 /// Absence is evidence only when every source of target declarations is known.
 /// In particular, an unread include or an eval/call can supply the entire API.
-fn complete_target_graph(project: &Project) -> bool {
+pub(super) fn complete_target_graph(project: &Project) -> bool {
     if project.analysis().has_structural_issues()
         || !project.cycles().is_empty()
         || project.edges().iter().any(|edge| {

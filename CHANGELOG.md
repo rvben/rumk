@@ -7,6 +7,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Added
+
+- Opt-in `MK217` detects phony prerequisites that force non-phony targets to rebuild,
+  with include-aware locations and exclusions for uncertain graphs.
+- Opt-in `MK218` safely removes repeated literal recipe command prefixes while
+  preserving flag order and excluding `.ONESHELL` projects.
+- SARIF reports include complete applicable edit sets, validated against checked
+  buffers and governed by existing fix safety and allowlist settings.
+- GNU Make behavior tests and shared comparison fixtures for rebuild dependencies
+  and recipe-prefix fixes; SARIF consumer tests cover Unicode, BOM, CRLF, and multiple edits.
+
 ## [0.0.8] - 2026-09-08
 
 ### Added
