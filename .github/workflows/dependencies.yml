@@ -8,11 +8,12 @@ on:
 permissions:
   contents: read
   id-token: write
+  packages: read
   pull-requests: read
 
 jobs:
   update:
-    uses: rvben/upd/.github/workflows/dependency-health.yml@493e20ad77a95c5b2efcc88581886491356e1a1b # v0.8.7
+    uses: rvben/upd/.github/workflows/dependency-health.yml@cc719a63f7b6677760486b858210f2118f8e9824 # v0.12.2
     with:
       runner: ubuntu-24.04
       upd-version: v0.8.7
