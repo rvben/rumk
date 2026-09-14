@@ -111,9 +111,21 @@ fn recipe_prefix_fix_is_accepted_by_gnu_make() {
     std::fs::write(directory.path().join("broken.mk"), content).unwrap();
     std::fs::write(directory.path().join("fixed.mk"), &fixed).unwrap();
     let run = |name: &str| {
+        // GNU Make enables --print-directory automatically once MAKELEVEL is
+        // already set in the environment, which happens whenever this test
+        // itself runs as a recipe of an outer `make` invocation (as it does
+        // under `make test`). Without this flag, the assertion below sees
+        // "make[1]: Entering directory ..." wrapped around the recipe output
+        // instead of the recipe output alone.
         Command::new("make")
             .current_dir(directory.path())
-            .args(["--no-builtin-rules", "-f", name, "all"])
+            .args([
+                "--no-builtin-rules",
+                "--no-print-directory",
+                "-f",
+                name,
+                "all",
+            ])
             .output()
             .unwrap_or_else(|error| panic!("failed to launch GNU Make: {error}"))
     };
