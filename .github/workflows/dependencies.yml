@@ -16,9 +16,9 @@ jobs:
     uses: rvben/upd/.github/workflows/dependency-health.yml@cc719a63f7b6677760486b858210f2118f8e9824 # v0.12.2
     with:
       runner: ubuntu-24.04
-      upd-version: v0.8.7
+      upd-version: v0.12.2
       upd-target: x86_64-unknown-linux-gnu
-      upd-sha256: d48f5252383aff235e32b0b04530f07beb9237c62dec0a784451edcd8022f14e
+      upd-sha256: 92d7077c288784a814a3c46b765ec7ac4034edc4df5e65f211998d8c56b95055
       langs: ""
       lock: true
       min-age: 7d
