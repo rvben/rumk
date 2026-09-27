@@ -162,6 +162,19 @@ target: dependency
     }
 
     #[test]
+    fn a_target_variable_value_runs_through_a_semicolon_and_a_comment_after_it() {
+        // GNU Make only cuts an inline recipe from a prerequisite list: once
+        // the part before the ';' assigns, the rest of the line is the value.
+        let makefile = parse("all: X = a ; echo hi # c\nall: Y = b # c ; d\n");
+
+        let assignment = makefile.rules[0].target_assignment.as_ref().unwrap();
+        assert_eq!(assignment.value, "a ; echo hi # c");
+        assert!(makefile.rules[0].recipes.is_empty());
+        let commented = makefile.rules[1].target_assignment.as_ref().unwrap();
+        assert_eq!(commented.value, "b");
+    }
+
+    #[test]
     fn models_rule_separators_and_prerequisite_classes() {
         let content = "one\\ two archive &: input.o lib.o | generated stamp\n";
         let makefile = parse(content);

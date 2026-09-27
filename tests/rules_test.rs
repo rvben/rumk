@@ -766,6 +766,21 @@ fn shell_call_is_reported_in_a_variable_make_expands_at_every_reading() {
 }
 
 #[test]
+fn a_semicolon_in_a_target_variable_is_part_of_its_value() {
+    let content = concat!(
+        "all: STAMP = a; $(shell date)\n",
+        "all:\n",
+        "\t@echo $(STAMP)\n",
+    );
+    let makefile = parse(content);
+
+    assert!(DuplicateRecipe.check(&makefile, content).is_empty());
+    let diagnostics = ShellInRecursiveVariable.check(&makefile, content);
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    assert_eq!(diagnostics[0].line, 1);
+}
+
+#[test]
 fn shell_call_says_nothing_where_make_runs_the_command_once() {
     let content = concat!(
         "VERSION := $(shell git describe --tags)\n",

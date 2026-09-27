@@ -144,6 +144,25 @@ fn a_target_specific_assignment_does_not_open_a_rule() {
 }
 
 #[test]
+fn a_target_variable_value_is_checked_as_a_value_past_a_semicolon() {
+    assert_eq!(
+        errors("all: X := a; b # $(c\n"),
+        [(unterminated(')', None, None), 1, 18)]
+    );
+    assert_eq!(errors("all: X := a # $(c\n"), []);
+    // A simple value is expanded where it is assigned, before 'Z' is.
+    assert_eq!(
+        mk006_lines("other: X := a; $(Z)\nZ = $(c\nall: ; @echo ok\n"),
+        Vec::<usize>::new()
+    );
+    // A recursive value is expanded only where it is read.
+    assert_eq!(
+        mk006_lines("all: X = a; $(c\nall: ; @echo ok\n"),
+        Vec::<usize>::new()
+    );
+}
+
+#[test]
 fn unterminated_references_are_located_and_named() {
     assert_eq!(
         errors("X := $(FOO\n"),

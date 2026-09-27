@@ -20,7 +20,7 @@ use crate::analysis::{Location, Reference, ReferenceContext, ReferenceKind};
 use crate::builtins::is_defined_at_startup;
 use crate::expansion::unexpanded_arguments;
 use crate::logical::{
-    find_top_level_assignment, find_top_level_rule_separator, inline_recipe_separator,
+    find_top_level_assignment, find_top_level_rule_separator, inline_recipe,
     strip_top_level_comment, target_assignment, LogicalKind, LogicalStatement, Reach,
 };
 use crate::parser::{AssignmentOperator, Makefile, Variable, VariableScope};
@@ -545,8 +545,7 @@ impl<'a> Locator<'a> {
         let leading = raw.len() - raw.trim_start().len();
         let separator = find_top_level_rule_separator(&raw[leading..])?;
         let body_start = leading + separator.position + separator.length;
-        let semicolon =
-            inline_recipe_separator(&raw[body_start..]).map(|position| body_start + position);
+        let semicolon = inline_recipe(&raw[body_start..]).map(|position| body_start + position);
         if semicolon.is_some_and(|semicolon| offset > semicolon) {
             let rule = self
                 .makefile

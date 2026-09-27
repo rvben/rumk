@@ -8,9 +8,9 @@ use crate::binding::value_expands_later;
 use crate::expansion::{contains_reference, find_unterminated_reference, CommentHandling};
 use crate::logical::{
     conditional_expression, find_top_level_assignment, find_top_level_rule_separator,
-    inline_recipe_separator, split_include_words, split_once_top_level, split_top_level_words,
-    strip_top_level_comment, target_assignment, ConditionalKind, IncludeKind, LogicalDocument,
-    LogicalKind, LogicalStatement, Reach,
+    inline_recipe, inline_recipe_separator, split_include_words, split_once_top_level,
+    split_top_level_words, strip_top_level_comment, target_assignment, ConditionalKind,
+    IncludeKind, LogicalDocument, LogicalKind, LogicalStatement, Reach,
 };
 use crate::syntax::{RecipePrefix, SyntaxTree};
 
@@ -735,7 +735,13 @@ impl Parser {
             return;
         }
 
-        let inline_separator = inline_recipe_separator(rule_body);
+        let inline_separator = inline_recipe(rule_body);
+        // A value that runs past a ';' keeps its '#' too.
+        let value_tail = match (inline_recipe_separator(rule_body), inline_separator) {
+            (Some(semicolon), None) => target_assignment(&rule_body[..semicolon])
+                .map(|(operator, symbol)| rule_body[operator + symbol.len()..].trim()),
+            _ => None,
+        };
         let (prerequisite_text, inline_command) = match inline_separator {
             Some(position) => (&rule_body[..position], Some(&rule_body[position + 1..])),
             None => (rule_body, None),
@@ -753,7 +759,10 @@ impl Parser {
                     VariableScope::TargetSpecific(targets.clone()),
                     self.reach,
                 ) {
-                    Some(variable) => {
+                    Some(mut variable) => {
+                        if let Some(value) = value_tail {
+                            variable.value = value.to_string();
+                        }
                         self.makefile.assignments.push(variable.clone());
                         assigned_variable = Some(variable);
                     }
@@ -843,7 +852,10 @@ impl Parser {
         let targets_end = leading + separator.position;
         let body_start = targets_end + separator.length;
         let body = &raw[body_start..];
-        let (prerequisites_end, command_start) = match inline_recipe_separator(body) {
+        let semicolon = inline_recipe(body);
+        let assigns_through_semicolon =
+            semicolon.is_none() && inline_recipe_separator(body).is_some();
+        let (prerequisites_end, command_start) = match semicolon {
             Some(semicolon) => (body_start + semicolon, Some(body_start + semicolon + 1)),
             None => (raw.len(), None),
         };
@@ -870,7 +882,11 @@ impl Parser {
                     raw,
                     operator_start + operator.len()..prerequisites_end,
                     start_line,
-                    CommentHandling::Strip,
+                    if assigns_through_semicolon {
+                        CommentHandling::Keep
+                    } else {
+                        CommentHandling::Strip
+                    },
                     deferred_in,
                 ));
             }

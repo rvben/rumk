@@ -538,6 +538,14 @@ pub(crate) fn inline_recipe_separator(rule_body: &str) -> Option<usize> {
         .filter(|semicolon| comment.is_none_or(|comment| *semicolon < comment))
 }
 
+/// Locates the `;` that starts an inline recipe on a rule line. Where the
+/// text before it assigns a target-specific variable, Make keeps the `;` and
+/// the rest of the line, a `#` included, as part of the value instead.
+pub(crate) fn inline_recipe(rule_body: &str) -> Option<usize> {
+    inline_recipe_separator(rule_body)
+        .filter(|&semicolon| target_assignment(&rule_body[..semicolon]).is_none())
+}
+
 pub(crate) fn split_once_top_level(line: &str, separator: char) -> (&str, Option<&str>) {
     if let Some(index) = find_top_level_char(line, separator) {
         let after = index + separator.len_utf8();
