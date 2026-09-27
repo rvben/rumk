@@ -444,7 +444,10 @@ fn run() -> Result<u8> {
                 &args.shared,
                 operation,
                 args.fail_on,
-                cli.config.is_none() && !cli.no_config,
+                ConfigChoice {
+                    file: cli.config.as_deref(),
+                    none: cli.no_config,
+                },
                 args.unsafe_fixes(),
             )
         }
@@ -467,7 +470,10 @@ fn run() -> Result<u8> {
                 &args.shared,
                 operation,
                 FailOn::Never,
-                cli.config.is_none() && !cli.no_config,
+                ConfigChoice {
+                    file: cli.config.as_deref(),
+                    none: cli.no_config,
+                },
                 Some(false),
             )
         }
@@ -611,14 +617,14 @@ fn run_files(
     args: &SharedArgs,
     operation: Operation,
     fail_on: FailOn,
-    discover_config: bool,
+    config_choice: ConfigChoice,
     unsafe_fixes: Option<bool>,
 ) -> Result<u8> {
     if paths.iter().any(|path| path == Path::new("-")) {
         if paths.len() != 1 {
             bail!("stdin ('-') cannot be combined with other paths");
         }
-        if discover_config {
+        if config_choice.discovers() {
             let mut config = Config::find_from(
                 args.stdin_filename
                     .as_deref()
@@ -635,6 +641,7 @@ fn run_files(
     if args.stdin_filename.is_some() {
         bail!("--stdin-filename requires '-' as the only path");
     }
+    let fix_command = FixCommand::new(config_choice, args, &paths);
     if paths.is_empty() {
         paths.push(PathBuf::from("."));
     }
@@ -645,7 +652,7 @@ fn run_files(
     let mut configurations = FileConfigurations {
         fallback: config,
         current_dir: std::env::current_dir().context("Failed to determine current directory")?,
-        discover: discover_config,
+        discover: config_choice.discovers(),
         args,
         unsafe_fixes,
         cache: BTreeMap::new(),
@@ -795,7 +802,7 @@ fn run_files(
     if !args.silent {
         output_reports(&reports, args.output_format, operation)?;
         if !args.quiet && matches!(args.output_format, OutputFormat::Text) {
-            output_summary(&reports, operation, true);
+            output_summary(&reports, operation, Some(&fix_command));
         }
     }
 
@@ -903,7 +910,7 @@ fn run_stdin(
             && matches!(operation, Operation::Check)
             && matches!(args.output_format, OutputFormat::Text)
         {
-            output_summary(&reports, operation, false);
+            output_summary(&reports, operation, None);
         }
     }
     Ok(if violations {
@@ -1728,10 +1735,10 @@ fn output_github(report: &FileReport) {
     }
 }
 
-/// Prints the closing summary. `suggest_fixes` is whether the commands it
-/// can suggest would act on these reports: a buffer read from stdin is never
-/// written, so the counts stand alone for it.
-fn output_summary(reports: &[FileReport], operation: Operation, suggest_fixes: bool) {
+/// Prints the closing summary. `fix_command` is the command that would fix
+/// these reports, if there is one: a buffer read from stdin is never written,
+/// so the counts stand alone for it.
+fn output_summary(reports: &[FileReport], operation: Operation, fix_command: Option<&FixCommand>) {
     let fixed: usize = reports.iter().map(|report| report.fixed_count).sum();
     if fixed > 0 && operation.writes() {
         println!(
@@ -1758,8 +1765,8 @@ fn output_summary(reports: &[FileReport], operation: Operation, suggest_fixes: b
         // Diff output is a patch other tools read, so the note goes to stderr
         // rather than into the patch. Without it a run whose only fixes are
         // withheld prints nothing at all and still fails.
-        if hidden > 0 {
-            eprintln!("{}", hidden_fix_hint(hidden));
+        if let Some(command) = fix_command.filter(|_| hidden > 0) {
+            eprintln!("{}", hidden_fix_hint(hidden, command));
         }
         return;
     }
@@ -1821,31 +1828,134 @@ fn output_summary(reports: &[FileReport], operation: Operation, suggest_fixes: b
                 .as_ref()
                 .is_some_and(|fix| fix.applicability == Applicability::Unsafe);
         }
-        if fixable > 0 && suggest_fixes {
-            let command = if needs_unsafe {
-                "rumk check --fix --unsafe-fixes"
-            } else {
-                "rumk check --fix"
-            };
+        let Some(command) = fix_command else {
+            return;
+        };
+        if fixable > 0 {
             println!(
                 "Run `{}` to fix {fixable} {}",
-                command.green(),
+                command.render(needs_unsafe).green(),
                 pluralize(fixable, "issue", "issues")
             );
         }
-        if hidden > 0 && suggest_fixes {
-            println!("{}", hidden_fix_hint(hidden));
+        if hidden > 0 {
+            println!("{}", hidden_fix_hint(hidden, command));
         }
     }
 }
 
 /// Says that fixes exist which this run withheld, and how to ask for them.
-fn hidden_fix_hint(hidden: usize) -> String {
+fn hidden_fix_hint(hidden: usize, command: &FixCommand) -> String {
     format!(
         "{hidden} {} can change what Make does; apply with `{}`",
         pluralize(hidden, "fix", "fixes"),
-        "rumk check --fix --unsafe-fixes".green()
+        command.render(true).green()
     )
+}
+
+/// The configuration the command line chose: a named file, none at all, or
+/// with neither, the file found beside each input.
+#[derive(Clone, Copy)]
+struct ConfigChoice<'a> {
+    file: Option<&'a Path>,
+    none: bool,
+}
+
+impl ConfigChoice<'_> {
+    fn discovers(self) -> bool {
+        self.file.is_none() && !self.none
+    }
+}
+
+/// The `check --fix` command that applies the fixes a run reports. It names
+/// the same inputs and repeats every option that decided which fixes there
+/// are, so it fixes what the run counted rather than whatever a bare
+/// `rumk check --fix` finds in the current directory.
+struct FixCommand {
+    arguments: Vec<String>,
+}
+
+impl FixCommand {
+    fn new(config_choice: ConfigChoice, args: &SharedArgs, paths: &[PathBuf]) -> Self {
+        // Listed field by field so that a new option has to be placed here:
+        // either it changes which fixes there are and is repeated, or it only
+        // shapes this run's output.
+        let SharedArgs {
+            stdin_filename: _,
+            disable,
+            enable,
+            extend_enable,
+            extend_disable,
+            fixable,
+            unfixable,
+            exclude,
+            include,
+            no_exclude,
+            respect_gitignore,
+            quiet: _,
+            silent: _,
+            output_format: _,
+        } = args;
+        let mut arguments = Vec::new();
+        if let Some(file) = config_choice.file {
+            arguments.push(format!("--config={}", shell_word(&file.to_string_lossy())));
+        }
+        if config_choice.none {
+            arguments.push("--no-config".to_owned());
+        }
+        for (name, value) in [
+            ("enable", enable),
+            ("disable", disable),
+            ("extend-enable", extend_enable),
+            ("extend-disable", extend_disable),
+            ("fixable", fixable),
+            ("unfixable", unfixable),
+            ("include", include),
+            ("exclude", exclude),
+        ] {
+            if let Some(value) = value {
+                arguments.push(format!("--{name}={}", shell_word(value)));
+            }
+        }
+        if *no_exclude {
+            arguments.push("--no-exclude".to_owned());
+        }
+        if let Some(respect) = respect_gitignore {
+            arguments.push(format!("--respect-gitignore={respect}"));
+        }
+        let paths: Vec<_> = paths.iter().map(|path| path.to_string_lossy()).collect();
+        if paths.iter().any(|path| path.starts_with('-')) {
+            arguments.push("--".to_owned());
+        }
+        arguments.extend(paths.iter().map(|path| shell_word(path)));
+        Self { arguments }
+    }
+
+    fn render(&self, unsafe_fixes: bool) -> String {
+        let mut command = String::from("rumk check --fix");
+        if unsafe_fixes {
+            command.push_str(" --unsafe-fixes");
+        }
+        for argument in &self.arguments {
+            command.push(' ');
+            command.push_str(argument);
+        }
+        command
+    }
+}
+
+/// `value` as one word a POSIX shell reads back unchanged: as it is when
+/// nothing in it is special to the shell, otherwise in single quotes.
+fn shell_word(value: &str) -> String {
+    let plain = !value.is_empty()
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "_-./,:=@%+".contains(character));
+    if plain {
+        value.to_owned()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
 }
 
 fn severity_name(severity: Severity) -> &'static str {

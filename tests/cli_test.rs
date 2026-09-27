@@ -293,12 +293,68 @@ fn the_suggested_command_keeps_the_opt_in_the_counted_fixes_need() {
     // The two unsafe fixes are counted because this run asked for them, and the
     // command it prints has to ask again or it fixes nothing.
     let counted = String::from_utf8_lossy(&counted.stdout);
-    assert!(counted.contains("Run `rumk check --fix --unsafe-fixes` to fix 2 issues"));
+    assert!(counted
+        .contains("Run `rumk check --fix --unsafe-fixes --no-config Makefile` to fix 2 issues"));
     // Nothing is applicable without the opt-in, so there is no such command to
     // print, only the note that the fixes are there to be asked for.
     let withheld = String::from_utf8_lossy(&withheld.stdout);
     assert!(!withheld.contains("Run `rumk check --fix`"));
     assert!(withheld.contains("2 fixes can change what Make does"));
+}
+
+#[test]
+fn the_suggested_commands_fix_what_the_run_found_and_nothing_else() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    let content = "X=1\nall:\n\techo $(X)\n";
+    for name in ["sub/build.mk", "-it's odd.mk", "other.mk"] {
+        std::fs::write(directory.path().join(name), content).unwrap();
+    }
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["--no-config", "check", "--extend-enable", "MK105"])
+        .args(["--", "sub/build.mk", "-it's odd.mk"])
+        .output()
+        .unwrap();
+
+    // MK105 is fixable only because this run enabled it, and only the two named
+    // files were checked, so the commands carry both, quoted for the shell.
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let options = "--no-config --extend-enable=MK105 -- sub/build.mk '-it'\\''s odd.mk'";
+    let safe = format!("rumk check --fix {options}");
+    let unsafe_ = format!("rumk check --fix --unsafe-fixes {options}");
+    assert!(
+        stdout.contains(&format!("Run `{safe}` to fix 2 issues")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("apply with `{unsafe_}`")),
+        "{stdout}"
+    );
+
+    // A run that leaves a finding standing exits 1, so only a tool error
+    // counts as the command failing; the files say what it did.
+    let run = |command: &str| {
+        let program = format!("'{}'", env!("CARGO_BIN_EXE_rumk"));
+        let status = Command::new("sh")
+            .current_dir(directory.path())
+            .args(["-c", &command.replacen("rumk", &program, 1)])
+            .status()
+            .unwrap();
+        assert!(matches!(status.code(), Some(0 | 1)), "{command}: {status}");
+    };
+    let read = |name: &str| std::fs::read_to_string(directory.path().join(name)).unwrap();
+
+    run(&safe);
+    for name in ["sub/build.mk", "-it's odd.mk"] {
+        assert_eq!(read(name), "X = 1\nall:\n\techo $(X)\n", "{name}");
+    }
+    run(&unsafe_);
+    for name in ["sub/build.mk", "-it's odd.mk"] {
+        assert!(read(name).contains(".PHONY: all"), "{name}: {}", read(name));
+    }
+    assert_eq!(read("other.mk"), content);
 }
 
 #[test]
@@ -645,7 +701,7 @@ fn diff_reports_the_fixes_it_withheld() {
     assert_eq!(String::from_utf8_lossy(&output.stdout), "");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("1 fix can change what Make does"));
-    assert!(stderr.contains("rumk check --fix --unsafe-fixes"));
+    assert!(stderr.contains("apply with `rumk check --fix --unsafe-fixes Makefile`"));
 }
 
 #[test]
