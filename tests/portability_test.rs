@@ -68,6 +68,22 @@ fn comments_shell_escapes_suffix_rules_and_portable_macros_are_not_extensions() 
     }
 }
 #[test]
+fn a_percent_only_in_the_replacement_is_suffix_substitution() {
+    // A substitution is a pattern only when its left side has the '%'; one
+    // in the replacement alone is text, which Make writes out as it is.
+    let portable = ".POSIX:\nSRC = a.c\nOBJ = $(SRC:.c=%.o) ${SRC:.c=.%}\n";
+    assert!(
+        check(portable, Edition::Posix2017).is_empty(),
+        "{:?}",
+        check(portable, Edition::Posix2017)
+    );
+    let pattern = ".POSIX:\nSRC = a.c\nOBJ = $(SRC:%.c=.o)\n";
+    assert_eq!(
+        check(pattern, Edition::Posix2017),
+        ["Pattern macro substitution is not portable to POSIX.1-2017"]
+    );
+}
+#[test]
 fn dialect_profile_enables_portability_without_advising_gnu_phony_for_2017() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("rumk.toml");

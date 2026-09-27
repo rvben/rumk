@@ -304,9 +304,13 @@ impl Rule for PosixPortability {
                 if !newer {
                     if let Some(len) = crate::expansion::reference_length(&rest, 0) {
                         let body = &rest[2..len - 1];
+                        // Make reads a substitution as a pattern only when
+                        // the text it replaces has a '%'; one in the
+                        // replacement alone is written out as it is.
                         if body
                             .split_once(':')
-                            .is_some_and(|(_, sub)| sub.contains('%') && sub.contains('='))
+                            .and_then(|(_, substitution)| substitution.split_once('='))
+                            .is_some_and(|(pattern, _)| pattern.contains('%'))
                         {
                             flag(loc.line, loc.column, "Pattern macro substitution".into());
                         }
