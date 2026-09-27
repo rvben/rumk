@@ -1624,7 +1624,28 @@ fn a_path_that_does_not_exist_remains_a_tool_error() {
 
     assert_eq!(output.status.code(), Some(2));
     assert!(
-        String::from_utf8_lossy(&output.stderr).contains("is neither a file nor a directory"),
+        String::from_utf8_lossy(&output.stderr).contains("Path 'missing.mk' does not exist"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_symlink_is_reported_with_the_target_it_names() {
+    let directory = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink("gone.mk", directory.path().join("link.mk")).unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["check", "link.mk"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("Path 'link.mk' is a symbolic link to 'gone.mk', which does not exist"),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );

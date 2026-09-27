@@ -1036,10 +1036,16 @@ fn discover_files(
     for path in paths {
         let metadata = match std::fs::metadata(path) {
             Ok(metadata) => metadata,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => bail!(
-                "Path '{}' is neither a file nor a directory",
-                path.display()
-            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                match std::fs::read_link(path) {
+                    Ok(target) => bail!(
+                        "Path '{}' is a symbolic link to '{}', which does not exist",
+                        path.display(),
+                        target.display()
+                    ),
+                    Err(_) => bail!("Path '{}' does not exist", path.display()),
+                }
+            }
             Err(_) => {
                 if !configurations.for_file(path)?.is_path_excluded(path) {
                     files.insert(path.clone());
