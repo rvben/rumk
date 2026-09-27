@@ -10,4 +10,4 @@
 - Provide live diagnostics, quick fixes, fix-all, formatting, and target/variable symbols.
 - Add language status, restart, output, and settings commands.
 - Support local and remote filesystem workspaces with workspace trust enforcement.
-- Include Makefile search metadata in Debuggers, Linters, and Formatters categories.
+- Include Makefile search metadata in the Linters, Formatters, and Programming Languages categories.

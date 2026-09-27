@@ -162,8 +162,9 @@ and dependency license notices. The extension has an independent version and
 changelog. Marketplace publication is a separate, explicit step.
 The `rvben` publisher must exist and be authorized before publishing.
 
-The manifest includes the `Debuggers` category and Makefile keywords for
-`@category:debuggers Makefile` discovery after publication and indexing.
+The manifest lists the Linters, Formatters, and Programming Languages
+categories and Makefile keywords for discovery after publication and
+indexing.
 Marketplace ranking and exact search placement are not guaranteed.
 
 ### Publish a preview

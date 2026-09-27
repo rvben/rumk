@@ -18,7 +18,6 @@
     "vscode": "^1.91.0"
   },
   "categories": [
-    "Debuggers",
     "Linters",
     "Formatters",
     "Programming Languages"
