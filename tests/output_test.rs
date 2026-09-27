@@ -131,3 +131,32 @@ fn github_annotations_name_the_rule() {
         "{annotation}"
     );
 }
+
+#[test]
+fn colored_text_has_no_empty_escape_sequences() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, MIXED).unwrap();
+    let fixable = directory.path().join("fixable.mk");
+    std::fs::write(&fixable, ".PHONY: all\nall:\n    echo hi\n").unwrap();
+
+    let output = stdout(rumk().args([
+        "check",
+        "--no-config",
+        "--color",
+        "always",
+        path.to_str().unwrap(),
+        fixable.to_str().unwrap(),
+    ]));
+
+    assert!(output.contains(" \x1b[33m[*]\x1b[0m\n"), "{output:?}");
+    let empty_style = output.split("\x1b[").any(|sequence| {
+        sequence
+            .split_once('m')
+            .is_some_and(|(code, rest)| code != "0" && rest.is_empty())
+    });
+    assert!(
+        !empty_style,
+        "a style opened and closed around nothing: {output:?}"
+    );
+}

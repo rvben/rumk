@@ -1595,7 +1595,11 @@ fn output_text(report: &FileReport, operation: Operation) {
             Severity::Warning => "yellow",
             Severity::Info => "cyan",
         };
-        let fix_indicator = if diagnostic.fixable { " [*]" } else { "" };
+        let fix_indicator = if diagnostic.fixable {
+            format!(" {}", "[*]".yellow())
+        } else {
+            String::new()
+        };
         println!(
             "{}:{}:{}: {} {}{}",
             diagnostic_path(report, diagnostic).cyan(),
@@ -1603,7 +1607,7 @@ fn output_text(report: &FileReport, operation: Operation) {
             diagnostic.column,
             format!("[{}]", diagnostic.rule_id).color(rule_color),
             diagnostic.message,
-            fix_indicator.yellow()
+            fix_indicator
         );
     }
 }
