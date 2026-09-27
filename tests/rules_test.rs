@@ -853,6 +853,45 @@ fn shell_call_says_nothing_where_make_runs_the_command_once() {
 }
 
 #[test]
+fn shell_call_says_nothing_where_an_immediate_assignment_reads_it_once() {
+    // `A := $(A)` right after a recursive assignment is the idiom that runs
+    // the command once: every later reading finds the value it captured.
+    let content = concat!(
+        "A = $(shell date)\n",
+        "A := $(A)\n",
+        "B = $(shell date)\n",
+        "B != echo replaced\n",
+        "C = $(shell date)\n",
+        "X := $(C) $(C)\n",
+        "C := $(C)\n",
+        "override D = $(shell date)\n",
+        "D := $(D)\n",
+        "E = $(shell date)\n",
+        "ifdef F\n",
+        "E := $(E)\n",
+        "endif\n",
+        "G = $(shell date)\n",
+        "include other.mk\n",
+        "G := $(G)\n",
+        "all: H = $(shell date)\n",
+        "H := $(H)\n",
+        "I = $(shell date)\n",
+        "I += --utc\n",
+    );
+    let diagnostics = ShellInRecursiveVariable.check(&parse(content), content);
+
+    // Only where nothing reads the name before the capture, the capture is
+    // sure to happen, and it replaces that same binding.
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.line)
+            .collect::<Vec<_>>(),
+        [5, 8, 10, 14, 17, 19]
+    );
+}
+
+#[test]
 fn shell_call_follows_the_flavor_the_variable_being_appended_to_has() {
     let content = concat!(
         "EAGER := start\n",

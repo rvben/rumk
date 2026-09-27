@@ -1427,7 +1427,7 @@ impl Rule for ShellInRecursiveVariable {
         let mut undefined = undefined_names(makefile).into_iter().peekable();
         // A `define` is an assignment whose value is its body, so the bodies
         // are here too, under the operator their header carries.
-        for variable in &makefile.assignments {
+        for (index, variable) in makefile.assignments.iter().enumerate() {
             while undefined
                 .peek()
                 .is_some_and(|undefine| undefine.line <= variable.line)
@@ -1500,7 +1500,10 @@ impl Rule for ShellInRecursiveVariable {
             if !expands_at_every_reading {
                 continue;
             }
-            if calls_the_shell(&variable.value) && !reads_a_late_value(&variable.value) {
+            if calls_the_shell(&variable.value)
+                && !reads_a_late_value(&variable.value)
+                && !captured_once(makefile, index)
+            {
                 diagnostics.push(shell_call_diagnostic(
                     self.id(),
                     &variable.name,
@@ -1614,6 +1617,38 @@ fn flavor_of(operator: AssignmentOperator) -> Flavor {
         | AssignmentOperator::ImmediateRecursive
         | AssignmentOperator::Append => Flavor::Deferred,
     }
+}
+
+/// Whether the next assignment to the name expands the value this one gives
+/// it, once, before anything else can read it: `X := $(X)` after `X = ...` is
+/// the idiom that runs a command once. Every reading after it finds the
+/// captured value. Anything between that names the variable or includes a
+/// file could read it, and a capture in a branch, one an `override` throws
+/// away, or one for another scope leaves the binding in place.
+fn captured_once(makefile: &Makefile, index: usize) -> bool {
+    let variable = &makefile.assignments[index];
+    let Some(capture) = makefile.assignments[index + 1..]
+        .iter()
+        .find(|later| later.name == variable.name)
+    else {
+        return false;
+    };
+    capture.scope == variable.scope
+        && capture.reach == Reach::Always
+        && (capture.modifiers.override_ || !variable.modifiers.override_)
+        && matches!(
+            capture.operator,
+            AssignmentOperator::Simple
+                | AssignmentOperator::SimplePosix
+                | AssignmentOperator::ImmediateRecursive
+                | AssignmentOperator::Shell
+        )
+        && !makefile.logical.statements().iter().any(|statement| {
+            statement.start_line > variable.end_line
+                && statement.start_line < capture.line
+                && (matches!(statement.kind, LogicalKind::Include(_))
+                    || statement.text().contains(variable.name.as_str()))
+        })
 }
 
 /// Whether Make expands the value written here again at every reading. `!=`,
