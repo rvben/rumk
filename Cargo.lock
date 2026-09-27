@@ -366,6 +366,7 @@ dependencies = [
  "dunce",
  "globset",
  "ignore",
+ "libc",
  "serde",
  "serde_json",
  "similar",

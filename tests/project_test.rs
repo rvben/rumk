@@ -322,3 +322,56 @@ fn honors_predefined_variables_and_infers_gnu_default_goal() {
         &DefaultGoal::Known("from-include".into())
     );
 }
+
+/// CPU time the calling thread has spent, which other work on the machine
+/// does not inflate the way it inflates elapsed time.
+#[cfg(unix)]
+fn thread_cpu_time() -> std::time::Duration {
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    assert_eq!(
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) },
+        0
+    );
+    std::time::Duration::new(time.tv_sec as u64, time.tv_nsec as u32)
+}
+
+/// Loading reads every statement once and looks up what the parser recorded
+/// for it. Looking that record up by searching all of them takes time in the
+/// square of the file's length, which a generated Makefile of tens of
+/// thousands of rules turns into seconds.
+#[cfg(unix)]
+#[test]
+fn loads_a_long_makefile_in_time_linear_in_its_length() {
+    const RULES: usize = 60_000;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    let content: String = (0..RULES)
+        .map(|index| format!("V{index} = v{index}\nout{index}:\n"))
+        .collect();
+    std::fs::write(&path, content).unwrap();
+
+    let started = thread_cpu_time();
+    let project = Project::load(&path, &ProjectOptions::default()).unwrap();
+    let spent = thread_cpu_time() - started;
+
+    // Every statement was read: the last assignment holds its value and the
+    // last rule is known.
+    let last = RULES - 1;
+    assert_eq!(
+        project
+            .evaluation()
+            .expand(&format!("$(V{last})"))
+            .as_known(),
+        Some(format!("v{last}").as_str())
+    );
+    assert!(project.analysis().target(&format!("out{last}")).is_some());
+    // About 2s where each record is found by its line, and 15s where every
+    // statement searches them all, in an unoptimized build.
+    assert!(
+        spent < std::time::Duration::from_secs(5),
+        "loading {RULES} rules took {spent:?} of CPU time"
+    );
+}

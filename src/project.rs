@@ -1,6 +1,6 @@
 //! Safe, side-effect-free loading of statically knowable Make projects.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 
@@ -310,6 +310,18 @@ struct Loader<'a> {
     unread_include: bool,
 }
 
+/// The first of `items` on each line, keyed by that line.
+fn first_by_line<'a, T: 'a>(
+    items: impl IntoIterator<Item = &'a T>,
+    line: impl Fn(&T) -> usize,
+) -> HashMap<usize, &'a T> {
+    let mut by_line = HashMap::new();
+    for item in items {
+        by_line.entry(line(item)).or_insert(item);
+    }
+    by_line
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ConditionalFrame {
     parent: Truth,
@@ -356,6 +368,21 @@ impl<'a> Loader<'a> {
         let makefile = self.files[source.0].makefile.clone();
         let mut conditionals: Vec<ConditionalFrame> = Vec::new();
 
+        // Each statement finds what the parser recorded for it by the line it
+        // starts on, so those records are keyed by line once rather than
+        // searched again for every statement.
+        let conditional_at = first_by_line(&makefile.conditionals, |conditional| conditional.line);
+        let assignment_at = first_by_line(
+            makefile
+                .assignments
+                .iter()
+                .filter(|variable| variable.scope == VariableScope::Global),
+            |variable| variable.line,
+        );
+        let definition_at = first_by_line(&makefile.definitions, |definition| definition.line);
+        let include_at = first_by_line(&makefile.includes, |include| include.line);
+        let rule_at = first_by_line(&makefile.rules, |rule| rule.line);
+
         // A target- or pattern-specific assignment gives the name a value the
         // evaluator never holds, because Make holds it only while that rule
         // runs. It is still the project saying what the name is worth.
@@ -367,10 +394,8 @@ impl<'a> Loader<'a> {
 
         for statement in makefile.logical.statements() {
             if let LogicalKind::Conditional(kind) = statement.kind {
-                let conditional = makefile
-                    .conditionals
-                    .iter()
-                    .find(|conditional| conditional.line == statement.start_line)
+                let conditional = conditional_at
+                    .get(&statement.start_line)
                     .expect("parsed conditional has semantic record");
                 self.apply_conditional(kind, &conditional.expression, &mut conditionals);
                 self.record_activity(
@@ -385,19 +410,12 @@ impl<'a> Loader<'a> {
             self.record_activity(source, statement.start_line, activity);
             match statement.kind {
                 LogicalKind::Assignment => {
-                    if let Some(variable) = makefile.assignments.iter().find(|variable| {
-                        variable.line == statement.start_line
-                            && variable.scope == VariableScope::Global
-                    }) {
+                    if let Some(variable) = assignment_at.get(&statement.start_line) {
                         self.apply_assignment(source, variable, activity);
                     }
                 }
                 LogicalKind::Define => {
-                    if let Some(definition) = makefile
-                        .definitions
-                        .iter()
-                        .find(|definition| definition.line == statement.start_line)
-                    {
+                    if let Some(definition) = definition_at.get(&statement.start_line) {
                         let variable = Variable {
                             name: definition.name.clone(),
                             value: definition.value.clone(),
@@ -413,11 +431,7 @@ impl<'a> Loader<'a> {
                     }
                 }
                 LogicalKind::Include(_) => {
-                    if let Some(include) = makefile
-                        .includes
-                        .iter()
-                        .find(|include| include.line == statement.start_line)
-                    {
+                    if let Some(include) = include_at.get(&statement.start_line) {
                         for expression in &include.paths {
                             self.process_include(
                                 source,
@@ -430,11 +444,7 @@ impl<'a> Loader<'a> {
                     }
                 }
                 LogicalKind::Rule => {
-                    if let Some(rule) = makefile
-                        .rules
-                        .iter()
-                        .find(|rule| rule.line == statement.start_line)
-                    {
+                    if let Some(rule) = rule_at.get(&statement.start_line) {
                         self.consider_rule(source, rule, activity);
                     } else if let Some(prerequisites) = phony_prerequisites(statement.text()) {
                         self.consider_phonies(

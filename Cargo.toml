@@ -37,6 +37,10 @@ similar = "2.7"
 tempfile = "3.27"
 toml = "0.9"
 
+[target.'cfg(unix)'.dev-dependencies]
+# The thread CPU clock, for tests that bound time without counting other load.
+libc = "0.2"
+
 [[bin]]
 name = "rumk"
 path = "src/main.rs"
