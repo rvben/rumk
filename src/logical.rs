@@ -129,7 +129,9 @@ impl LogicalDocument {
 
             let last = &nodes[index];
             let group = &nodes[start..=index];
-            let (kind, text) = if first_kind == SyntaxKind::Recipe && rule_pending {
+            let (kind, text) = if rule_pending
+                && (first_kind == SyntaxKind::Recipe || continues_into_a_command(group, source))
+            {
                 (LogicalKind::Recipe, join_recipe_lines(group, source))
             } else {
                 let dangling = index + 1 == nodes.len()
@@ -375,6 +377,24 @@ fn fold_lines(nodes: &[SyntaxNode], source: &str, dangling: bool) -> String {
     }
 
     folded
+}
+
+/// Whether a recipe-prefixed comment is continued onto a line the shell runs.
+/// Make hands such a comment in a rule to the shell as a recipe line, and the
+/// shell ends the comment at its newline, backslash or not. A comment with
+/// nothing after it does nothing there, so it is left a comment.
+fn continues_into_a_command(group: &[SyntaxNode], source: &str) -> bool {
+    let [first, continued @ ..] = group else {
+        return false;
+    };
+    first.kind == SyntaxKind::Comment
+        && first
+            .content(source)
+            .starts_with(first.recipe_prefix.character)
+        && continued.iter().any(|node| {
+            let line = node.content(source).trim_start();
+            !line.is_empty() && !line.starts_with('#')
+        })
 }
 
 fn join_recipe_lines(nodes: &[SyntaxNode], source: &str) -> String {

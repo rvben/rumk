@@ -174,6 +174,16 @@ pub(super) fn complete_target_graph(project: &Project) -> bool {
     })
 }
 
+/// Whether the shell runs anything for a recipe line. A shell comment ends at
+/// its newline even after a backslash, so a line the comment is continued onto
+/// is a command unless it is a comment too.
+fn runs_a_command(command: &str) -> bool {
+    command.lines().any(|line| {
+        let line = line.trim_start();
+        !line.is_empty() && !line.starts_with('#')
+    })
+}
+
 pub struct RecipeLength {
     max_lines: usize,
 }
@@ -207,8 +217,7 @@ impl Rule for RecipeLength {
             .collect();
         makefile.rules.iter().filter_map(|rule| {
             let count = rule.recipes.iter().filter(|recipe| {
-                !inactive.contains(&recipe.line)
-                    && !recipe.command.trim().is_empty() && !recipe.command.trim_start().starts_with('#')
+                !inactive.contains(&recipe.line) && runs_a_command(&recipe.command)
             }).count();
             (count > self.max_lines).then(|| Diagnostic::new(self.id(), Severity::Warning,
                 format!("Recipe has {count} logical command lines (maximum {}); consider extracting a script", self.max_lines),

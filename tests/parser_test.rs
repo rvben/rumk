@@ -224,6 +224,43 @@ target: dependency
     }
 
     #[test]
+    fn a_command_a_recipe_comment_is_continued_onto_is_a_recipe() {
+        // Make hands a recipe-prefixed comment in a rule to the shell, where
+        // the comment ends at its newline and the continued line runs. A
+        // comment Make reads itself continues onto the next line instead.
+        let content = concat!(
+            "all:\n",
+            "\t# note \\\n",
+            "\techo ran\n",
+            "\t# a \\\n",
+            "\t# b\n",
+            "  # spaces \\\n",
+            "\techo swallowed\n",
+            "\techo last\n",
+        );
+        let makefile = parse(content);
+        let recipes: Vec<_> = makefile.rules[0]
+            .recipes
+            .iter()
+            .map(|recipe| (recipe.line, recipe.command.as_str()))
+            .collect();
+
+        assert_eq!(recipes, [(2, "# note \\\n\techo ran"), (8, "echo last")]);
+    }
+
+    #[test]
+    fn a_continued_comment_outside_a_rule_stays_a_comment() {
+        let makefile = parse("\t# top \\\n\techo orphan\nall:\n\techo e\n");
+
+        assert!(
+            makefile.syntax_errors.is_empty(),
+            "{:?}",
+            makefile.syntax_errors
+        );
+        assert_eq!(makefile.rules[0].recipes.len(), 1);
+    }
+
+    #[test]
     fn indented_conditionals_after_a_rule_are_not_parsed_as_recipes() {
         let content = "all:\n\t@echo all\n  ifeq ($(MODE),debug)\n  CFLAGS := -g\n  endif\n";
 

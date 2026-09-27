@@ -137,6 +137,19 @@ fn recipe_length_counts_logical_commands_not_physical_lines() {
 }
 
 #[test]
+fn recipe_length_counts_a_command_a_comment_line_continues_onto() {
+    // A shell comment ends at its newline, backslash or not, so the shell
+    // runs the line the comment was continued onto.
+    let rule = RecipeLength::new(1);
+    let content = "all:\n\t# note \\\n\techo ran\n\techo second\n";
+    let diagnostics = rule.check(&parse(content), content);
+    assert_eq!(diagnostics.len(), 1, "{content}");
+    assert!(diagnostics[0].message.contains("2 logical"));
+    let content = "all:\n\t# note \\\n\t# more\n\techo only\n";
+    assert!(rule.check(&parse(content), content).is_empty());
+}
+
+#[test]
 fn recipe_length_handles_inline_grouped_oneshell_and_inactive_commands() {
     let rule = RecipeLength::new(1);
     for content in [
