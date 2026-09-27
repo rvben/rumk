@@ -103,3 +103,31 @@ fn a_file_with_invalid_utf8_keeps_its_diagnostics_in_line_order() {
 
     assert_eq!(lines, [1, 2, 5], "{output}");
 }
+
+#[test]
+fn github_annotations_name_the_rule() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(&path, "all:\n    echo hi\n").unwrap();
+
+    let output = stdout(rumk().args([
+        "check",
+        "--no-config",
+        "--output-format",
+        "github",
+        path.to_str().unwrap(),
+    ]));
+    let annotation = output
+        .lines()
+        .find(|line| line.starts_with("::error "))
+        .unwrap_or_else(|| panic!("no error annotation in {output}"));
+
+    assert!(
+        annotation.starts_with("::error title=rumk (MK001),file="),
+        "{annotation}"
+    );
+    assert!(
+        annotation.ends_with(",line=2,col=1::Recipe must be indented with tab, not spaces"),
+        "{annotation}"
+    );
+}

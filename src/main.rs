@@ -1688,9 +1688,12 @@ fn output_github(report: &FileReport) {
             Severity::Warning => "warning",
             Severity::Info => "notice",
         };
+        // The title is what the annotation shows in bold, so it names the rule
+        // a reader would disable or look up.
         println!(
-            "::{} file={},line={},col={}::{}",
+            "::{} title={},file={},line={},col={}::{}",
             level,
+            escape_github_property(&format!("rumk ({})", diagnostic.rule_id)),
             escape_github_property(&diagnostic_path(report, diagnostic)),
             diagnostic.line,
             diagnostic.column,
