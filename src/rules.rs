@@ -1,7 +1,6 @@
 use crate::diagnostic::{Applicability, Diagnostic};
 use crate::parser::Makefile;
 use crate::project::Project;
-use anyhow::{bail, Result};
 
 pub mod best_practices;
 pub mod formatting;
@@ -102,24 +101,6 @@ pub fn documentation_url(rule_id: &str) -> String {
         "https://github.com/rvben/rumk/blob/main/docs/{}.md",
         rule_id.to_ascii_lowercase()
     )
-}
-
-pub fn get_rule_explanation(rule_id: &str) -> Result<String> {
-    let all_rules = get_all_rules();
-
-    for rule in all_rules {
-        if rule.id() == rule_id {
-            return Ok(format!(
-                "Rule: {}\nCategory: {:?}\nDescription: {}\n\n{}",
-                rule.id(),
-                rule.category(),
-                rule.name(),
-                rule.description()
-            ));
-        }
-    }
-
-    bail!("Unknown rule: {}", rule_id)
 }
 
 pub fn get_all_rules() -> Vec<Box<dyn Rule>> {

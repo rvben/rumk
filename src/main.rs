@@ -80,7 +80,7 @@ enum Commands {
         #[arg(long)]
         list_categories: bool,
     },
-    /// Explain a rule with its rationale
+    /// Explain a rule with its rationale (the same as `rumk rule <RULE>`)
     Explain { rule: String },
     /// Show or query the effective configuration
     Config {
@@ -398,10 +398,7 @@ fn run() -> Result<u8> {
             category.as_deref(),
             list_categories,
         ),
-        Commands::Explain { rule } => {
-            println!("{}", rules::get_rule_explanation(&rule)?);
-            Ok(SUCCESS)
-        }
+        Commands::Explain { rule } => show_rule(Some(&rule), false, None, false),
         Commands::Version => {
             println!("rumk {}", env!("CARGO_PKG_VERSION"));
             Ok(SUCCESS)

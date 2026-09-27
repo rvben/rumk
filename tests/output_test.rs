@@ -160,3 +160,25 @@ fn colored_text_has_no_empty_escape_sequences() {
         "a style opened and closed around nothing: {output:?}"
     );
 }
+
+#[test]
+fn explain_shows_the_rule_detail_for_any_case() {
+    let lower = rumk().args(["explain", "mk201"]).output().unwrap();
+    let upper = rumk().args(["explain", "MK201"]).output().unwrap();
+    let rule = rumk().args(["rule", "MK201"]).output().unwrap();
+
+    assert!(lower.status.success(), "{lower:?}");
+    let text = String::from_utf8(lower.stdout.clone()).unwrap();
+    assert!(text.starts_with("MK201 - "), "{text}");
+    assert!(text.contains("\nCategory: best-practices\n"), "{text}");
+    assert_eq!(lower.stdout, upper.stdout);
+    assert_eq!(lower.stdout, rule.stdout);
+}
+
+#[test]
+fn explain_rejects_an_unknown_rule() {
+    let output = rumk().args(["explain", "MK999"]).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown rule: MK999"));
+}
