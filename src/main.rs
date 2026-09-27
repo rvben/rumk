@@ -795,7 +795,7 @@ fn run_files(
     if !args.silent {
         output_reports(&reports, args.output_format, operation)?;
         if !args.quiet && matches!(args.output_format, OutputFormat::Text) {
-            output_summary(&reports, operation);
+            output_summary(&reports, operation, true);
         }
     }
 
@@ -895,7 +895,16 @@ fn run_stdin(
         std::io::stdout()
             .write_all(with_byte_order_mark(&report.content, report.byte_order_mark).as_bytes())?;
     } else if !args.silent {
-        output_reports(&[report], args.output_format, operation)?;
+        let reports = [report];
+        output_reports(&reports, args.output_format, operation)?;
+        // Formatting modes answer with the buffer or a patch, which a summary
+        // would corrupt.
+        if !args.quiet
+            && matches!(operation, Operation::Check)
+            && matches!(args.output_format, OutputFormat::Text)
+        {
+            output_summary(&reports, operation, false);
+        }
     }
     Ok(if violations {
         VIOLATIONS_FOUND
@@ -1703,7 +1712,10 @@ fn output_github(report: &FileReport) {
     }
 }
 
-fn output_summary(reports: &[FileReport], operation: Operation) {
+/// Prints the closing summary. `suggest_fixes` is whether the commands it
+/// can suggest would act on these reports: a buffer read from stdin is never
+/// written, so the counts stand alone for it.
+fn output_summary(reports: &[FileReport], operation: Operation, suggest_fixes: bool) {
     let fixed: usize = reports.iter().map(|report| report.fixed_count).sum();
     if fixed > 0 && operation.writes() {
         println!(
@@ -1793,7 +1805,7 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
                 .as_ref()
                 .is_some_and(|fix| fix.applicability == Applicability::Unsafe);
         }
-        if fixable > 0 {
+        if fixable > 0 && suggest_fixes {
             let command = if needs_unsafe {
                 "rumk check --fix --unsafe-fixes"
             } else {
@@ -1805,7 +1817,7 @@ fn output_summary(reports: &[FileReport], operation: Operation) {
                 pluralize(fixable, "issue", "issues")
             );
         }
-        if hidden > 0 {
+        if hidden > 0 && suggest_fixes {
             println!("{}", hidden_fix_hint(hidden));
         }
     }

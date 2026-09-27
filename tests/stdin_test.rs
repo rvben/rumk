@@ -329,3 +329,27 @@ fn json_exports_multi_edit_fixes_as_one_complete_replacement() {
         );
     }
 }
+
+#[test]
+fn checking_stdin_as_text_ends_with_a_summary_that_names_no_file_command() {
+    let root = tempfile::tempdir().unwrap();
+    let args = ["check", "-", "--no-config", "--stdin-filename", "x.mk"];
+    let input = b"all:\n    echo hi\n";
+
+    let output = run(root.path(), &args, input);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout.ends_with("\nFound 2 issues in 1 file (1 file checked)\n"),
+        "{stdout}"
+    );
+
+    let clean = run(root.path(), &args, b".PHONY: all\nall:\n\techo hi\n");
+    assert_eq!(
+        String::from_utf8(clean.stdout).unwrap(),
+        "✓ No issues found in 1 file\n"
+    );
+
+    let quiet = run(root.path(), &[&args[..], &["--quiet"]].concat(), input);
+    assert!(!String::from_utf8(quiet.stdout).unwrap().contains("Found"));
+}
