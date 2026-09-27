@@ -2004,11 +2004,22 @@ fn show_rule(
         println!("{}", rule.description());
     } else {
         let category = category.map(normalize_category).transpose()?;
+        let defaults = Config::default();
         for rule in all_rules.into_iter().filter(|rule| {
             (!fixable_only || rule.fixable())
                 && category.is_none_or(|category| rule.category() == category)
         }) {
-            println!("{}  {}", rule.id(), rule.name());
+            let default = if defaults.rules.iter().any(|item| item.id() == rule.id()) {
+                "default"
+            } else {
+                "opt-in"
+            };
+            let fix = match (rule.fixable(), rule.fix_applicability()) {
+                (false, _) => "",
+                (true, Applicability::Safe) => "fix",
+                (true, Applicability::Unsafe) => "unsafe fix",
+            };
+            println!("{}  {default:<7}  {fix:<10}  {}", rule.id(), rule.name());
         }
     }
     Ok(SUCCESS)

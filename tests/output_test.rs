@@ -182,3 +182,28 @@ fn explain_rejects_an_unknown_rule() {
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("Unknown rule: MK999"));
 }
+
+#[test]
+fn the_rule_list_says_which_rules_run_by_default_and_how_they_fix() {
+    let output = stdout(rumk().arg("rule"));
+    let line = |id: &str| {
+        output
+            .lines()
+            .find(|line| line.starts_with(id))
+            .unwrap_or_else(|| panic!("{id} missing from {output}"))
+            .to_string()
+    };
+
+    assert_eq!(
+        line("MK001"),
+        "MK001  default  fix         Recipe must use tab indentation"
+    );
+    assert_eq!(
+        line("MK102"),
+        "MK102  opt-in               Variable naming convention"
+    );
+    assert_eq!(
+        line("MK201"),
+        "MK201  default  unsafe fix  Conventional command targets should be .PHONY"
+    );
+}
