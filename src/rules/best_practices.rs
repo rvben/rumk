@@ -763,6 +763,7 @@ fn shell_tokens(command: &str) -> Vec<ShellToken> {
     let mut quote = None;
     let mut quoted = false;
     let mut escaped = false;
+    let mut comment = false;
 
     let flush = |tokens: &mut Vec<ShellToken>,
                  current: &mut String,
@@ -781,6 +782,14 @@ fn shell_tokens(command: &str) -> Vec<ShellToken> {
     };
 
     for (offset, character) in command.char_indices() {
+        // A comment runs to its newline, a backslash before it included.
+        if comment {
+            if character == '\n' {
+                comment = false;
+                tokens.push(ShellToken::Separator);
+            }
+            continue;
+        }
         if escaped {
             escaped = false;
             // The shell removes a backslash and the newline after it before
@@ -833,6 +842,8 @@ fn shell_tokens(command: &str) -> Vec<ShellToken> {
             if !matches!(tokens.last(), Some(ShellToken::Separator)) {
                 tokens.push(ShellToken::Separator);
             }
+        } else if character == '#' && current_start.is_none() {
+            comment = true;
         } else {
             current_start.get_or_insert(offset);
             current.push(character);

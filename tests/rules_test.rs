@@ -510,6 +510,28 @@ fn recursive_make_rule_sees_quoted_and_continued_commands() {
 }
 
 #[test]
+fn recursive_make_rule_reads_shell_comments() {
+    // A '#' at the start of a word comments out the rest of its line, and
+    // the comment ends there even after a backslash.
+    let content = concat!(
+        "all:\n",
+        "\techo x # ; make y\n",
+        "\t# note \\\n",
+        "\tmake -C sub\n",
+        "\techo a#b; make z\n",
+    );
+    let diagnostics = RecursiveMake.check(&parse(content), content);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.line, diagnostic.column))
+            .collect::<Vec<_>>(),
+        [(4, 2), (5, 12)]
+    );
+}
+
+#[test]
 fn recursive_make_fix_replaces_every_command_position_on_a_line() {
     let content = ".PHONY: all\nall: ; make first && env MODE=debug gmake second\n";
     let diagnostics = RecursiveMake.check(&parse(content), content);
