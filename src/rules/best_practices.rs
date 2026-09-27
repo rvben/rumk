@@ -675,16 +675,17 @@ impl Rule for RecursiveMake {
             .filter_map(|recipe| {
                 let invocations = bare_make_invocations(&recipe.command);
                 let first = invocations.first()?;
-                let column = recipe.column + recipe.command[..first.start].chars().count();
+                let (line, column) =
+                    position_within(recipe.line, recipe.column, &recipe.command, first.start);
                 let mut diagnostic = Diagnostic::new(
                     self.id(),
                     Severity::Warning,
                     "Use $(MAKE) instead of invoking make directly",
-                    recipe.line,
+                    line,
                     column,
                 )
                 .with_end(
-                    recipe.line,
+                    line,
                     column + recipe.command[first.start..first.end].chars().count(),
                 );
                 if recipe.line == recipe.end_line {
@@ -740,12 +741,14 @@ fn bare_make_invocations(command: &str) -> Vec<Invocation> {
                 {
                     continue;
                 }
-                if !quoted
-                    && (is_make_executable(&text) || is_make_executable(&command[start..end]))
-                {
+                // Quoting a command name does not change which command runs,
+                // so '"make"' is the same 'make'. It does take a word out of
+                // the shell's reserved words, so a quoted 'if' is a command.
+                if is_make_executable(&text) || is_make_executable(&command[start..end]) {
                     invocations.push(Invocation { start, end });
                 }
-                command_position = matches!(text.as_str(), "if" | "then" | "else" | "do");
+                command_position =
+                    !quoted && matches!(text.as_str(), "if" | "then" | "else" | "do");
             }
             ShellToken::Word { .. } => {}
         }
@@ -779,8 +782,16 @@ fn shell_tokens(command: &str) -> Vec<ShellToken> {
 
     for (offset, character) in command.char_indices() {
         if escaped {
-            current.push(character);
             escaped = false;
+            // The shell removes a backslash and the newline after it before
+            // it splits the line into words.
+            if character == '\n' {
+                if current.is_empty() && !quoted {
+                    current_start = None;
+                }
+                continue;
+            }
+            current.push(character);
             continue;
         }
         if character == '\\' && quote != Some('\'') {

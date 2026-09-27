@@ -476,6 +476,40 @@ fn recursive_make_rule_distinguishes_commands_from_arguments() {
 }
 
 #[test]
+fn recursive_make_rule_sees_quoted_and_continued_commands() {
+    // The shell runs a quoted command name as it runs a bare one, and joins a
+    // line a backslash continues before it reads the command there.
+    let content = concat!(
+        "all:\n",
+        "\t\"make\" -C quoted\n",
+        "\tcd x && 'gmake' -C single\n",
+        "\tcd y && \\\n",
+        "\t  make -C continued\n",
+        "\t\"if\" make\n",
+    );
+    let diagnostics = RecursiveMake.check(&parse(content), content);
+
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| (diagnostic.line, diagnostic.column, diagnostic.end_column))
+            .collect::<Vec<_>>(),
+        [(2, 2, Some(8)), (3, 10, Some(17)), (5, 4, Some(8))]
+    );
+    assert_eq!(
+        apply_fixes(content, &diagnostics).content,
+        concat!(
+            "all:\n",
+            "\t$(MAKE) -C quoted\n",
+            "\tcd x && $(MAKE) -C single\n",
+            "\tcd y && \\\n",
+            "\t  make -C continued\n",
+            "\t\"if\" make\n",
+        )
+    );
+}
+
+#[test]
 fn recursive_make_fix_replaces_every_command_position_on_a_line() {
     let content = ".PHONY: all\nall: ; make first && env MODE=debug gmake second\n";
     let diagnostics = RecursiveMake.check(&parse(content), content);
