@@ -284,7 +284,10 @@ fn server_reports_versioned_diagnostics_actions_and_incremental_updates() {
     server.open(&uri, input, 1);
     let d = server.diagnostics(&uri, 1);
     assert_eq!(d[0]["code"], "MK001");
-    assert_eq!(d[0]["range"]["start"]["line"], 2);
+    assert_eq!(
+        d[0]["range"],
+        json!({"start":{"line":2,"character":0},"end":{"line":2,"character":4}})
+    );
     server.send(json!({"id":2,"method":"textDocument/codeAction","params":{"textDocument":{"uri":uri},"range":{"start":{"line":2,"character":0},"end":{"line":2,"character":4}},"context":{"diagnostics":d,"only":["quickfix"]}}}));
     let actions = server.until(|m| m["id"] == 2)["result"].clone();
     assert_eq!(

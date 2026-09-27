@@ -127,9 +127,81 @@ fn github_annotations_name_the_rule() {
         "{annotation}"
     );
     assert!(
-        annotation.ends_with(",line=2,col=1::Recipe must be indented with tab, not spaces"),
+        annotation.ends_with(
+            ",line=2,endLine=2,col=1,endColumn=5::Recipe must be indented with tab, not spaces"
+        ),
         "{annotation}"
     );
+}
+
+/// The `(line, column)` to `(end_line, end_column)` range of every finding
+/// for `rule` in `file`, in report order.
+fn spans(diagnostics: &[Value], file: &str, rule: &str) -> Vec<[u64; 4]> {
+    diagnostics
+        .iter()
+        .filter(|diagnostic| {
+            diagnostic["rule"] == rule && diagnostic["file"].as_str().unwrap().ends_with(file)
+        })
+        .map(|diagnostic| {
+            ["line", "column", "end_line", "end_column"]
+                .map(|key| diagnostic[key].as_u64().unwrap())
+        })
+        .collect()
+}
+
+#[test]
+fn every_finding_spans_the_text_it_is_about() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("Makefile");
+    std::fs::write(
+        &path,
+        concat!(
+            "include inc.mk\r\n",
+            "all:\r\n",
+            "    echo hi\r\n",
+            "\tcd sub && make -C x\r\n",
+            "\trm -rf $BUILD out   \r\n",
+            "LONG = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("inc.mk"),
+        format!("FLAGS = {}  \nX=1\n", "é".repeat(120)),
+    )
+    .unwrap();
+
+    let output = stdout(rumk().args([
+        "check",
+        "--no-config",
+        "--extend-enable",
+        "MK105",
+        "--output-format",
+        "json",
+        path.to_str().unwrap(),
+    ]));
+    let diagnostics: Vec<Value> = serde_json::from_str(&output).unwrap();
+
+    // A token a rule names is spanned exactly: the indentation, the word
+    // `make`, the reference.
+    assert_eq!(spans(&diagnostics, "Makefile", "MK001"), [[3, 1, 3, 5]]);
+    assert_eq!(spans(&diagnostics, "Makefile", "MK203"), [[4, 12, 4, 16]]);
+    assert_eq!(spans(&diagnostics, "Makefile", "MK211"), [[5, 9, 5, 15]]);
+    assert_eq!(spans(&diagnostics, "inc.mk", "MK105"), [[2, 2, 2, 3]]);
+    // Anything else runs to the end of its line, trailing space and line
+    // endings left out, in characters, in the root and in an included file.
+    assert_eq!(spans(&diagnostics, "Makefile", "MK201"), [[2, 1, 2, 5]]);
+    assert_eq!(spans(&diagnostics, "Makefile", "MK101"), [[6, 121, 6, 130]]);
+    assert_eq!(spans(&diagnostics, "inc.mk", "MK101"), [[1, 121, 1, 129]]);
+    for diagnostic in &diagnostics {
+        assert!(
+            (
+                diagnostic["end_line"].as_u64(),
+                diagnostic["end_column"].as_u64()
+            ) > (diagnostic["line"].as_u64(), diagnostic["column"].as_u64()),
+            "{diagnostic}"
+        );
+    }
 }
 
 #[test]

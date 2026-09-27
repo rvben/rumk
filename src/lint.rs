@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
-use crate::diagnostic::{Applicability, Diagnostic};
+use crate::diagnostic::{fill_spans, Applicability, Diagnostic};
 use crate::project::Project;
 use crate::{fix, inline_config, parser};
 
@@ -106,6 +106,7 @@ fn lint_parsed(
             diagnostic
         })
         .collect::<Vec<_>>();
+    fill_spans(&mut diagnostics, content);
     diagnostics = inline_config::apply_inline_suppressions(content, diagnostics)
         .map_err(anyhow::Error::msg)?;
     // The project pass judges what the files a Makefile includes do together,
@@ -162,7 +163,7 @@ fn lint_parsed(
             }
         }
         for file in project.files() {
-            let source_diagnostics = diagnostics_by_source
+            let mut source_diagnostics: Vec<_> = diagnostics_by_source
                 .remove(file.path.as_path())
                 .unwrap_or_default()
                 .into_iter()
@@ -170,6 +171,7 @@ fn lint_parsed(
                     !config.is_rule_ignored_for_path(&file.path, &diagnostic.rule_id)
                 })
                 .collect();
+            fill_spans(&mut source_diagnostics, &file.content);
             diagnostics.extend(
                 inline_config::apply_inline_suppressions(&file.content, source_diagnostics)
                     .map_err(anyhow::Error::msg)?,

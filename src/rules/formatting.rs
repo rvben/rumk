@@ -74,6 +74,7 @@ impl Rule for AssignmentSpacing {
                         statement.start_line,
                         start_column,
                     )
+                    .with_end(statement.start_line, end_column)
                     .with_fix(
                         Fix::new("Normalize assignment operator spacing").add_edit(Edit::new(
                             statement.start_line,

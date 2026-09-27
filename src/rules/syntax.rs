@@ -43,6 +43,7 @@ impl Rule for TabInRecipe {
                 // The replacement is the prefix Make expects at this line, which
                 // an earlier .RECIPEPREFIX assignment can have changed from a tab.
                 let prefix = makefile.syntax.recipe_prefix_at(recipe.line);
+                let indentation_end = recipe.indentation.chars().count() + 1;
                 if prefix.unevaluated {
                     // A value Rumk could not evaluate can be the space this
                     // line starts with, so Make may read the line as a recipe.
@@ -53,13 +54,16 @@ impl Rule for TabInRecipe {
                     // recipes with, whichever prefix it ends up using, but
                     // writing one Rumk had to guess would break a file Make
                     // accepts, so the line is reported without a fix.
-                    diagnostics.push(Diagnostic::new(
-                        self.id(),
-                        Severity::Error,
-                        "Recipe must be indented with the active recipe prefix, not spaces",
-                        recipe.line,
-                        1,
-                    ));
+                    diagnostics.push(
+                        Diagnostic::new(
+                            self.id(),
+                            Severity::Error,
+                            "Recipe must be indented with the active recipe prefix, not spaces",
+                            recipe.line,
+                            1,
+                        )
+                        .with_end(recipe.line, indentation_end),
+                    );
                     continue;
                 }
                 let character = prefix.character;
@@ -81,12 +85,13 @@ impl Rule for TabInRecipe {
                     recipe.line,
                     1,
                     recipe.line,
-                    recipe.indentation.len() + 1,
+                    indentation_end,
                     character.to_string(),
                 ));
 
                 diagnostics.push(
                     Diagnostic::new(self.id(), Severity::Error, message, recipe.line, 1)
+                        .with_end(recipe.line, indentation_end)
                         .with_fix(fix),
                 );
             }

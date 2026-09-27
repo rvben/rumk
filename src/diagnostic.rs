@@ -97,6 +97,48 @@ impl Diagnostic {
         self.source = Some(source.into());
         self
     }
+
+    /// Ends the reported range before `end_column` on `end_line`, for a rule
+    /// that knows the text it is about.
+    pub fn with_end(mut self, end_line: usize, end_column: usize) -> Self {
+        self.end_line = Some(end_line);
+        self.end_column = Some(end_column);
+        self
+    }
+}
+
+/// Ends each range a rule left open at the end of its start line, so an editor
+/// or annotation marks the statement instead of a single position. Trailing
+/// whitespace is left out unless the finding is in it, and a position past
+/// the text keeps no end.
+pub fn fill_spans(diagnostics: &mut [Diagnostic], content: &str) {
+    if diagnostics
+        .iter()
+        .all(|diagnostic| diagnostic.end_line.is_some())
+    {
+        return;
+    }
+    let lines: Vec<_> = content.lines().collect();
+    for diagnostic in diagnostics
+        .iter_mut()
+        .filter(|diagnostic| diagnostic.end_line.is_none())
+    {
+        let Some(line) = diagnostic
+            .line
+            .checked_sub(1)
+            .and_then(|index| lines.get(index))
+        else {
+            continue;
+        };
+        let end = [line.trim_end(), line]
+            .map(|text| text.chars().count() + 1)
+            .into_iter()
+            .find(|&end| end > diagnostic.column);
+        if let Some(end) = end {
+            diagnostic.end_line = Some(diagnostic.line);
+            diagnostic.end_column = Some(end);
+        }
+    }
 }
 
 impl Fix {

@@ -425,7 +425,7 @@ rumk check --output-format json .
     "line": 2,
     "column": 1,
     "end_line": 2,
-    "end_column": 1,
+    "end_column": 5,
     "rule": "MK001",
     "message": "Recipe must be indented with tab, not spaces",
     "severity": "error",

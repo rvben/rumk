@@ -1704,15 +1704,25 @@ fn output_github(report: &FileReport) {
             Severity::Warning => "warning",
             Severity::Info => "notice",
         };
+        let end_line = diagnostic.end_line.unwrap_or(diagnostic.line);
+        // GitHub takes an end column only for a range on a single line.
+        let end_column = match diagnostic.end_column {
+            Some(end_column) if end_line == diagnostic.line => {
+                format!(",endColumn={end_column}")
+            }
+            _ => String::new(),
+        };
         // The title is what the annotation shows in bold, so it names the rule
         // a reader would disable or look up.
         println!(
-            "::{} title={},file={},line={},col={}::{}",
+            "::{} title={},file={},line={},endLine={},col={}{}::{}",
             level,
             escape_github_property(&format!("rumk ({})", diagnostic.rule_id)),
             escape_github_property(&diagnostic_path(report, diagnostic)),
             diagnostic.line,
+            end_line,
             diagnostic.column,
+            end_column,
             escape_github_message(&diagnostic.message)
         );
     }

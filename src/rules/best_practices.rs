@@ -675,12 +675,17 @@ impl Rule for RecursiveMake {
             .filter_map(|recipe| {
                 let invocations = bare_make_invocations(&recipe.command);
                 let first = invocations.first()?;
+                let column = recipe.column + recipe.command[..first.start].chars().count();
                 let mut diagnostic = Diagnostic::new(
                     self.id(),
                     Severity::Warning,
                     "Use $(MAKE) instead of invoking make directly",
                     recipe.line,
-                    recipe.column + recipe.command[..first.start].chars().count(),
+                    column,
+                )
+                .with_end(
+                    recipe.line,
+                    column + recipe.command[first.start..first.end].chars().count(),
                 );
                 if recipe.line == recipe.end_line {
                     let fix = invocations.into_iter().fold(
@@ -1090,6 +1095,7 @@ impl Rule for ShellStyleVariableReference {
                     .map(move |reference| {
                         let name = &expanded[reference.start + 1..reference.end];
                         let column = start_column + expanded[..reference.start].chars().count();
+                        let end = start_column + expanded[..reference.end].chars().count();
                         let diagnostic = Diagnostic::new(
                             self.id(),
                             Severity::Warning,
@@ -1100,14 +1106,14 @@ impl Rule for ShellStyleVariableReference {
                             ),
                             line,
                             column,
-                        );
+                        )
+                        .with_end(line, end);
                         // A recipe can mean either the Make variable or the
                         // shell one, written '$$VAR', and the two are not the
                         // same edit, so there is nothing to apply for it.
                         if recipe_start.is_some_and(|start| reference.start >= start) {
                             return diagnostic;
                         }
-                        let end = start_column + expanded[..reference.end].chars().count();
                         diagnostic.with_fix(
                             Fix::unsafe_fix(format!("Read '{name}' as one variable"))
                                 .add_edit(Edit::new(line, column, line, end, format!("$({name})"))),
