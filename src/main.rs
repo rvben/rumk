@@ -1061,7 +1061,9 @@ fn discover_files(
             }
         };
         if metadata.is_file() {
-            if is_makefile(path) && !configurations.for_file(path)?.is_path_excluded(path) {
+            // Naming a file is the request to check it, so its name is not
+            // judged; only a directory walk looks for names like a Makefile's.
+            if !configurations.for_file(path)?.is_path_excluded(path) {
                 files.insert(path.clone());
             }
         } else if metadata.is_dir() {

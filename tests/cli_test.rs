@@ -386,6 +386,35 @@ fn an_unknown_inline_rule_names_the_file_and_line_it_is_written_on() {
 }
 
 #[test]
+fn a_file_named_on_the_command_line_is_checked_whatever_its_name() {
+    let directory = tempfile::tempdir().unwrap();
+    let content = ".PHONY: all\nall:\n    echo hi\n";
+    std::fs::write(directory.path().join("Makefile.inc"), content).unwrap();
+    std::fs::write(directory.path().join("notes.txt"), content).unwrap();
+    std::fs::write(directory.path().join("build.mk"), content).unwrap();
+
+    let named = rumk()
+        .current_dir(directory.path())
+        .args(["--no-config", "check", "Makefile.inc"])
+        .output()
+        .unwrap();
+    let walked = rumk()
+        .current_dir(directory.path())
+        .args(["--no-config", "check", "."])
+        .output()
+        .unwrap();
+
+    // Naming the file is the request to check it. A directory walk still only
+    // picks up what is named like a Makefile.
+    let named = String::from_utf8_lossy(&named.stdout);
+    assert!(named.contains("Makefile.inc:3:1: [MK001]"), "{named}");
+    assert!(named.contains("(1 file checked)"), "{named}");
+    let walked = String::from_utf8_lossy(&walked.stdout);
+    assert!(walked.contains("build.mk:3:1: [MK001]"), "{walked}");
+    assert!(!walked.contains("notes.txt"), "{walked}");
+}
+
+#[test]
 fn fmt_lays_the_file_out_and_leaves_what_make_does_to_check() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");
