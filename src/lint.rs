@@ -176,7 +176,8 @@ fn lint_parsed(
             );
         }
     }
-    sort_diagnostics(&mut diagnostics);
+    let file = project.map_or(path, |project| project.file(project.root()).path.as_path());
+    sort_diagnostics(&mut diagnostics, file);
     Ok(diagnostics)
 }
 
@@ -264,10 +265,20 @@ pub fn fix(
 
 /// Orders diagnostics the way they are reported: by the file they belong to,
 /// then their place in it, then the rule that found them.
-pub fn sort_diagnostics(diagnostics: &mut [Diagnostic]) {
+///
+/// `file` is the file the diagnostics were reported for. Its own diagnostics
+/// come first whether or not a rule named it as their source, so a project
+/// rule's finding in `file` sorts among the file-local ones.
+pub fn sort_diagnostics(diagnostics: &mut [Diagnostic], file: &Path) {
+    fn other_file<'a>(diagnostic: &'a Diagnostic, file: &Path) -> Option<&'a Path> {
+        diagnostic
+            .source
+            .as_deref()
+            .filter(|source| *source != file)
+    }
     diagnostics.sort_by(|left, right| {
-        left.source
-            .cmp(&right.source)
+        other_file(left, file)
+            .cmp(&other_file(right, file))
             .then_with(|| left.line.cmp(&right.line))
             .then_with(|| left.column.cmp(&right.column))
             .then_with(|| left.rule_id.cmp(&right.rule_id))

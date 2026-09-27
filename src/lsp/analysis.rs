@@ -121,8 +121,8 @@ pub fn analyze(snapshot: &Snapshot) -> Result<Reports> {
                 .push(diagnostic);
         }
     }
-    for report in reports.values_mut() {
-        lint::sort_diagnostics(&mut report.diagnostics);
+    for (path, report) in &mut reports {
+        lint::sort_diagnostics(&mut report.diagnostics, path);
         report.diagnostics.dedup_by(|a, b| {
             a.rule_id == b.rule_id
                 && a.line == b.line

@@ -1203,7 +1203,10 @@ fn process_file(
             )
             .map_err(anyhow::Error::msg)?,
         );
-        lint::sort_diagnostics(&mut initial_diagnostics);
+        let file = project.as_deref().map_or(resolved, |project| {
+            project.file(project.root()).path.as_path()
+        });
+        lint::sort_diagnostics(&mut initial_diagnostics, file);
     }
     let mut diagnostics = initial_diagnostics.clone();
     let mut content = original.clone();
