@@ -251,7 +251,12 @@ fn session(
     let mut initialized = false;
     let mut shutdown = false;
     let mut watch = false;
+    // Every change bumps `generation`; `edited` is the generation of the
+    // latest open-document change. Results computed since then describe the
+    // current buffers, so a disk change alone never discards them: during a
+    // build it would otherwise cancel every request and starve diagnostics.
     let mut generation = 0;
+    let mut edited = 0;
     let mut published = BTreeSet::new();
     let mut pending: BTreeMap<String, (Value, Arc<AtomicBool>)> = BTreeMap::new();
     while let Ok(event) = rx.recv() {
@@ -268,7 +273,7 @@ fn session(
                     if pending.remove(&id.to_string()).is_none() {
                         continue;
                     }
-                    let message = if finished.generation != generation || shutdown {
+                    let message = if finished.generation < edited || shutdown {
                         reply(id, json!([]))
                     } else {
                         match finished.result {
@@ -277,7 +282,7 @@ fn session(
                         }
                     };
                     send(out, &message)?;
-                } else if finished.generation == generation && !shutdown {
+                } else if (edited..=generation).contains(&finished.generation) && !shutdown {
                     match finished.result {
                         Ok(messages) => {
                             let messages =
@@ -475,15 +480,26 @@ fn session(
                             }
                             Ok(true) => {}
                         }
-                        snapshot.cancelled.store(true, Ordering::Relaxed);
-                        snapshot.cancelled = Arc::default();
                         generation += 1;
-                        for (_, (id, cancel)) in std::mem::take(&mut pending) {
-                            cancel.store(true, Ordering::Relaxed);
-                            send(out, &error(id, -32801, "Document content changed"))?;
+                        let document_changed = matches!(
+                            method,
+                            "textDocument/didOpen"
+                                | "textDocument/didChange"
+                                | "textDocument/didClose"
+                        );
+                        if document_changed {
+                            edited = generation;
+                            snapshot.cancelled.store(true, Ordering::Relaxed);
+                            snapshot.cancelled = Arc::default();
+                            for (_, (id, cancel)) in std::mem::take(&mut pending) {
+                                cancel.store(true, Ordering::Relaxed);
+                                send(out, &error(id, -32801, "Document content changed"))?;
+                            }
                         }
                         let mut queue = work.0.lock().unwrap();
-                        queue.requests.clear();
+                        if document_changed {
+                            queue.requests.clear();
+                        }
                         queue.diagnostics = Some(Job {
                             generation,
                             snapshot: snapshot.clone(),
@@ -715,6 +731,92 @@ mod tests {
         assert_eq!(responses.len(), 1);
         assert_eq!(responses[0]["error"]["code"], -32800);
         assert!(work.0.lock().unwrap().requests.is_empty());
+    }
+    fn run_session(events: Vec<Event>) -> (Vec<Value>, Work) {
+        let (tx, rx) = mpsc::channel();
+        for event in events {
+            tx.send(event).unwrap();
+        }
+        drop(tx);
+        let mut output = Vec::new();
+        let work: Work = Arc::default();
+        session(&rx, &work, None, true, &mut output).unwrap();
+        let mut input = std::io::Cursor::new(output);
+        let mut messages = Vec::new();
+        while let Some(message) = read_message(&mut input).unwrap() {
+            messages.push(message);
+        }
+        (messages, work)
+    }
+    fn message(mut message: Value) -> Event {
+        message["jsonrpc"] = json!("2.0");
+        Event::Message(message)
+    }
+    fn published(uri: &str, generation: u64) -> Event {
+        Event::Finished(Finished {
+            generation,
+            request: None,
+            result: Ok(json!([notification(
+                "textDocument/publishDiagnostics",
+                json!({"uri":uri,"diagnostics":[]})
+            )])),
+        })
+    }
+    #[test]
+    fn a_disk_change_keeps_pending_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = text::uri(&dir.path().join("Makefile"));
+        let format = json!({"jsonrpc":"2.0","id":"format","method":"textDocument/formatting","params":{"textDocument":{"uri":uri}}});
+        let (messages, work) = run_session(vec![
+            message(json!({"id":1,"method":"initialize"})),
+            message(
+                json!({"method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"version":1,"text":"all:;\n"}}}),
+            ),
+            message(format.clone()),
+            message(
+                json!({"method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":text::uri(&dir.path().join("target/out.o")),"type":1}]}}),
+            ),
+            message(json!({"method":"textDocument/didSave","params":{"textDocument":{"uri":uri}}})),
+            Event::Finished(Finished {
+                generation: 1,
+                request: Some(format),
+                result: Ok(json!(["edit"])),
+            }),
+        ]);
+
+        let replies: Vec<_> = messages.iter().filter(|m| m["id"] == "format").collect();
+        assert_eq!(replies.len(), 1, "{messages:?}");
+        assert_eq!(replies[0]["result"], json!(["edit"]));
+        let queue = work.0.lock().unwrap();
+        assert_eq!(queue.requests.len(), 1);
+        assert!(!queue.requests[0].snapshot.cancelled.load(Ordering::Relaxed));
+    }
+    #[test]
+    fn diagnostics_from_before_a_disk_change_publish_but_not_from_before_an_edit() {
+        let dir = tempfile::tempdir().unwrap();
+        let uri = text::uri(&dir.path().join("Makefile"));
+        let (before_disk, before_edit) = ("file:///before-disk", "file:///before-edit");
+        let (messages, _) = run_session(vec![
+            message(json!({"id":1,"method":"initialize"})),
+            message(
+                json!({"method":"textDocument/didOpen","params":{"textDocument":{"uri":uri,"version":1,"text":"all:;\n"}}}),
+            ),
+            message(
+                json!({"method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":text::uri(&dir.path().join("x")),"type":1}]}}),
+            ),
+            published(before_disk, 1),
+            message(
+                json!({"method":"textDocument/didChange","params":{"textDocument":{"uri":uri,"version":2},"contentChanges":[{"text":"x:;\n"}]}}),
+            ),
+            published(before_edit, 2),
+        ]);
+
+        let uris: Vec<_> = messages
+            .iter()
+            .filter(|m| m["method"] == "textDocument/publishDiagnostics")
+            .map(|m| m["params"]["uri"].as_str().unwrap())
+            .collect();
+        assert_eq!(uris, [before_disk], "{messages:?}");
     }
     #[test]
     fn stale_versions_and_invalid_incremental_changes_leave_buffer_unchanged() {
