@@ -425,3 +425,61 @@ fn nested_pyproject_matches_cli_and_reloads_after_configuration_changes() {
     assert_eq!(server.diagnostics(&file_uri, 1)[0]["code"], "MK001");
     server.stop();
 }
+
+#[test]
+fn an_invalid_inline_directive_is_reported_where_it_is_written_and_nowhere_else() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("rumk.toml"),
+        "[global]\nenable=['MK001']\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("inc.mk"),
+        "X := 1\n# rumk-disable MK1\n",
+    )
+    .unwrap();
+    let good_uri = uri(&directory.path().join("good.mk"));
+    let typing_uri = uri(&directory.path().join("typing.mk"));
+    let including_uri = uri(&directory.path().join("including.mk"));
+    let mut server = Server::new(directory.path());
+    server.open(&good_uri, "all:\n    echo hello\n", 1);
+    assert_eq!(server.diagnostics(&good_uri, 1)[0]["code"], "MK001");
+
+    // A rule name half typed into a directive is an error on that line alone:
+    // every other document keeps its findings.
+    server.open(&typing_uri, "all:\n\ttrue\n# rumk-disable MK1\n", 1);
+    let good = std::cell::RefCell::new(None);
+    let diagnostics = server.until(|m| {
+        let published = m["method"] == "textDocument/publishDiagnostics";
+        if published && m["params"]["uri"] == good_uri {
+            *good.borrow_mut() = Some(m["params"].clone());
+        }
+        published && m["params"]["uri"] == typing_uri
+    })["params"]["diagnostics"]
+        .clone();
+    assert_eq!(diagnostics.as_array().unwrap().len(), 1, "{diagnostics}");
+    assert_eq!(diagnostics[0]["code"], "configuration");
+    assert_eq!(diagnostics[0]["range"]["start"]["line"], 2);
+    assert_eq!(
+        diagnostics[0]["message"],
+        "Unknown rule in inline configuration: MK1"
+    );
+    let good = good
+        .into_inner()
+        .expect("the batch republishes every document");
+    assert_eq!(good["version"], 1);
+    assert_eq!(good["diagnostics"][0]["code"], "MK001", "{good}");
+
+    // One in a file an open document includes is reported in that file.
+    // Rumk names a file it opened itself by its canonical path.
+    let included_uri = uri(&directory.path().canonicalize().unwrap().join("inc.mk"));
+    server.open(&including_uri, "include inc.mk\nall:;\n", 1);
+    let diagnostics = server.until(|m| {
+        m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == included_uri
+    })["params"]["diagnostics"]
+        .clone();
+    assert_eq!(diagnostics[0]["code"], "configuration", "{diagnostics}");
+    assert_eq!(diagnostics[0]["range"]["start"]["line"], 1);
+    server.stop();
+}

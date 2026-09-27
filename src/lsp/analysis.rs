@@ -1,6 +1,6 @@
 use super::{text, Document, Snapshot};
 use crate::config::Config;
-use crate::diagnostic::{Diagnostic, Edit, Severity};
+use crate::diagnostic::{fill_spans, Diagnostic, Edit, Severity};
 use crate::lint::{self, LintContext};
 use crate::project::Project;
 use anyhow::Result;
@@ -78,7 +78,13 @@ pub fn analyze(snapshot: &Snapshot) -> Result<Reports> {
         let mut options = config.project_options(&doc.path);
         options.source_overrides = overlays.clone();
         let project =
-            Project::load_with_root_content(&doc.path, source(&doc.text).into(), &options)?;
+            match Project::load_with_root_content(&doc.path, source(&doc.text).into(), &options) {
+                Ok(project) => project,
+                Err(error) => {
+                    report_failure(&mut reports, doc, None, &error);
+                    continue;
+                }
+            };
         included.extend(
             project
                 .files()
@@ -106,7 +112,14 @@ pub fn analyze(snapshot: &Snapshot) -> Result<Reports> {
             layout_only: false,
             covered_files: &covered,
         };
-        for diagnostic in lint::lint_project(project, &context)? {
+        let diagnostics = match lint::lint_project(project, &context) {
+            Ok(diagnostics) => diagnostics,
+            Err(error) => {
+                report_failure(&mut reports, doc, Some(project), &error);
+                continue;
+            }
+        };
+        for diagnostic in diagnostics {
             let path = diagnostic.source.as_ref().unwrap_or(&doc.path).clone();
             let Some(file) = project.files().iter().find(|file| file.path == path) else {
                 continue;
@@ -151,6 +164,46 @@ pub fn location(text: &str, d: &Diagnostic) -> Value {
     );
     let (start, end) = crate::fix::edit_byte_range(source(text), &edit).unwrap_or((0, 0));
     text::range(text, start + mark(text), end + mark(text))
+}
+
+/// Reports what stopped one document from being analyzed as an error in that
+/// document, or in the included file an invalid inline directive is written
+/// in, so that every other open document keeps its findings. A directive is
+/// often invalid only because it is still being typed.
+fn report_failure(
+    reports: &mut Reports,
+    doc: &Document,
+    project: Option<&Project>,
+    error: &anyhow::Error,
+) {
+    let (path, line, message) = match error.downcast_ref::<lint::InvalidInlineConfig>() {
+        Some(invalid) => (
+            invalid.path.clone(),
+            invalid.directive.line,
+            invalid.directive.message.clone(),
+        ),
+        None => (
+            doc.path.clone(),
+            1,
+            format!("Rumk could not analyze this file: {error:#}"),
+        ),
+    };
+    let report = reports.entry(path).or_insert_with_key(|path| Report {
+        text: project
+            .and_then(|project| project.files().iter().find(|file| &file.path == path))
+            .map(|file| file.content.clone())
+            .unwrap_or_default(),
+        diagnostics: Vec::new(),
+    });
+    let mut failure = [Diagnostic::new(
+        "configuration",
+        Severity::Error,
+        message,
+        line,
+        1,
+    )];
+    fill_spans(&mut failure, &report.text);
+    report.diagnostics.extend(failure);
 }
 
 pub fn diagnostic(text: &str, d: &Diagnostic) -> Value {

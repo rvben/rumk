@@ -40,6 +40,15 @@ fn recipe_shell_comments_are_not_treated_as_rumk_directives() {
 
 #[test]
 fn unknown_inline_rules_are_configuration_errors() {
-    let error = apply_inline_suppressions("# rumk-disable MK999\n", Vec::new()).unwrap_err();
-    assert!(error.contains("Unknown rule"));
+    let content = "all:\n# rumk-disable MK999\n# rumk-frobnicate\n";
+    let error = apply_inline_suppressions(content, Vec::new()).unwrap_err();
+    assert_eq!(error.line, 2);
+    assert_eq!(error.message, "Unknown rule in inline configuration: MK999");
+
+    let error = apply_inline_suppressions("# rumk-frobnicate\n", Vec::new()).unwrap_err();
+    assert_eq!(error.line, 1);
+    assert_eq!(
+        error.message,
+        "Unknown inline configuration directive: rumk-frobnicate"
+    );
 }

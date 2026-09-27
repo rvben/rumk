@@ -358,6 +358,34 @@ fn the_suggested_commands_fix_what_the_run_found_and_nothing_else() {
 }
 
 #[test]
+fn an_unknown_inline_rule_names_the_file_and_line_it_is_written_on() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(
+        directory.path().join("Makefile"),
+        "include inc.mk\n.PHONY: all\nall:;\n",
+    )
+    .unwrap();
+    std::fs::write(
+        directory.path().join("inc.mk"),
+        "X := 1\n# rumk-disable MK1\n",
+    )
+    .unwrap();
+
+    let output = rumk()
+        .current_dir(directory.path())
+        .args(["--no-config", "check", "Makefile"])
+        .output()
+        .unwrap();
+
+    // The directive is in the included file, so that is where the error points.
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "rumk failed: inc.mk:2: Unknown rule in inline configuration: MK1\n"
+    );
+}
+
+#[test]
 fn fmt_lays_the_file_out_and_leaves_what_make_does_to_check() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("Makefile");

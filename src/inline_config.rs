@@ -1,16 +1,35 @@
 use crate::diagnostic::Diagnostic;
 use crate::rules::RULE_IDS;
 use std::collections::BTreeSet;
+use std::fmt;
+
+/// A `# rumk-` comment Rumk cannot act on: a directive or a rule it does not
+/// know. It is an error rather than a comment to pass over, because a
+/// suppression with a typo in it would otherwise quietly suppress nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InvalidDirective {
+    /// The 1-based line the directive is written on.
+    pub line: usize,
+    pub message: String,
+}
+
+impl fmt::Display for InvalidDirective {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "line {}: {}", self.line, self.message)
+    }
+}
+
+impl std::error::Error for InvalidDirective {}
 
 pub fn apply_inline_suppressions(
     content: &str,
     diagnostics: Vec<Diagnostic>,
-) -> Result<Vec<Diagnostic>, String> {
+) -> Result<Vec<Diagnostic>, InvalidDirective> {
     let mut disabled = BTreeSet::new();
     let mut pending = BTreeSet::new();
     let mut suppressions = Vec::new();
 
-    for line in content.lines() {
+    for (index, line) in content.lines().enumerate() {
         let mut suppressed = disabled.clone();
         suppressed.append(&mut pending);
         let mut next_pending = BTreeSet::new();
@@ -27,7 +46,11 @@ pub fn apply_inline_suppressions(
                     .map_or((directive, ""), |(command, arguments)| {
                         (command, arguments.trim())
                     });
-                let rules = parse_rules(arguments)?;
+                let invalid = |message| InvalidDirective {
+                    line: index + 1,
+                    message,
+                };
+                let rules = parse_rules(arguments).map_err(invalid)?;
                 match command {
                     "disable" => {
                         disabled.extend(rules);
@@ -42,9 +65,9 @@ pub fn apply_inline_suppressions(
                     "disable-line" => suppressed.extend(rules),
                     "disable-next-line" => next_pending.extend(rules),
                     _ => {
-                        return Err(format!(
+                        return Err(invalid(format!(
                             "Unknown inline configuration directive: rumk-{command}"
-                        ));
+                        )));
                     }
                 }
             }

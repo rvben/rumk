@@ -1208,7 +1208,7 @@ fn process_file(
         Some(project) => lint::lint_project(project, context),
         None => lint::lint(&original, context),
     }
-    .with_context(|| format!("Failed to parse Makefile: {}", path.display()))?;
+    .map_err(|error| located(error, display))?;
     if let Some(failure) = &failure {
         // A lossy decode is never written back, so nothing in it is fixable.
         for diagnostic in &mut initial_diagnostics {
@@ -1220,7 +1220,12 @@ fn process_file(
                 &original,
                 read_diagnostics(config, path, failure),
             )
-            .map_err(anyhow::Error::msg)?,
+            .map_err(|directive| {
+                located(
+                    lint::InvalidInlineConfig::new(path, directive).into(),
+                    display,
+                )
+            })?,
         );
         let file = project.as_deref().map_or(resolved, |project| {
             project.file(project.root()).path.as_path()
@@ -1519,6 +1524,21 @@ fn deduplicate_diagnostics(reports: &mut [FileReport]) {
     for report in reports {
         retain_unique(&report.path, &mut report.diagnostics, &mut current);
         retain_unique(&report.path, &mut report.initial_diagnostics, &mut initial);
+    }
+}
+
+/// Names the file an invalid inline directive is written in the way the reports
+/// name files, relative to the working directory: it can be a file the checked
+/// Makefile includes, which the project knows by its absolute path.
+fn located(error: anyhow::Error, display: &PathDisplay) -> anyhow::Error {
+    match error.downcast::<lint::InvalidInlineConfig>() {
+        Ok(invalid) => anyhow::anyhow!(
+            "{}:{}: {}",
+            display.resolved(&invalid.path),
+            invalid.directive.line,
+            invalid.directive.message
+        ),
+        Err(error) => error,
     }
 }
 

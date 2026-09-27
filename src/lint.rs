@@ -8,8 +8,40 @@ use anyhow::{bail, Context, Result};
 
 use crate::config::Config;
 use crate::diagnostic::{fill_spans, Applicability, Diagnostic};
+use crate::inline_config::InvalidDirective;
 use crate::project::Project;
 use crate::{fix, inline_config, parser};
+
+/// A `# rumk-` comment Rumk cannot act on, and the file it is written in: in a
+/// project that can be a file the Makefile includes rather than the Makefile.
+#[derive(Debug)]
+pub struct InvalidInlineConfig {
+    pub path: PathBuf,
+    pub directive: InvalidDirective,
+}
+
+impl InvalidInlineConfig {
+    pub fn new(path: &Path, directive: InvalidDirective) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            directive,
+        }
+    }
+}
+
+impl std::fmt::Display for InvalidInlineConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "{}:{}: {}",
+            self.path.display(),
+            self.directive.line,
+            self.directive.message
+        )
+    }
+}
+
+impl std::error::Error for InvalidInlineConfig {}
 
 /// How many fix passes a text gets before Rumk stops waiting for it to settle.
 const MAX_FIX_ITERATIONS: usize = 10;
@@ -108,7 +140,7 @@ fn lint_parsed(
         .collect::<Vec<_>>();
     fill_spans(&mut diagnostics, content);
     diagnostics = inline_config::apply_inline_suppressions(content, diagnostics)
-        .map_err(anyhow::Error::msg)?;
+        .map_err(|directive| InvalidInlineConfig::new(path, directive))?;
     // The project pass judges what the files a Makefile includes do together,
     // and it reports on files this run does not rewrite. Neither is formatting.
     if let Some(project) = project {
@@ -174,7 +206,7 @@ fn lint_parsed(
             fill_spans(&mut source_diagnostics, &file.content);
             diagnostics.extend(
                 inline_config::apply_inline_suppressions(&file.content, source_diagnostics)
-                    .map_err(anyhow::Error::msg)?,
+                    .map_err(|directive| InvalidInlineConfig::new(&file.path, directive))?,
             );
         }
     }
