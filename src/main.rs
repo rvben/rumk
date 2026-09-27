@@ -53,7 +53,7 @@ enum Commands {
     },
     /// Lint Makefiles and print violations
     Check(CheckArgs),
-    /// Lay Makefiles out, leaving what Make does with them to `check`
+    /// Format the layout of Makefiles; lint findings are left to `check`
     Fmt(FmtArgs),
     /// Create a starter .rumk.toml configuration
     Init {
