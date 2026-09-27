@@ -1,6 +1,6 @@
 //! Safe, side-effect-free evaluation of the statically knowable Make subset.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use crate::builtins::is_defined_by_make;
 use crate::expansion::{reference_end, reference_length, MAX_EXPANSION_DEPTH};
@@ -99,9 +99,26 @@ impl Expansion {
     }
 
     fn merge_unknown(&mut self, other: Self) {
-        self.trace.extend(other.trace);
+        self.extend_trace(other.trace);
         self.blocked.extend(other.blocked);
         self.value = None;
+    }
+
+    /// Adds the steps this trace does not already hold. A name read many times
+    /// over is one step of how the value came about, and repeating it for each
+    /// reading grows the trace with the number of readings rather than names.
+    fn extend_trace(&mut self, steps: impl IntoIterator<Item = TraceStep>) {
+        for step in steps {
+            if !self.trace.contains(&step) {
+                self.trace.push(step);
+            }
+        }
+    }
+
+    /// Puts `step` first, as the reading every later step happened inside.
+    fn prepend_trace(&mut self, step: TraceStep) {
+        self.trace.retain(|existing| *existing != step);
+        self.trace.insert(0, step);
     }
 }
 
@@ -197,6 +214,18 @@ struct VariableState {
 struct Expanding<'a> {
     stack: Vec<String>,
     undefined: Option<&'a mut Vec<UndefinedName>>,
+    /// What each recursively expanded name produced earlier in this expansion,
+    /// with the valueless names that reading found. Nothing changes a value
+    /// while one expression is expanded, so a name read again produces the
+    /// same text, and expanding it anew each time costs time exponential in
+    /// how deeply names that read another twice are nested.
+    expanded: HashMap<String, Remembered>,
+}
+
+/// A recursively expanded name's expansion, kept for its next reading.
+struct Remembered {
+    expansion: Expansion,
+    undefined: Vec<UndefinedName>,
 }
 
 impl Expanding<'_> {
@@ -204,6 +233,7 @@ impl Expanding<'_> {
         Self {
             stack: Vec::new(),
             undefined: None,
+            expanded: HashMap::new(),
         }
     }
 }
@@ -598,6 +628,7 @@ impl Evaluator {
                 &mut Expanding {
                     stack: Vec::new(),
                     undefined: Some(&mut undefined),
+                    expanded: HashMap::new(),
                 },
             )
             .value?;
@@ -759,7 +790,7 @@ impl Evaluator {
             };
             if let Some(value) = &expansion.value {
                 output.push_str(value);
-                result.trace.extend(expansion.trace);
+                result.extend_trace(expansion.trace);
             } else {
                 result.merge_unknown(expansion);
             }
@@ -811,12 +842,7 @@ impl Evaluator {
         };
         let mut result = match &variable.value {
             StoredValue::Simple(value) => Expansion::known(value.clone()),
-            StoredValue::Recursive(value) => {
-                context.stack.push(name.to_string());
-                let result = self.expand_inner(value, depth, context);
-                context.stack.pop();
-                result
-            }
+            StoredValue::Recursive(value) => self.expand_recursive(name, value, depth, context),
             // An assignment Rumk could not expand where it was written still
             // holds what Make computed there under this very assumption, so
             // that value is what an expression reading it produces, and the
@@ -834,13 +860,57 @@ impl Evaluator {
                 }
             }
         };
-        result.trace.insert(
-            0,
-            TraceStep {
-                variable: name.to_string(),
-                origin: variable.origin,
-            },
-        );
+        result.prepend_trace(TraceStep {
+            variable: name.to_string(),
+            origin: variable.origin,
+        });
+        result
+    }
+
+    /// Expands the value of the recursive variable `name`, or replays what an
+    /// earlier reading of it in this expansion produced.
+    fn expand_recursive(
+        &self,
+        name: &str,
+        value: &str,
+        depth: usize,
+        context: &mut Expanding<'_>,
+    ) -> Expansion {
+        if let Some(remembered) = context.expanded.get(name) {
+            if let Some(found) = context.undefined.as_deref_mut() {
+                for behind in &remembered.undefined {
+                    push_undefined(found, behind.clone());
+                }
+            }
+            return remembered.expansion.clone();
+        }
+        let found_before = context.undefined.as_deref().map_or(0, Vec::len);
+        context.stack.push(name.to_string());
+        let result = self.expand_inner(value, depth, context);
+        context.stack.pop();
+        // A reading stopped by the values it was inside, or by how deeply it
+        // was nested, could go further from somewhere else, so only a result
+        // that owes nothing to where it was read is kept.
+        let depends_on_the_reading = result.blocked.iter().any(|reason| {
+            matches!(
+                reason,
+                BlockedReason::RecursiveReference(_) | BlockedReason::ExpansionLimit
+            )
+        });
+        if !depends_on_the_reading {
+            let undefined = context
+                .undefined
+                .as_deref()
+                .map(|found| found[found_before..].to_vec())
+                .unwrap_or_default();
+            context.expanded.insert(
+                name.to_string(),
+                Remembered {
+                    expansion: result.clone(),
+                    undefined,
+                },
+            );
+        }
         result
     }
 
@@ -885,7 +955,7 @@ impl Evaluator {
         let replacement = self.expand_inner(replacement, depth, context);
         let mut combined = Expansion::known("");
         for expansion in [&source, &pattern, &replacement] {
-            combined.trace.extend(expansion.trace.clone());
+            combined.extend_trace(expansion.trace.clone());
             combined.blocked.extend(expansion.blocked.clone());
             if expansion.value.is_none() {
                 combined.value = None;
@@ -977,7 +1047,7 @@ impl Evaluator {
         for argument in raw_arguments {
             let result = self.expand_inner(argument, depth, context);
             if let Some(value) = result.value {
-                combined.trace.extend(result.trace);
+                combined.extend_trace(result.trace);
                 expanded.push(value);
             } else {
                 combined.merge_unknown(result);
@@ -1133,8 +1203,10 @@ impl Evaluator {
                 } else {
                     arguments.get(1).copied().unwrap_or("")
                 };
-                let mut result = self.expand_inner(selected, depth, context);
-                result.trace.splice(0..0, condition.trace);
+                let mut selected = self.expand_inner(selected, depth, context);
+                let selected_trace = std::mem::replace(&mut selected.trace, condition.trace);
+                let mut result = selected;
+                result.extend_trace(selected_trace);
                 result.blocked.extend(condition.blocked);
                 result
             }
@@ -1142,7 +1214,7 @@ impl Evaluator {
                 let mut combined = Expansion::known("");
                 for argument in arguments {
                     let expansion = self.expand_inner(argument, depth, context);
-                    combined.trace.extend(expansion.trace.clone());
+                    combined.extend_trace(expansion.trace.clone());
                     combined.blocked.extend(expansion.blocked.clone());
                     let Some(value) = expansion.value else {
                         combined.value = None;
@@ -1159,7 +1231,7 @@ impl Evaluator {
                 let mut combined = Expansion::known("");
                 for argument in arguments {
                     let expansion = self.expand_inner(argument, depth, context);
-                    combined.trace.extend(expansion.trace.clone());
+                    combined.extend_trace(expansion.trace.clone());
                     combined.blocked.extend(expansion.blocked.clone());
                     let Some(value) = expansion.value else {
                         combined.value = None;

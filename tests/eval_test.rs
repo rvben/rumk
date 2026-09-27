@@ -413,3 +413,48 @@ fn a_bare_parenthesis_inside_a_function_call_nests_the_way_gnu_make_nests_it() {
         .blocked
         .contains(&BlockedReason::MalformedExpansion));
 }
+
+/// Each name in the chain reads the one below it twice, so expanding every
+/// reading again does twice the work per link: 2^25 readings for this chain,
+/// and one line more doubles it.
+#[test]
+fn expands_a_name_read_many_times_once_per_expansion() {
+    const LINKS: usize = 25;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut evaluator = Evaluator::new(&BTreeMap::new());
+        evaluator.assign(&assignment("A0 = $(BASE) x\n"), location(1), Truth::True);
+        for link in 1..=LINKS {
+            let previous = link - 1;
+            evaluator.assign(
+                &assignment(&format!(
+                    "A{link} = $(firstword $(A{previous}) $(A{previous}))\n"
+                )),
+                location(link + 1),
+                Truth::True,
+            );
+        }
+        let top = format!("$(A{LINKS})");
+        let _ = sender.send((evaluator.expand(&top), evaluator.expand_as_undefined(&top)));
+    });
+    let (expansion, undefined) = receiver
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("expanding the chain did not finish");
+
+    assert_eq!(expansion.as_known(), None);
+    assert_eq!(
+        expansion.blocked,
+        [BlockedReason::UndefinedVariable("BASE".into())].into()
+    );
+    let trace: Vec<_> = expansion
+        .trace
+        .iter()
+        .map(|step| step.variable.as_str())
+        .collect();
+    let expected: Vec<_> = (0..=LINKS).rev().map(|link| format!("A{link}")).collect();
+    assert_eq!(trace, expected);
+    assert_eq!(
+        undefined,
+        Some(("x".to_string(), vec![waited_on("BASE", LINKS + 1)]))
+    );
+}
