@@ -141,10 +141,27 @@ impl Rule for MissingPhony {
                 let file = project.file(declaration.location.source);
                 file.makefile.rules.iter().any(|rule| {
                     rule.line == declaration.location.line
-                        && produces_named_file(rule, &target.name, |line| {
-                            project.evaluation().activity(file.id, line)
-                                != crate::eval::Truth::False
-                        })
+                        && produces_named_file(
+                            rule,
+                            &target.name,
+                            |operand| {
+                                let expansion = project.evaluation().expand(operand);
+                                if expansion.trace.iter().any(|step| {
+                                    index.variables.get(&step.variable).is_some_and(|variable| {
+                                        variable.definitions.iter().any(|definition| {
+                                            definition.scope != VariableScope::Global
+                                        })
+                                    })
+                                }) {
+                                    return None;
+                                }
+                                expansion.value
+                            },
+                            |line| {
+                                project.evaluation().activity(file.id, line)
+                                    != crate::eval::Truth::False
+                            },
+                        )
                 })
             }) {
                 continue;
@@ -219,7 +236,12 @@ fn missing_phony_targets(
             rule.targets.iter().filter(|target| {
                 command_targets.contains(*target)
                     && active_lines.contains(&rule.line)
-                    && produces_named_file(rule, target, |line| active_lines.contains(&line))
+                    && produces_named_file(
+                        rule,
+                        target,
+                        |_| None,
+                        |line| active_lines.contains(&line),
+                    )
             })
         })
         .collect();
@@ -257,11 +279,12 @@ fn literal_phony_names(text: &str) -> Vec<String> {
 }
 
 /// A conventional name can also be a real executable (for example `test`).
-/// Recognize direct compiler and stamp output intent rather than declaring that file
+/// Recognize direct compiler, stamp, and directory output intent rather than declaring that file
 /// phony. This deliberately does not interpret arbitrary shell programs.
 fn produces_named_file(
     rule: &crate::parser::Rule,
     target: &str,
+    resolve_operand: impl Fn(&str) -> Option<String>,
     active: impl Fn(usize) -> bool,
 ) -> bool {
     rule.recipes.iter().any(|recipe| {
@@ -276,6 +299,54 @@ fn produces_named_file(
                 ShellToken::Separator => return false,
             }
         }
+        if words.first() == Some(&"mkdir") {
+            let mut operands = Vec::new();
+            let mut options = true;
+            for word in &words[1..] {
+                if options && *word == "--" {
+                    options = false;
+                } else if options && matches!(*word, "-p" | "--parents") {
+                    continue;
+                } else if options && word.starts_with('-') {
+                    return false;
+                } else {
+                    operands.push(*word);
+                }
+            }
+            let names: Option<Vec<String>> = operands
+                .iter()
+                .map(|operand| {
+                    let name = if matches!(*operand, "$@" | "$(@)" | "${@}") {
+                        target.to_owned()
+                    } else if operand.contains('$') {
+                        resolve_operand(operand)?
+                    } else {
+                        (*operand).to_owned()
+                    };
+                    // Every operand must remain one plain path. An unknown operand
+                    // might inject options that change the meaning of later words.
+                    if name.is_empty()
+                        || name
+                            .chars()
+                            .any(|c| c.is_whitespace() || "$`*?[];|&<>()\\\"'".contains(c))
+                        || name.starts_with('-')
+                    {
+                        return None;
+                    }
+                    Some(name)
+                })
+                .collect();
+            return names.is_some_and(|names| {
+                names.iter().any(|name| {
+                    let mut name = name.trim_end_matches('/');
+                    while let Some(rest) = name.strip_prefix("./") {
+                        name = rest;
+                    }
+                    name == target
+                })
+            });
+        }
+
         if words.first() == Some(&"touch") {
             let arguments = &words[1..];
             let operands = arguments.strip_prefix(&["--"]).unwrap_or(arguments);

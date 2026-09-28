@@ -323,3 +323,68 @@ fn reviewed_recursive_make_warning_matches_gnu_make_dry_run_behavior() {
         );
     }
 }
+
+#[test]
+fn directory_outputs_preserve_timestamp_semantics() {
+    for recipe in [
+        "mkdir build",
+        "mkdir -p ./build/",
+        "mkdir --parents -- build",
+        "mkdir '$@'",
+    ] {
+        let source = format!("build:\n\t{recipe}\n");
+        assert!(check(&source, None).is_empty(), "{source}");
+        assert!(MissingPhony::default()
+            .check(&parse(&source), &source)
+            .is_empty());
+    }
+    for source in [
+        "DIR = build\n$(DIR):\n\tmkdir -p $(DIR)\n",
+        "DIR = build\nALIAS = $(DIR)\nbuild:\n\tmkdir $(ALIAS)\n",
+        "include shared.mk\nbuild:\n\tmkdir -p $(DIR)\n",
+    ] {
+        assert!(check(source, Some("DIR = build\n")).is_empty(), "{source}");
+    }
+    for source in [
+        "DIR = build\nbuild:\n\tmkdir $(DIR)\nDIR = other\n",
+        "DIR = build\nbuild: DIR = other\nbuild:\n\tmkdir $(DIR)\n",
+        "DIR = build\nALIAS = $(DIR)\nbuild: DIR = other\nbuild:\n\tmkdir $(ALIAS)\n",
+        "build:\n\tmkdir $$DIR\n",
+        "build:\n\tmkdir $(UNKNOWN)\n",
+        "build:\n\tmkdir $(OPTIONS) build\n",
+        "OPTIONS = -m\nbuild:\n\tmkdir $(OPTIONS) build other\n",
+        "build:\n\tmkdir other\n",
+        "build:\n\tmkdir ../build\n",
+        "build:\n\tmkdir -m build elsewhere\n",
+        "build:\n\techo mkdir build\n",
+        "build:\n\tmkdir build; rm -rf build\n",
+        "build:\nifeq (a,b)\n\tmkdir build\nendif\n\t@echo build\n",
+    ] {
+        assert_eq!(check(source, None).len(), 1, "{source}");
+    }
+
+    let make = std::env::var("GNU_MAKE").unwrap_or_else(|_| "make".into());
+    if !std::process::Command::new(&make)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("GNU Make"))
+    {
+        eprintln!("GNU Make unavailable; directory timestamp probe skipped");
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::create_dir(directory.path().join("build")).unwrap();
+    for (prefix, expected) in [("", 0), (".PHONY: build\n", 1)] {
+        std::fs::write(
+            directory.path().join("Makefile"),
+            format!("{prefix}DIR = build\n$(DIR):\n\tmkdir -p $(DIR)\n"),
+        )
+        .unwrap();
+        let output = std::process::Command::new(&make)
+            .current_dir(directory.path())
+            .args(["-rR", "-q", "build"])
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(expected));
+    }
+}
