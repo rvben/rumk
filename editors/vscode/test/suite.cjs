@@ -16,8 +16,10 @@ async function until(callback, message) {
 // a few seconds after startup, which would cancel the fix requests asserted
 // below at random. A pending request on a plaintext canary can only be
 // cancelled by such a registration, so its cancellation marks the point from
-// which code actions are stable. If the registration already happened before
-// the canary was armed, nothing cancels it and the deadline ends the wait.
+// which code actions are stable. The registration waits for the workbench to
+// go idle after startup, so it always follows the canary, but a loaded machine
+// can delay it by tens of seconds. Continuing without it would let it cancel an
+// asserted request later, so a missing registration fails the run instead.
 async function codeActionProvidersSettled() {
   const canary = await vscode.workspace.openTextDocument({ language: 'plaintext', content: 'canary' });
   let cancelled;
@@ -31,8 +33,9 @@ async function codeActionProvidersSettled() {
     const request = vscode.commands.executeCommand('vscode.executeCodeActionProvider', canary.uri, new vscode.Range(0, 0, 0, 0));
     request.then(undefined, () => {});
     const started = Date.now();
-    const observed = await Promise.race([settled, new Promise(resolve => setTimeout(resolve, 15000, false))]);
-    console.log(`code-action providers settled after ${Date.now() - started}ms (${observed ? 'registration observed' : 'deadline'})`);
+    const observed = await Promise.race([settled, new Promise(resolve => setTimeout(resolve, 120000, false))]);
+    assert.ok(observed, 'VS Code registered its code-action provider for every language within 120s');
+    console.log(`code-action providers settled after ${Date.now() - started}ms`);
   } finally {
     provider.dispose();
   }
