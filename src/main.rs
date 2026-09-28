@@ -1,7 +1,7 @@
 mod sarif;
 
 use anyhow::{bail, Context, Result};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use colored::Colorize;
 use ignore::WalkBuilder;
 use rumk::config::Config;
@@ -43,6 +43,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Print a shell completion script to standard output
+    #[command(visible_alias = "completion")]
+    Completions {
+        #[arg(value_enum)]
+        shell: clap_complete::Shell,
+    },
     /// Run the native language server over standard input/output
     Server,
     /// Explain static prerequisite analysis coverage as JSON without running Make
@@ -378,6 +384,12 @@ fn run() -> Result<u8> {
     configure_color(cli.color);
 
     match cli.command {
+        Commands::Completions { shell } => {
+            let mut buffer = Vec::new();
+            clap_complete::generate(shell, &mut Cli::command(), "rumk", &mut buffer);
+            std::io::stdout().lock().write_all(&buffer)?;
+            Ok(SUCCESS)
+        }
         Commands::Server => rumk::lsp::serve(cli.config, cli.no_config),
         Commands::Coverage { paths } => show_coverage(&paths, cli.config.as_deref(), cli.no_config),
         Commands::Init { output, pyproject } => {

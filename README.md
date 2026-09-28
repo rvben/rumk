@@ -204,6 +204,23 @@ rumk config file
 
 Run `rumk --help` or `rumk <command> --help` for all options.
 
+Generate shell completions from the installed CLI with `rumk completions <shell>`
+(alias: `completion`). Supported shells are Bash, Zsh, Fish, PowerShell, and
+Elvish. The script goes to stdout; configuration files are not read.
+
+```sh
+# Bash: enable completions in this session
+source <(rumk completions bash)
+
+# Zsh: save in a directory on $fpath, then run compinit
+rumk completions zsh > /path/on/fpath/_rumk
+
+# Fish: save in Fish's completion directory
+rumk completions fish > ~/.config/fish/completions/rumk.fish
+```
+
+Regenerate saved scripts after upgrading Rumk.
+
 ## Configuration
 
 Create a `.rumk.toml` file manually or run `rumk init`:

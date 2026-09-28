@@ -2060,3 +2060,42 @@ fn external_variable_config_applies_to_disk_and_stdin_without_hiding_typos() {
     assert!(shown.status.success());
     assert!(String::from_utf8(shown.stdout).unwrap().contains("TESTS"));
 }
+
+#[test]
+fn shell_completions_are_generated_without_loading_project_configuration() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join(".rumk.toml"), "invalid = [").unwrap();
+    for shell in ["bash", "zsh", "fish", "powershell", "elvish"] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_rumk"))
+            .args(["completions", shell])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{shell}: {:?}", output.stderr);
+        assert!(output.stderr.is_empty());
+        let script = String::from_utf8(output.stdout).unwrap();
+        assert!(script.contains("rumk"));
+        assert!(script.contains("unsafe-fixes"), "{shell}");
+        assert!(script.contains("coverage"), "{shell}");
+        assert!(!script.contains('\u{1b}'));
+        if shell == "bash" || shell == "zsh" {
+            let path = dir.path().join(format!("completion.{shell}"));
+            std::fs::write(&path, script).unwrap();
+            match std::process::Command::new(shell)
+                .arg("-n")
+                .arg(path)
+                .output()
+            {
+                Ok(output) => assert!(output.status.success(), "{shell}: {:?}", output.stderr),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("{error}"),
+            }
+        }
+    }
+    let invalid = std::process::Command::new(env!("CARGO_BIN_EXE_rumk"))
+        .args(["completions", "invalid-shell"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(invalid.stdout.is_empty());
+}
