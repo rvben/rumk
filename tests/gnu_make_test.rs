@@ -815,7 +815,7 @@ fn suffix_rule_coverage_agrees_with_gnu_make_for_sources_chains_and_missing_head
                 assert!(findings[0].message.contains("hedaer.h"));
             }
             let output = match Command::new("make")
-                .args(["-rR", "probe"])
+                .args(["-rR", "--no-print-directory", "probe"])
                 .current_dir(directory.path())
                 .output()
             {
@@ -837,7 +837,9 @@ fn suffix_rule_coverage_agrees_with_gnu_make_for_sources_chains_and_missing_head
                 } else {
                     "built\n"
                 };
-                assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+                // Make on Windows ends its own messages with CRLF.
+                let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+                assert_eq!(stdout, expected);
             }
         }
     }
