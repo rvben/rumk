@@ -309,3 +309,10 @@ jobs:
             args+=(--latest)
           fi
           gh release edit "${args[@]}"
+
+      - name: Move the major Action tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: ./scripts/move-action-tag.sh "${VERSION}"
