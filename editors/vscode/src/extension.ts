@@ -45,6 +45,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const command = resolveServerCommand(config.get<string>('path', ''), context.extensionPath, cwd);
     output.info(`Starting ${command} server`);
     showStatus('Rumk: starting', 'Starting the Makefile language server.');
+    // On start the language client opens visible documents and hidden ones
+    // through separate paths, and a request can overtake an open that is still
+    // being written. A message for a document whose open is in flight waits for
+    // it; every other message is sent immediately, as before.
+    const opening = new Map<string, Promise<void>>();
+    const afterOpen = <T>(document: vscode.TextDocument, send: () => T): T => {
+      const pending = opening.get(document.uri.toString());
+      // Every middleware result is a promise or a provider result, which the
+      // client awaits, so the deferred send resolves to the same value.
+      return pending ? pending.then(send) as T : send();
+    };
     const next = new LanguageClient('rumk', 'Rumk', {
       command, args: ['server'], options: { cwd, shell: false },
     }, {
@@ -53,6 +64,22 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       traceOutputChannel: output,
       revealOutputChannelOn: RevealOutputChannelOn.Never,
       initializationFailedHandler: () => false,
+      middleware: {
+        didOpen: (document, send) => {
+          const uri = document.uri.toString();
+          const sent = send(document);
+          const settled = sent.then(() => {}, () => {});
+          opening.set(uri, settled);
+          void settled.then(() => { if (opening.get(uri) === settled) opening.delete(uri); });
+          return sent;
+        },
+        didChange: (event, send) => afterOpen(event.document, () => send(event)),
+        didSave: (document, send) => afterOpen(document, () => send(document)),
+        didClose: (document, send) => afterOpen(document, () => send(document)),
+        provideDocumentSymbols: (document, token, send) => afterOpen(document, () => send(document, token)),
+        provideCodeActions: (document, range, context, token, send) => afterOpen(document, () => send(document, range, context, token)),
+        provideDocumentFormattingEdits: (document, options, token, send) => afterOpen(document, () => send(document, options, token)),
+      },
     });
     client = next;
     const stateListener = next.onDidChangeState(event => {

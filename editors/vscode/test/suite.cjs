@@ -100,6 +100,36 @@ exports.run = async () => {
     formatted = formatted.slice(0, second.offsetAt(edit.range.start)) + edit.newText + formatted.slice(second.offsetAt(edit.range.end));
   }
   assert.ok(formatted.includes('\techo world'), 'formatting uses Rumk');
+  // A restarted client opens the visible document and the hidden one through
+  // separate paths; requests sent the moment it starts must still reach a
+  // server that knows the visible document, including its unsaved text.
+  await replaceFirst('all:\n    echo restarted\n');
+  // Hidden documents are opened ahead of the visible one, which widens the
+  // window in which a request could overtake it.
+  for (let index = 0; index < 30; index++) {
+    const hidden = vscode.Uri.joinPath(folders[1].uri, `hidden ${index}`, 'Makefile');
+    await vscode.workspace.fs.writeFile(hidden, Buffer.from(`hidden${index}:\n\techo ${index}\n`));
+    await vscode.workspace.openTextDocument(hidden);
+  }
+  const afterRestart = [
+    ['symbols', () => vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', first.uri),
+      result => result?.some(s => s.name === 'all')],
+    ['fix-all', () => vscode.commands.executeCommand('vscode.executeCodeActionProvider', first.uri, new vscode.Range(0, 0, 2, 0), 'source.fixAll.rumk'),
+      result => result?.some(a => a.kind?.value === 'source.fixAll.rumk' && a.edit)],
+    ['formatting', () => vscode.commands.executeCommand('vscode.executeFormatDocumentProvider', first.uri, { tabSize: 4, insertSpaces: false }),
+      result => result?.some(e => e.newText.includes('\t'))],
+  ];
+  for (const [name, request, valid] of afterRestart) {
+    await vscode.commands.executeCommand('rumk.restartServer');
+    const result = await request();
+    assert.ok(valid(result), `${name} is available as soon as the server restarts, found ${JSON.stringify(result)}`);
+  }
+  await vscode.commands.executeCommand('rumk.restartServer');
+  await replaceFirst('edited:\n    echo restarted\n');
+  const editedSymbols = (await vscode.commands.executeCommand('vscode.executeDocumentSymbolProvider', first.uri))?.map(s => s.name);
+  assert.deepEqual(editedSymbols, ['edited'], `an edit made as soon as the server restarts reaches it, found ${JSON.stringify(editedSymbols)}`);
+  await replaceFirst(expected + '# save again\n');
+  assert.equal(await first.save(), true);
   await vscode.commands.executeCommand('rumk.restartServer');
   await until(() => vscode.languages.getDiagnostics(second.uri).some(d => (d.code?.value || d.code) === 'MK001'), 'restart did not resynchronize open documents');
   await vscode.workspace.getConfiguration('rumk').update('enable', false, vscode.ConfigurationTarget.Workspace);

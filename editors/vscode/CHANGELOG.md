@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Keep the server in sync with every open Makefile when it starts or restarts. With several Makefiles open, an edit made at that moment could be lost until the next edit, leaving diagnostics and fixes based on the old text, and the Outline, quick fixes or formatting could come back empty with a "Document is not open" error in the Rumk output.
+
 ## 0.0.2
 
 - Bundle Rumk 0.1.0. See the [Rumk changelog](https://github.com/rvben/rumk/blob/main/CHANGELOG.md#010---2026-09-28) for new rules, per-Makefile configuration and `pyproject.toml` support.
