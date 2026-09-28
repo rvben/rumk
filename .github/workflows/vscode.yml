@@ -7,6 +7,16 @@ on:
         description: Publish the tested preview packages to Visual Studio Marketplace
         type: boolean
         default: false
+  # The Release workflow publishes the extension release bundling each tag.
+  workflow_call:
+    inputs:
+      publish:
+        description: Publish the tested preview packages to Visual Studio Marketplace
+        type: boolean
+        default: false
+    secrets:
+      VSCE_PAT:
+        required: false
   push:
     branches: [main]
   pull_request:
@@ -17,7 +27,7 @@ permissions:
 
 concurrency:
   group: vscode-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' && !inputs.publish }}
 
 jobs:
   extension:
@@ -103,7 +113,7 @@ jobs:
 
   publish:
     name: Publish Marketplace preview
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    if: inputs.publish
     needs: extension
     runs-on: ubuntu-24.04
     timeout-minutes: 10

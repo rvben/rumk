@@ -35,6 +35,12 @@ replace = "rev: v{version}"
 command = "cargo update --manifest-path fuzz/Cargo.toml --package rumk --offline --quiet"
 files = ["fuzz/Cargo.lock"]
 
+# Each Rumk release ships a VS Code extension release bundling it, published by
+# the Release workflow once the registries have the new version.
+[[artifacts]]
+command = "python3 scripts/extension-release.py bump"
+files = ["editors/vscode/package.json", "editors/vscode/package-lock.json", "editors/vscode/CHANGELOG.md"]
+
 # Runs after every file above is written and before the release commit, tag,
 # and push, so a mismatch stops the release while it is still local.
 [hooks]

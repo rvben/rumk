@@ -316,3 +316,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.validate.outputs.version }}
         run: ./scripts/move-action-tag.sh "${VERSION}"
+
+  vscode:
+    name: Publish VS Code extension
+    if: needs.validate.outputs.publish == 'true'
+    # Runs after the registries have this version, so the extension never
+    # bundles a server release that is not public.
+    needs: [validate, publish]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/vscode.yml
+    with:
+      publish: true
+    secrets:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}

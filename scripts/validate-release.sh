@@ -49,6 +49,8 @@ if [[ -n "${stale_pins}" ]]; then
     exit 1
 fi
 
+python3 scripts/extension-release.py check --version "${version}"
+
 package_args=(--locked)
 if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
     package_args+=(--allow-dirty)
