@@ -21,7 +21,7 @@
 
 > [!WARNING]
 > **Alpha software under active development.** Rumk is useful today, but its rules, CLI,
-> configuration, diagnostics, and autofixes may change between `0.0.x` releases. Pin the version
+> configuration, diagnostics, and autofixes may change between `0.x` releases. Pin the version
 > in automation and review autofix diffs before committing them.
 
 Rumk is the Makefile sibling of [Rumdl](https://github.com/rvben/rumdl).
@@ -66,7 +66,7 @@ uv tool install rumk==0.1.0
 pipx install rumk==0.1.0
 ```
 
-Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
+Rumk is alpha-stage `0.x` software, so installation names the version explicitly. Release
 archives and Python wheels cover Linux, macOS, and Windows. GitHub release assets include SHA-256
 checksums.
 
