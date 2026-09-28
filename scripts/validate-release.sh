@@ -11,8 +11,10 @@ if [[ -n "${expected_version}" && "${version}" != "${expected_version}" ]]; then
     exit 1
 fi
 
-if ! grep -Fq "## [${version}]" CHANGELOG.md; then
-    echo "CHANGELOG.md has no section for ${version}" >&2
+# Read the section with the script that writes the release notes, so a
+# heading it cannot find fails here rather than after the release builds.
+if [[ -z "$(./scripts/release-notes.sh "${version}" | tr -d '[:space:]')" ]]; then
+    echo "CHANGELOG.md has no release notes for ${version}" >&2
     exit 1
 fi
 
