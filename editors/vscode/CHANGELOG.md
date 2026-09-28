@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.0.3
 
 - Keep the server in sync with every open Makefile when it starts or restarts. With several Makefiles open, an edit made at that moment could be lost until the next edit, leaving diagnostics and fixes based on the old text, and the Outline, quick fixes or formatting could come back empty with a "Document is not open" error in the Rumk output.
 

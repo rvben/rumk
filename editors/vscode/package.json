@@ -2,7 +2,7 @@
   "name": "rumk",
   "displayName": "Rumk — Makefile Diagnostics & Formatting",
   "description": "Find and fix Makefile bugs with fast, include-aware diagnostics, quick fixes, formatting, and target symbols.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "rvben",
   "license": "MIT",
   "repository": {
