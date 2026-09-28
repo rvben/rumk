@@ -1,6 +1,7 @@
 .PHONY: all build test lint fmt fmt-check clean install run check-examples
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
 .PHONY: release-check benchmark help check-comparison check-semantic
+.PHONY: ci ci-tools ci-quality ci-test ci-compat ci-package check-hooks check-scripts
 .PHONY: vscode-deps vscode-bundle vscode-test vscode-integration vscode-package vscode-verify-packages vscode-publish
 
 # Configuration
@@ -11,17 +12,31 @@ BINARY_NAME = rumk
 VSCODE = editors/vscode
 # Platform packages downloaded for publication, relative to $(VSCODE).
 VSCODE_PACKAGES ?= packages
+PYTHON ?= python3
+PRE_COMMIT_SPEC = pre-commit==4.6.0
+MATURIN_SPEC = maturin>=1.8,<2.0
+# ci-tools installs the pinned Python tools here, so local runs use what CI uses.
+CI_VENV = target/ci-tools
+CI_BIN = $(CI_VENV)/$(if $(filter Windows_NT,$(OS)),Scripts,bin)
+HOST_TARGET = $(shell rustc -vV | sed -n 's/^host: //p')
+EXE = $(if $(filter Windows_NT,$(OS)),.exe,)
+# Integration suites that compare Rumk against GNU Make and other linters.
+COMPARISON_TESTS = comparison_corpus_test policy_test formatting_test phony_precision_test \
+	rebuild_test recipe_prefixes_test
+COMPAT_TESTS = gnu_make_test corpus_test missing_prerequisite_test $(COMPARISON_TESTS)
+# validate-release.sh refuses uncommitted changes unless ALLOW_DIRTY=1.
+ALLOW_DIRTY ?= 0
 
 all: lint build test
 
 build:
-	$(CARGO) build --release
+	$(CARGO) build --locked --release
 
 test:
-	$(CARGO) test --all-targets --all-features
+	$(CARGO) test --locked --all-targets --all-features
 
 lint:
-	$(CARGO) clippy --all-targets --all-features -- -D warnings
+	$(CARGO) clippy --locked --all-targets --all-features -- -D warnings
 
 fmt:
 	$(CARGO) fmt
@@ -32,7 +47,44 @@ fmt-check:
 msrv-check:
 	$(CARGO) +$(MSRV) check --locked --all-targets --all-features
 
-dependency-check: fmt-check all msrv-check
+# Dependency updates arrive as uncommitted changes to the lockfiles.
+dependency-check: ALLOW_DIRTY = 1
+dependency-check: ci
+
+# Each ci-* target is one job of the CI workflow; `make ci` runs them all.
+ci: ci-quality ci-test ci-compat msrv-check ci-package
+
+ci-tools:
+	$(PYTHON) -m venv $(CI_VENV)
+	$(CI_BIN)/python -m pip install --quiet "$(PRE_COMMIT_SPEC)" "$(MATURIN_SPEC)"
+
+ci-quality: fmt-check lint check-fuzz check-hooks check-scripts
+
+check-hooks: ci-tools
+	$(CI_BIN)/python scripts/verify-hooks.py --pre-commit $(abspath $(CI_BIN))/pre-commit
+
+check-scripts:
+	$(CARGO) build --locked --bin rumk --example prerequisite-coverage
+	$(PYTHON) -m unittest discover -s scripts -p 'test_*.py'
+
+ci-test: test build
+	target/release/$(BINARY_NAME)$(EXE) version
+	target/release/$(BINARY_NAME)$(EXE) check Makefile
+	target/release/$(BINARY_NAME)$(EXE) check examples/good.mk
+
+ci-compat:
+	$(MAKE) --version
+	$(CARGO) test --locked $(addprefix --test ,$(COMPAT_TESTS))
+
+# Builds into its own directory so the smoke test installs this build's wheel.
+CI_PACKAGE_DIR = target/ci-package
+ci-package: ci-tools
+	ALLOW_DIRTY=$(ALLOW_DIRTY) ./scripts/validate-release.sh
+	rm -rf $(CI_PACKAGE_DIR)
+	$(CI_BIN)/maturin build --locked --release --sdist --out $(CI_PACKAGE_DIR)/dist
+	$(PYTHON) -m venv $(CI_PACKAGE_DIR)/venv
+	$(CI_PACKAGE_DIR)/venv/bin/python -m pip install $(CI_PACKAGE_DIR)/dist/*.whl
+	$(CI_PACKAGE_DIR)/venv/bin/$(BINARY_NAME) version
 
 clean:
 	$(CARGO) clean
@@ -53,11 +105,10 @@ check-examples: build
 	fi
 
 check-gnu-fixtures:
-	$(CARGO) test --test gnu_make_test
+	$(CARGO) test --locked --test gnu_make_test
 
 check-comparison:
-	$(CARGO) test --test comparison_corpus_test --test policy_test --test formatting_test --test phony_precision_test \
-		--test rebuild_test --test recipe_prefixes_test
+	$(CARGO) test --locked $(addprefix --test ,$(COMPARISON_TESTS))
 
 check-semantic:
 	$(CARGO) build --bin rumk
@@ -65,7 +116,7 @@ check-semantic:
 	python3 -m unittest discover -s scripts -p 'test_semantic_benchmark.py'
 
 check-corpus:
-	$(CARGO) test --test corpus_test
+	$(CARGO) test --locked --test corpus_test
 
 # Requires Python 3.9+. Pass BENCH_ARGS='--baseline /path/to/old/rumk'
 # to verify identical output while comparing two release binaries.
@@ -80,7 +131,7 @@ benchmark: build
 # every run die with "sanitizer is incompatible with statically linked libc"
 # before it fuzzes a single input, having produced no artifacts to notice.
 # Naming this host's own triple keeps that explicit, on macOS and Linux alike.
-FUZZ_TARGET ?= $(shell rustc -vV | sed -n 's/^host: //p')
+FUZZ_TARGET ?= $(HOST_TARGET)
 FUZZ_TIME ?= 60
 # The test fixtures go in as read-only seeds. They are small Makefiles that
 # already reach constructs random bytes need a long time to arrive at, and a
@@ -145,7 +196,9 @@ help:
 	@echo "  fmt     - Format code"
 	@echo "  fmt-check - Verify Rust formatting without changing files"
 	@echo "  msrv-check - Verify compatibility with Rust $(MSRV)"
-	@echo "  dependency-check - Run every dependency-update validation gate"
+	@echo "  dependency-check - Run make ci on a tree with uncommitted dependency updates"
+	@echo "  ci      - Run every CI job: ci-quality ci-test ci-compat msrv-check ci-package"
+	@echo "  ci-tools - Install the pinned pre-commit and maturin into $(CI_VENV)"
 	@echo "  clean   - Clean build artifacts"
 	@echo "  install - Install binary to $(INSTALL_PREFIX)/bin"
 	@echo "  run     - Run rumk on this Makefile"

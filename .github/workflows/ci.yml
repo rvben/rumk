@@ -17,6 +17,11 @@ env:
   CARGO_INCREMENTAL: 0
   CARGO_TERM_COLOR: always
 
+# Every job runs one make target, so `make ci` reproduces the whole workflow locally.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   quality:
     name: Formatting and linting
@@ -35,27 +40,8 @@ jobs:
       - name: Cache Rust build data
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-      # The fuzz targets are built for real only by the weekly Fuzz workflow,
-      # so this is what keeps a library change from leaving one uncompilable
-      # until the next run. It needs neither nightly nor a sanitizer.
-      - name: Type-check the fuzz targets
-        run: make check-fuzz
-
-      - name: Verify pre-commit hooks in disposable repositories
-        run: |
-          python3 -m pip install pre-commit==4.6.0
-          python3 scripts/verify-hooks.py
-
-      - name: Verify corpus audits and GNU behavior benchmark
-        run: |
-          cargo build --locked --bin rumk --example prerequisite-coverage
-          python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Check formatting, lints, fuzz targets, hooks, and scripts
+        run: make ci-quality
 
   test:
     name: Test (${{ matrix.os }})
@@ -78,7 +64,6 @@ jobs:
           report-type: annotations
 
       - name: Verify Action installation
-        shell: bash
         env:
           RUMK_PATH: ${{ steps.rumk-action.outputs.rumk-path }}
           RUMK_VERSION: ${{ steps.rumk-action.outputs.rumk-version }}
@@ -95,22 +80,8 @@ jobs:
       - name: Cache Rust build data
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Run tests
-        run: cargo test --locked --all-targets --all-features
-
-      - name: Build release binary
-        run: cargo build --locked --release
-
-      - name: Smoke-test release binary
-        shell: bash
-        run: |
-          binary=target/release/rumk
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            binary="${binary}.exe"
-          fi
-          "${binary}" version
-          "${binary}" check Makefile
-          "${binary}" check examples/good.mk
+      - name: Test, build, and smoke-test the release binary
+        run: make ci-test
 
   compatibility:
     name: GNU Make compatibility
@@ -128,11 +99,8 @@ jobs:
       - name: Cache Rust build data
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Show GNU Make version
-        run: make --version
-
       - name: Verify controlled and production-style fixtures
-        run: cargo test --locked --test gnu_make_test --test corpus_test --test comparison_corpus_test --test formatting_test --test policy_test --test phony_precision_test --test missing_prerequisite_test
+        run: make ci-compat
 
   msrv:
     name: Minimum supported Rust
@@ -169,18 +137,5 @@ jobs:
       - name: Cache Rust build data
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
-      - name: Validate package and publication metadata
-        run: ./scripts/validate-release.sh
-
-      - name: Install Python package builder
-        run: python -m pip install "maturin>=1.8,<2.0"
-
-      - name: Build Python wheel and source distribution
-        run: maturin build --locked --release --sdist
-
-      - name: Smoke-test Python wheel
-        shell: bash
-        run: |
-          python -m venv /tmp/rumk-wheel-test
-          /tmp/rumk-wheel-test/bin/python -m pip install target/wheels/*.whl
-          /tmp/rumk-wheel-test/bin/rumk version
+      - name: Validate metadata, build the wheel and sdist, and smoke-test the wheel
+        run: make ci-package

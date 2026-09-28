@@ -6,13 +6,18 @@ Thank you for improving Rumk.
 
 1. Create a focused branch.
 2. Add regression tests for behavior changes.
-3. Run the full verification suite:
+3. Run the full verification suite, which is exactly what CI runs:
 
    ```bash
-   cargo test --all-targets --all-features
-   cargo clippy --all-targets --all-features -- -D warnings
-   cargo fmt --all -- --check
+   make ci
    ```
+
+   Each CI job is one make target (`ci-quality`, `ci-test`, `ci-compat`,
+   `msrv-check`, `ci-package`), so a failing job can be rerun on its own.
+   The jobs install the pinned `pre-commit` and `maturin` into `target/ci-tools`
+   themselves; Rust 1.82.0 must be installed for `msrv-check`. `ci-package` validates
+   the crate package, which refuses uncommitted changes; set `ALLOW_DIRTY=1`
+   to run it before committing.
 
 4. Use Conventional Commits for commit messages.
 
@@ -33,7 +38,7 @@ The [comparison corpus guide](tests/fixtures/comparison/README.md) describes the
 pinned cross-tool runner and its limits. Keep generated comparison output out of
 commits. Add positive cases and valid lookalikes when changing detection.
 
-With `pre-commit==4.6.0` installed, run `python3 scripts/verify-hooks.py`. It copies
+`make check-hooks` (part of `ci-quality`) runs `scripts/verify-hooks.py`. It copies
 the build inputs into temporary repositories, tests the actual Rust hook backend,
 and checks formatting, include context, and configuration triggers. It never
 installs hooks or changes the real repository's index. Run the Cargo checks first
