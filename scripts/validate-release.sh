@@ -27,6 +27,28 @@ if [[ "${action_version}" != "${version}" ]]; then
     exit 1
 fi
 
+fuzz_version="$(awk '
+    $1 == "name" && $3 == "\"rumk\"" { in_package = 1; next }
+    in_package && $1 == "version" { gsub(/"/, "", $3); print $3; exit }
+' fuzz/Cargo.lock)"
+if [[ "${fuzz_version}" != "${version}" ]]; then
+    echo "release version mismatch: fuzz/Cargo.lock=${fuzz_version} Cargo.toml=${version}" >&2
+    exit 1
+fi
+
+# Every installation example in the README names the release it installs.
+readme_pins="$(grep -oE 'rumk --locked --version [0-9][^ ]*|rumk==[0-9][^ ]*|rumk@v[0-9][^ ]*|^ +version: [0-9][^ ]*|^ +rev: v[0-9][^ ]*' README.md || true)"
+if [[ -z "${readme_pins}" ]]; then
+    echo "README.md has no installation examples naming a version" >&2
+    exit 1
+fi
+stale_pins="$(grep -vE "(^|[ =v])${version//./\\.}$" <<<"${readme_pins}" || true)"
+if [[ -n "${stale_pins}" ]]; then
+    echo "README.md installation examples do not name ${version}:" >&2
+    echo "${stale_pins}" >&2
+    exit 1
+fi
+
 package_args=(--locked)
 if [[ "${ALLOW_DIRTY:-0}" == "1" ]]; then
     package_args+=(--allow-dirty)

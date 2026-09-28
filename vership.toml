@@ -1,0 +1,41 @@
+# Files outside Cargo.toml that name the release. Text mode skips a file
+# whose search text is missing, so the post-bump validation below is what
+# proves every one of them was updated.
+[[version_files]]
+glob = "action.yml"
+search = "default: \"{prev}\""
+replace = "default: \"{version}\""
+
+[[version_files]]
+glob = "README.md"
+search = "rumk --locked --version {prev}"
+replace = "rumk --locked --version {version}"
+
+[[version_files]]
+glob = "README.md"
+search = "rumk=={prev}"
+replace = "rumk=={version}"
+
+[[version_files]]
+glob = "README.md"
+search = "rumk@v{prev}"
+replace = "rumk@v{version}"
+
+[[version_files]]
+glob = "README.md"
+search = "version: {prev}"
+replace = "version: {version}"
+
+[[version_files]]
+glob = "README.md"
+search = "rev: v{prev}"
+replace = "rev: v{version}"
+
+[[artifacts]]
+command = "cargo update --manifest-path fuzz/Cargo.toml --package rumk --offline --quiet"
+files = ["fuzz/Cargo.lock"]
+
+# Runs after every file above is written and before the release commit, tag,
+# and push, so a mismatch stops the release while it is still local.
+[hooks]
+post-bump = "ALLOW_DIRTY=1 ./scripts/validate-release.sh"
