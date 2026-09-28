@@ -11,7 +11,35 @@ async function until(callback, message) {
   throw new Error(message);
 }
 
+// VS Code cancels every in-flight code-action request when a provider matching
+// that document registers. Core registers one for every language ("*") once,
+// a few seconds after startup, which would cancel the fix requests asserted
+// below at random. A pending request on a plaintext canary can only be
+// cancelled by such a registration, so its cancellation marks the point from
+// which code actions are stable. If the registration already happened before
+// the canary was armed, nothing cancels it and the deadline ends the wait.
+async function codeActionProvidersSettled() {
+  const canary = await vscode.workspace.openTextDocument({ language: 'plaintext', content: 'canary' });
+  let cancelled;
+  const settled = new Promise(resolve => { cancelled = resolve; });
+  const provider = vscode.languages.registerCodeActionsProvider({ language: 'plaintext', scheme: 'untitled' }, {
+    provideCodeActions: (_document, _range, _context, token) => new Promise(resolve => {
+      token.onCancellationRequested(() => { cancelled(true); resolve([]); });
+    }),
+  });
+  try {
+    const request = vscode.commands.executeCommand('vscode.executeCodeActionProvider', canary.uri, new vscode.Range(0, 0, 0, 0));
+    request.then(undefined, () => {});
+    const started = Date.now();
+    const observed = await Promise.race([settled, new Promise(resolve => setTimeout(resolve, 15000, false))]);
+    console.log(`code-action providers settled after ${Date.now() - started}ms (${observed ? 'registration observed' : 'deadline'})`);
+  } finally {
+    provider.dispose();
+  }
+}
+
 exports.run = async () => {
+  await codeActionProvidersSettled();
   const extension = vscode.extensions.getExtension('rvben.rumk');
   assert.ok(extension, 'extension is installed');
   await extension.activate();
@@ -84,5 +112,9 @@ exports.run = async () => {
   await vscode.commands.executeCommand('rumk.restartServer');
   await until(() => vscode.languages.getDiagnostics(second.uri).some(d => (d.code?.value || d.code) === 'MK001'), 'correcting executable path did not recover');
   await require('./fixes.cjs').run(folders[0].uri, until);
+  // Any other extension registering a code-action provider would cancel the
+  // requests asserted above at random, so nothing else may have activated.
+  const active = vscode.extensions.all.filter(e => e.isActive).map(e => e.id);
+  assert.deepEqual(active, ['rvben.rumk'], `only Rumk activates during the run, found ${active.join(', ')}`);
   console.log('Rumk extension integration checks passed.');
 };
