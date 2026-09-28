@@ -13,12 +13,12 @@ permissions:
 
 jobs:
   update:
-    uses: rvben/upd/.github/workflows/dependency-health.yml@30d1d9c93804f9ec097df51ab091f4ad9463043e # v0.14.1
+    uses: rvben/upd/.github/workflows/dependency-health.yml@7e6bee076ba17f80de23d49609ea7f4158045089 # v0.14.2
     with:
       runner: ubuntu-24.04
-      upd-version: v0.14.1
+      upd-version: v0.14.2
       upd-target: x86_64-unknown-linux-gnu
-      upd-sha256: 4c04040d56a09b1767e953e6c1a49723b8ad9ad55537b5923616871883ab14b1
+      upd-sha256: bd36daa32d985bedb1b926752980ac29d920d2fa20e5909ec43556a0c14350d0
       langs: ""
       lock: true
       min-age: 7d
