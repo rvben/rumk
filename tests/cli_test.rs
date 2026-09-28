@@ -2078,7 +2078,10 @@ fn shell_completions_are_generated_without_loading_project_configuration() {
         assert!(script.contains("unsafe-fixes"), "{shell}");
         assert!(script.contains("coverage"), "{shell}");
         assert!(!script.contains('\u{1b}'));
-        if shell == "bash" || shell == "zsh" {
+        // On Windows `bash` resolves to the WSL launcher in System32 before
+        // PATH, which cannot run without an installed distribution. The
+        // script does not depend on the host, so Unix runs cover it.
+        if cfg!(unix) && (shell == "bash" || shell == "zsh") {
             let path = dir.path().join(format!("completion.{shell}"));
             std::fs::write(&path, script).unwrap();
             match std::process::Command::new(shell)
