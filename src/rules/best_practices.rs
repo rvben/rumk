@@ -4,7 +4,7 @@ use crate::logical::{
     find_top_level_char, find_top_level_rule_separator, inline_recipe_separator,
     split_top_level_words, strip_top_level_comment, LogicalKind, Reach,
 };
-use crate::parser::{AssignmentOperator, Makefile, VariableScope};
+use crate::parser::{AssignmentOperator, Makefile, Variable, VariableScope};
 use crate::project::Project;
 use crate::rules::{Rule, RuleCategory};
 use crate::syntax::SyntaxKind;
@@ -1074,11 +1074,10 @@ impl Rule for ShellStyleVariableReference {
 
     fn check(&self, makefile: &Makefile, _content: &str) -> Vec<Diagnostic> {
         let source = makefile.syntax.source();
-        let defined: BTreeSet<&str> = makefile
-            .assignments
-            .iter()
-            .map(|variable| variable.name.as_str())
-            .collect();
+        let definitions = Definitions::new(makefile);
+        let recipe_owners = recipe_owners(makefile);
+        let immediate_value_owners = immediate_target_value_owners(makefile);
+        let read_time_lines = read_time_lines(makefile);
         let recipe_lines = recipe_lines(makefile);
         makefile
             .syntax
@@ -1112,7 +1111,22 @@ impl Rule for ShellStyleVariableReference {
                 let expanded = if inline.is_some() { content } else { stripped };
                 let recipe_start = if whole_line_recipe { Some(0) } else { inline };
                 let start_column = node.content_span.start.column;
-                shell_style_references(expanded, &defined)
+                // A value given to some targets only is there in the recipes
+                // Make runs for them and in their own immediate values, and
+                // nowhere else Make expands the text as it reads the file.
+                // Text it expands later may end up in any recipe, so there any
+                // value counts.
+                let owner = recipe_owners.get(&line).copied();
+                let value_owner = immediate_value_owners.get(&line).copied();
+                let defined = |offset: usize, name: &str| match (owner, value_owner) {
+                    (Some(targets), _) if recipe_start.is_some_and(|start| offset >= start) => {
+                        definitions.seen_in_recipe_of(name, targets)
+                    }
+                    (_, Some(targets)) => definitions.seen_in_value_of(name, targets),
+                    _ if read_time_lines.contains(&line) => definitions.seen_while_reading(name),
+                    _ => definitions.seen_anywhere(name),
+                };
+                shell_style_references(expanded, defined)
                     .into_iter()
                     .map(move |reference| {
                         let name = &expanded[reference.start + 1..reference.end];
@@ -1160,14 +1174,292 @@ fn recipe_lines(makefile: &Makefile) -> BTreeSet<usize> {
         .collect()
 }
 
+/// The targets of the rule each recipe line belongs to, a recipe the rule
+/// line carries after its ';' included.
+fn recipe_owners(makefile: &Makefile) -> BTreeMap<usize, &[String]> {
+    makefile
+        .rules
+        .iter()
+        .flat_map(|rule| {
+            rule.recipes
+                .iter()
+                .flat_map(|recipe| recipe.line..=recipe.end_line)
+                .map(|line| (line, rule.targets.as_slice()))
+        })
+        .collect()
+}
+
+/// The targets each line of an immediate target-specific assignment gives a
+/// value to. Make expands the value as it reads the line, with those targets'
+/// own values in effect and none they inherit.
+fn immediate_target_value_owners(makefile: &Makefile) -> BTreeMap<usize, &[String]> {
+    makefile
+        .assignments
+        .iter()
+        .filter(|variable| is_immediate(variable.operator))
+        .filter_map(|variable| match &variable.scope {
+            VariableScope::TargetSpecific(targets) => Some((variable, targets.as_slice())),
+            VariableScope::Global => None,
+        })
+        .flat_map(|(variable, targets)| {
+            (variable.line..=variable.end_line).map(move |line| (line, targets))
+        })
+        .collect()
+}
+
+/// Every line whose text GNU Make expands as it reads it, before any target's
+/// own values are in effect: a rule's targets and prerequisites, an immediate
+/// assignment to the whole file, and the directives.
+fn read_time_lines(makefile: &Makefile) -> BTreeSet<usize> {
+    let assignments: BTreeMap<usize, &Variable> = makefile
+        .assignments
+        .iter()
+        .map(|variable| (variable.line, variable))
+        .collect();
+    makefile
+        .logical
+        .statements()
+        .iter()
+        .filter(|statement| match assignments.get(&statement.start_line) {
+            Some(variable) => {
+                variable.scope == VariableScope::Global && is_immediate(variable.operator)
+            }
+            None => matches!(
+                statement.kind,
+                LogicalKind::Rule
+                    | LogicalKind::Include(_)
+                    | LogicalKind::Conditional(_)
+                    | LogicalKind::Directive
+            ),
+        })
+        .flat_map(|statement| statement.start_line..=statement.end_line)
+        .collect()
+}
+
+/// Whether GNU Make expands an assignment's value as it reads the line.
+fn is_immediate(operator: AssignmentOperator) -> bool {
+    matches!(
+        operator,
+        AssignmentOperator::Simple
+            | AssignmentOperator::SimplePosix
+            | AssignmentOperator::ImmediateRecursive
+            | AssignmentOperator::Shell
+    )
+}
+
+/// A value the file gives a variable for some targets only.
+struct ScopedDefinition<'a> {
+    name: &'a str,
+    targets: &'a [String],
+    /// Whether the value stays with its own targets rather than passing on to
+    /// their prerequisites.
+    private: bool,
+}
+
+impl ScopedDefinition<'_> {
+    /// Whether the value is given to any of `targets`.
+    fn covers<T: AsRef<str>>(&self, targets: &[T]) -> bool {
+        self.targets.iter().any(|pattern| {
+            targets
+                .iter()
+                .any(|target| target_pattern_matches(pattern, target.as_ref()))
+        })
+    }
+}
+
+/// Where the file gives a variable a value, for telling whether a recipe can
+/// see it.
+struct Definitions<'a> {
+    global: BTreeSet<&'a str>,
+    /// Target values in the environment of every command their targets run.
+    exported: BTreeSet<&'a str>,
+    scoped: Vec<ScopedDefinition<'a>>,
+    /// The targets naming each target as a prerequisite.
+    parents: BTreeMap<&'a str, Vec<&'a str>>,
+    /// The targets naming as a prerequisite every target a pattern matches.
+    pattern_parents: Vec<(&'a str, &'a [String])>,
+    /// Targets whose prerequisites are only known once Make expands them, so
+    /// any target may be one of them.
+    open_parents: Vec<&'a str>,
+}
+
+impl<'a> Definitions<'a> {
+    fn new(makefile: &'a Makefile) -> Self {
+        let mut global = BTreeSet::new();
+        let mut exported = BTreeSet::new();
+        let mut scoped = Vec::new();
+        for variable in &makefile.assignments {
+            match &variable.scope {
+                VariableScope::TargetSpecific(targets) => {
+                    // A sub-make the target runs may build any other target
+                    // with the exported value in its environment.
+                    if variable.modifiers.export {
+                        exported.insert(variable.name.as_str());
+                    }
+                    scoped.push(ScopedDefinition {
+                        name: &variable.name,
+                        targets,
+                        private: variable.modifiers.private,
+                    })
+                }
+                VariableScope::Global => {
+                    global.insert(variable.name.as_str());
+                }
+            }
+        }
+        let mut parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+        let mut pattern_parents = Vec::new();
+        let mut open_parents = Vec::new();
+        for rule in makefile
+            .rules
+            .iter()
+            .filter(|rule| rule.target_assignment.is_none())
+        {
+            for prerequisite in rule
+                .prerequisites
+                .iter()
+                .chain(&rule.order_only_prerequisites)
+            {
+                if prerequisite.contains('$') {
+                    open_parents.extend(rule.targets.iter().map(String::as_str));
+                } else if prerequisite.contains('%') {
+                    pattern_parents.push((prerequisite.as_str(), rule.targets.as_slice()));
+                } else {
+                    parents
+                        .entry(prerequisite)
+                        .or_default()
+                        .extend(rule.targets.iter().map(String::as_str));
+                }
+            }
+        }
+        Self {
+            global,
+            exported,
+            scoped,
+            parents,
+            pattern_parents,
+            open_parents,
+        }
+    }
+
+    fn seen_while_reading(&self, name: &str) -> bool {
+        self.global.contains(name)
+    }
+
+    /// Whether GNU Make can give `name` a value in an immediate value it
+    /// reads for `targets`: a value of the whole file or one for those
+    /// targets themselves.
+    fn seen_in_value_of(&self, name: &str, targets: &[String]) -> bool {
+        let open = targets.iter().any(|target| is_open_name(target));
+        self.global.contains(name)
+            || self
+                .scoped
+                .iter()
+                .any(|scoped| scoped.name == name && (open || scoped.covers(targets)))
+    }
+
+    fn seen_anywhere(&self, name: &str) -> bool {
+        self.global.contains(name) || self.scoped.iter().any(|scoped| scoped.name == name)
+    }
+
+    /// Whether GNU Make can give `name` a value in the recipe of a rule for
+    /// `targets`: a value of the whole file, one for those targets, or one
+    /// for a target that has them among its prerequisites, however far up.
+    fn seen_in_recipe_of(&self, name: &str, targets: &[String]) -> bool {
+        if self.global.contains(name) || self.exported.contains(name) {
+            return true;
+        }
+        let scoped: Vec<_> = self
+            .scoped
+            .iter()
+            .filter(|scoped| scoped.name == name)
+            .collect();
+        if scoped.is_empty() {
+            return false;
+        }
+        if targets.iter().any(|target| is_open_name(target)) {
+            return true;
+        }
+        if scoped.iter().any(|definition| definition.covers(targets)) {
+            return true;
+        }
+        let inherited: Vec<_> = scoped.iter().filter(|scoped| !scoped.private).collect();
+        if inherited.is_empty() {
+            return false;
+        }
+        let names: Vec<&str> = targets.iter().map(String::as_str).collect();
+        let Some(ancestors) = self.ancestors(&names) else {
+            return true;
+        };
+        inherited
+            .iter()
+            .any(|definition| definition.covers(&ancestors))
+    }
+
+    /// Every target that has one of `targets` among its prerequisites,
+    /// directly or through others, or None where that includes targets whose
+    /// own names or prerequisites are only known once Make expands them.
+    fn ancestors(&self, targets: &[&'a str]) -> Option<Vec<&'a str>> {
+        let mut seen: BTreeSet<&str> = targets.iter().copied().collect();
+        let mut queue: Vec<&str> = targets.to_vec();
+        let mut ancestors = Vec::new();
+        let mut open = false;
+        while let Some(target) = queue.pop() {
+            let direct = self.parents.get(target).into_iter().flatten().copied();
+            let through_patterns = self
+                .pattern_parents
+                .iter()
+                .filter(|(pattern, _)| target_pattern_matches(pattern, target))
+                .flat_map(|(_, parents)| parents.iter().map(String::as_str));
+            let expanded = self.open_parents.iter().copied();
+            for parent in direct.chain(through_patterns).chain(expanded) {
+                if is_open_name(parent) {
+                    open = true;
+                }
+                if seen.insert(parent) {
+                    ancestors.push(parent);
+                    queue.push(parent);
+                }
+            }
+        }
+        (!open).then_some(ancestors)
+    }
+}
+
+/// Whether a target or prerequisite name stands for names Make only settles
+/// while it runs: a pattern, or text it expands first.
+fn is_open_name(name: &str) -> bool {
+    name.contains(['%', '$'])
+}
+
+/// Whether the target pattern of a target-specific value applies to
+/// `target`. Make matches the whole name, directory included, even for a
+/// pattern with no '/', and a pattern it has yet to expand may apply to any
+/// target.
+fn target_pattern_matches(pattern: &str, target: &str) -> bool {
+    if pattern.contains('$') {
+        return true;
+    }
+    let Some((prefix, suffix)) = pattern.split_once('%') else {
+        return pattern == target;
+    };
+    target.len() >= prefix.len() + suffix.len()
+        && target.starts_with(prefix)
+        && target.ends_with(suffix)
+}
+
 /// Byte ranges of the `$` references in `text` that name a variable the way a
 /// shell names one: a `$` followed by more than one character of a name, which
 /// GNU Make reads as the first character alone.
 ///
 /// A first character the file gives a value of its own is left alone: `$(Q)`
 /// written `$Qecho` reads exactly as it was meant to, and a file that defines
-/// `Q` is a file that means it.
-fn shell_style_references(text: &str, defined: &BTreeSet<&str>) -> Vec<std::ops::Range<usize>> {
+/// `Q` is a file that means it. `defined` answers that for the reference
+/// starting at a byte offset.
+fn shell_style_references(
+    text: &str,
+    defined: impl Fn(usize, &str) -> bool,
+) -> Vec<std::ops::Range<usize>> {
     let mut references = Vec::new();
     let mut index = 0;
     while let Some(offset) = text[index..].find('$') {
@@ -1196,7 +1488,7 @@ fn shell_style_references(text: &str, defined: &BTreeSet<&str>) -> Vec<std::ops:
             + text[dollar + 1..]
                 .find(|character: char| !is_name_character(character))
                 .unwrap_or(text.len() - dollar - 1);
-        if end - dollar < 3 || defined.contains(&text[dollar + 1..dollar + 1 + first.len_utf8()]) {
+        if end - dollar < 3 || defined(dollar, &text[dollar + 1..dollar + 1 + first.len_utf8()]) {
             index = dollar + length;
             continue;
         }

@@ -738,6 +738,168 @@ fn shell_style_reference_says_nothing_where_the_file_defines_the_first_character
         .is_empty());
 }
 
+fn shell_style_lines(content: &str) -> Vec<usize> {
+    ShellStyleVariableReference
+        .check(&parse(content), content)
+        .iter()
+        .map(|diagnostic| diagnostic.line)
+        .collect()
+}
+
+#[test]
+fn shell_style_reference_counts_a_target_value_only_where_make_sees_it() {
+    // GNU Make 4.4 prints 'dep=releasevalue', 'build=releasevalue',
+    // 'deploy=value', 'lib=value' and 'solo=svalue': a target's value reaches
+    // its own recipe and its prerequisites' recipes, unless it is private.
+    let content = concat!(
+        ".PHONY: all build deploy dep solo lib\n",
+        "all: build deploy solo\n",
+        "build: X = release\n",
+        "build: dep\n",
+        "\t@echo build=$Xvalue\n",
+        "dep:\n",
+        "\t@echo dep=$Xvalue\n",
+        "deploy:\n",
+        "\t@echo deploy=$Xvalue\n",
+        "solo: private Y = s\n",
+        "solo: lib\n",
+        "\t@echo solo=$Yvalue\n",
+        "lib:\n",
+        "\t@echo lib=$Yvalue\n",
+        // A pattern rule reaches only the targets its patterns match.
+        "%.o: %.c\n",
+        "\t@cc -c $< -o $@\n",
+    );
+
+    assert_eq!(shell_style_lines(content), [9, 14]);
+}
+
+#[test]
+fn shell_style_reference_follows_a_target_value_through_patterns_and_chains() {
+    // GNU Make 4.4 prints 'foo=objvalue', 'bar=value' and 'leaf=tvalue'.
+    let content = concat!(
+        ".PHONY: all foo.o bar.c top mid leaf\n",
+        "all: foo.o bar.c top\n",
+        "%.o: X = obj\n",
+        "foo.o:\n",
+        "\t@echo foo=$Xvalue\n",
+        "bar.c:\n",
+        "\t@echo bar=$Xvalue\n",
+        "top: Z = t\n",
+        "top: mid\n",
+        "mid: leaf\n",
+        "leaf:\n",
+        "\t@echo leaf=$Zvalue\n",
+    );
+
+    assert_eq!(shell_style_lines(content), [7]);
+
+    // GNU Make 4.4 prints 'stamp=vvalue' and 'notes=value': 'app.stamp' is a
+    // prerequisite of 'app.bin' through the pattern rule.
+    let through_pattern = concat!(
+        ".PHONY: all app.stamp notes\n",
+        "all: app.bin notes\n",
+        "%.bin: %.stamp\n",
+        "\t@echo bin\n",
+        "app.bin: V = v\n",
+        "app.stamp:\n",
+        "\t@echo stamp=$Vvalue\n",
+        "notes:\n",
+        "\t@echo notes=$Vvalue\n",
+    );
+
+    assert_eq!(shell_style_lines(through_pattern), [9]);
+
+    // GNU Make 4.4 prints 'libz=value': a pattern with no '/' still has to
+    // match the directory as well.
+    let in_directory = concat!(
+        "lib%.a: X = 1\n",
+        "out/libz.a:\n",
+        "\t@echo libz=$Xvalue\n",
+        "libz.a:\n",
+        "\t@echo libz=$Xvalue\n",
+        // GNU Make 4.4 prints 'a=value': the prefix and suffix may not overlap.
+        "a%a: Y = 1\n",
+        "a:\n",
+        "\t@echo a=$Yvalue\n",
+    );
+
+    assert_eq!(shell_style_lines(in_directory), [3, 8]);
+}
+
+#[test]
+fn shell_style_reference_ignores_target_values_where_make_expands_as_it_reads() {
+    // GNU Make 4.4 prints 'built dep' and 'L=value C=empty': a prerequisite
+    // list, an immediate value and a condition are expanded before any
+    // target's own values are in effect, the target's own included.
+    let content = concat!(
+        "leaf: F = 1\n",
+        "leaf: P = 1\n",
+        "leaf: export G = 1\n",
+        "L := $Pvalue\n",
+        "ifeq ($Gx,x)\n",
+        "C := empty\n",
+        "endif\n",
+        ".PHONY: leaf dep\n",
+        "leaf: $Fdep ; @echo L=$(L) C=$(C)\n",
+        "dep: ; @echo built dep\n",
+    );
+
+    assert_eq!(shell_style_lines(content), [4, 5, 9]);
+}
+
+#[test]
+fn shell_style_reference_reads_a_target_value_where_make_expands_it() {
+    // GNU Make 4.4 prints 'Y=value Z=1value U=value W=1value T=1value' for
+    // 'make top'. An immediate value is expanded as Make reads it, with only
+    // its own target's values there; a recursive one is expanded in whatever
+    // target inherits it, and so may see that target's values.
+    let content = concat!(
+        ".PHONY: top leaf\n",
+        "other: H = 1\n",
+        "leaf: K = 1\n",
+        "top: J = 1\n",
+        "top: leaf\n",
+        "leaf: Y := $Hvalue\n",
+        "leaf: Z := $Kvalue\n",
+        "leaf: U := $Jvalue\n",
+        "leaf: W = $Jvalue\n",
+        "top: T = $Kvalue\n",
+        "leaf:\n",
+        "\t@echo Y=$(Y) Z=$(Z) U=$(U) W=$(W) T=$(T)\n",
+        // A pattern may be any target, so any target's value may be there,
+        // but a value nothing gives is not.
+        "%.o: P := $Hvalue $Qvalue\n",
+    );
+
+    assert_eq!(shell_style_lines(content), [6, 8, 13]);
+}
+
+#[test]
+fn shell_style_reference_trusts_a_target_value_it_cannot_rule_out() {
+    // Each value below can reach 'leaf' by a route the file does not spell
+    // out: a prerequisite list written as a variable, a pattern rule any
+    // target may use, the environment of a sub-make, and a line Make expands
+    // later in whatever recipe reads it.
+    let content = concat!(
+        "LEAVES = leaf\n",
+        "all: A = 1\n",
+        "all: $(LEAVES)\n",
+        "%.gen: %.in ; @echo $Bvalue\n",
+        "other: B = 1\n",
+        "build: export C = 1\n",
+        "build:\n",
+        "\t@$(MAKE) leaf\n",
+        "late: D = 1\n",
+        "MSG = $Dvalue\n",
+        "$(PROG): E = 1\n",
+        "leaf:\n",
+        "\t@echo $Avalue $Cvalue $(MSG) $Evalue\n",
+    );
+
+    assert_eq!(shell_style_lines(content), Vec::<usize>::new());
+}
+
 #[test]
 fn shell_style_reference_in_a_recipe_is_reported_without_a_fix() {
     let content = "all:\n\techo $HOME\n";
