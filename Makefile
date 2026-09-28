@@ -173,11 +173,15 @@ RELEASE_FORMAT ?= $(if $(findstring windows,$(RELEASE_TARGET)),zip,tar.gz)
 RELEASE_EXE = $(if $(findstring windows,$(RELEASE_TARGET)),.exe,)
 RELEASE_DIST ?= dist
 # Linux wheels link against an old glibc through zig so they install broadly.
+# maturin runs zig as `python3 -m ziglang`, so the tools' environment goes first on PATH.
 RELEASE_WHEEL_ARGS = $(if $(findstring linux,$(RELEASE_TARGET)),--compatibility manylinux2014 --zig,)
+RELEASE_WHEEL_ENV = $(if $(findstring linux,$(RELEASE_TARGET)),PATH="$(abspath $(CI_BIN)):$$PATH",)
 RELEASE_MATURIN_SPEC = $(subst maturin,maturin$(if $(findstring linux,$(HOST_TARGET)),[zig],),$(MATURIN_SPEC))
 
+# Installs into the ci-tools environment; runner Pythons may refuse global installs.
 release-tools:
-	$(PYTHON) -m pip install "$(RELEASE_MATURIN_SPEC)"
+	$(PYTHON) -m venv $(CI_VENV)
+	$(CI_BIN)/python -m pip install --quiet "$(RELEASE_MATURIN_SPEC)"
 
 # Pass RELEASE_EXPECTED=<tag> to require that Cargo.toml names that version.
 RELEASE_EXPECTED ?=
@@ -189,10 +193,11 @@ release-build:
 	target/$(RELEASE_TARGET)/release/$(BINARY_NAME)$(RELEASE_EXE) version
 	target/$(RELEASE_TARGET)/release/$(BINARY_NAME)$(RELEASE_EXE) check Makefile
 	./scripts/package-release.sh $(RELEASE_TARGET) $(RELEASE_VERSION) $(RELEASE_FORMAT)
-	maturin build --locked --release --target $(RELEASE_TARGET) $(RELEASE_WHEEL_ARGS) --out $(RELEASE_DIST)
+	$(RELEASE_WHEEL_ENV) $(CI_BIN)/maturin build --locked --release --target $(RELEASE_TARGET) $(RELEASE_WHEEL_ARGS) \
+		--out $(RELEASE_DIST)
 
 release-sdist:
-	maturin sdist --out $(RELEASE_DIST)
+	$(CI_BIN)/maturin sdist --out $(RELEASE_DIST)
 
 release-checksums:
 	./scripts/release-checksums.sh $(RELEASE_DIST)
