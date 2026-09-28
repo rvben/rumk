@@ -799,6 +799,9 @@ impl<'a> Loader<'a> {
             return None;
         }
         let pattern = path.file_name()?.to_str()?;
+        // Make names each match with the directory exactly as the pattern
+        // spells it, separators included, on every platform.
+        let prefix = expression.strip_suffix(pattern)?;
         // Globset's recursive ** syntax is not GNU Make glob syntax.
         if pattern.contains("**") {
             return None;
@@ -836,7 +839,7 @@ impl<'a> Loader<'a> {
                 if name.contains(['$', '*', '?', '[', '\\']) {
                     return None;
                 }
-                matches.push(parent.join(name).to_str()?.to_owned());
+                matches.push(format!("{prefix}{name}"));
                 if matches.len() > self.options.max_files {
                     return None;
                 }

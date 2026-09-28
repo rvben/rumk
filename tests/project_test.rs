@@ -324,6 +324,31 @@ fn honors_predefined_variables_and_infers_gnu_default_goal() {
 }
 
 #[test]
+fn static_include_globs_keep_the_directory_as_the_pattern_spells_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("mk")).unwrap();
+    std::fs::write(directory.path().join("mk/a.mk"), "").unwrap();
+    for (pattern, expected) in [("mk//*.mk", "mk//a.mk"), ("mk/./*.mk", "mk/./a.mk")] {
+        let project = Project::load_with_root_content(
+            &root,
+            format!("include {pattern}\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            project
+                .edges()
+                .iter()
+                .map(|edge| edge.expanded.as_deref().unwrap())
+                .collect::<Vec<_>>(),
+            [expected],
+            "{pattern}"
+        );
+    }
+}
+
+#[test]
 fn static_include_globs_follow_gnu_make_order_and_directory_rules() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("Makefile");
