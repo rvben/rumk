@@ -5,4 +5,11 @@
 # vsce refuses to package the extension when the type definitions outrun the
 # minimum supported VS Code version. Bump this alongside a deliberate
 # engines.vscode change, not as an automatic refresh.
-ignore = ["rvben/upd", "dtolnay/rust-toolchain", "@types/vscode"]
+# clap: fuzz/Cargo.lock is a separate lockfile (fuzz/Cargo.toml declares its
+# own single-member workspace) that resolves clap transitively through its
+# path dependency on rumk, but nothing keeps it in sync with an automated
+# bump to the root Cargo.toml's clap requirement. An unattended minor bump
+# here leaves fuzz/Cargo.lock unable to satisfy the new requirement under
+# --locked, failing check-fuzz. Bump clap alongside a manual fuzz/Cargo.lock
+# update, not as an automatic refresh.
+ignore = ["rvben/upd", "dtolnay/rust-toolchain", "@types/vscode", "clap"]
