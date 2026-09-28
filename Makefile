@@ -1,12 +1,16 @@
 .PHONY: all build test lint fmt fmt-check clean install run check-examples
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
 .PHONY: release-check benchmark help check-comparison check-semantic
+.PHONY: vscode-deps vscode-bundle vscode-test vscode-integration vscode-package vscode-verify-packages vscode-publish
 
 # Configuration
 CARGO = cargo
 MSRV = 1.82.0
 INSTALL_PREFIX = /usr/local
 BINARY_NAME = rumk
+VSCODE = editors/vscode
+# Platform packages downloaded for publication, relative to $(VSCODE).
+VSCODE_PACKAGES ?= packages
 
 all: lint build test
 
@@ -103,6 +107,35 @@ check-fuzz:
 release-check: fmt-check lint test check-gnu-fixtures check-corpus
 	ALLOW_DIRTY=1 ./scripts/validate-release.sh
 
+# The VS Code extension bundles a server built from this checkout for the
+# host platform, so each platform package is built on its own runner.
+vscode-deps:
+	cd $(VSCODE) && npm ci
+
+vscode-bundle:
+	cd $(VSCODE) && npm run bundle
+
+vscode-test:
+	cd $(VSCODE) && npm test
+
+# Needs a display; on Linux run it under xvfb-run.
+vscode-integration:
+	cd $(VSCODE) && npm run test:integration
+
+vscode-package:
+	cd $(VSCODE) && npm run package:pre-release
+
+# Checks the downloaded platform packages form one complete set built from
+# REVISION, the commit being released.
+REVISION ?= $(shell git rev-parse HEAD)
+vscode-verify-packages:
+	cd $(VSCODE) && python3 scripts/verify-vsix.py $(VSCODE_PACKAGES) --revision $(REVISION)
+
+# Needs VSCE_PAT. Publishes only the targets the Marketplace lacks for this version.
+vscode-publish:
+	@test -n "$$VSCE_PAT" || { echo 'VSCE_PAT is not set; add the Marketplace token before publishing.'; exit 1; }
+	cd $(VSCODE) && python3 scripts/publish-vsix.py $(VSCODE_PACKAGES)
+
 help:
 	@echo "Available targets:"
 	@echo "  all     - Run lint, build, and test"
@@ -125,3 +158,10 @@ help:
 	@echo "  fuzz    - Fuzz every target for FUZZ_TIME seconds (needs nightly)"
 	@echo "  check-fuzz - Type-check the fuzz targets against the library"
 	@echo "  release-check - Run every local release gate and package dry run"
+	@echo "  vscode-deps - Install the VS Code extension dependencies"
+	@echo "  vscode-bundle - Build the server bundled into the extension"
+	@echo "  vscode-test - Type-check and unit-test the extension"
+	@echo "  vscode-integration - Run the extension in VS Code against the bundled server"
+	@echo "  vscode-package - Package the extension for this platform"
+	@echo "  vscode-verify-packages - Verify the complete set of platform packages"
+	@echo "  vscode-publish - Publish missing platform packages to the Marketplace"

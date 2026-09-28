@@ -70,30 +70,29 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Install extension dependencies
-        working-directory: editors/vscode
-        run: npm ci
+        shell: bash
+        run: make vscode-deps
 
       - name: Bundle language server
-        working-directory: editors/vscode
-        run: npm run bundle
+        shell: bash
+        run: make vscode-bundle
 
       - name: Type-check and test
-        working-directory: editors/vscode
-        run: npm test
+        shell: bash
+        run: make vscode-test
 
       - name: Test in VS Code (Linux)
         if: runner.os == 'Linux'
-        working-directory: editors/vscode
-        run: xvfb-run -a npm run test:integration
+        run: xvfb-run -a make vscode-integration
 
       - name: Test in VS Code (macOS and Windows)
         if: runner.os != 'Linux'
-        working-directory: editors/vscode
-        run: npm run test:integration
+        shell: bash
+        run: make vscode-integration
 
       - name: Verify VSIX packaging
-        working-directory: editors/vscode
-        run: npm run package:pre-release
+        shell: bash
+        run: make vscode-package
 
       - name: Retain platform VSIX
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
@@ -120,8 +119,7 @@ jobs:
           cache-dependency-path: editors/vscode/package-lock.json
 
       - name: Install publication tooling
-        working-directory: editors/vscode
-        run: npm ci
+        run: make vscode-deps
 
       - name: Download all five tested packages
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -131,14 +129,9 @@ jobs:
           merge-multiple: true
 
       - name: Verify complete release set
-        working-directory: editors/vscode
-        run: python3 scripts/verify-vsix.py packages --revision "$GITHUB_SHA"
+        run: make vscode-verify-packages REVISION="$GITHUB_SHA"
 
       - name: Publish preview to Visual Studio Marketplace
-        working-directory: editors/vscode
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          test -n "$VSCE_PAT" || { echo '::error::Add the Marketplace VSCE_PAT repository secret before publishing.'; exit 1; }
-          node_modules/.bin/vsce verify-pat rvben
-          node_modules/.bin/vsce publish --packagePath packages/*.vsix
+        run: make vscode-publish
