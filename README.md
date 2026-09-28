@@ -55,15 +55,15 @@ Rumdl so existing users can reuse their workflow.
 ## Installation
 
 ```bash
-cargo install rumk --locked --version 0.0.8
+cargo install rumk --locked --version 0.1.0
 ```
 
 Or install the native executable from PyPI with a Python tool manager:
 
 ```bash
-uv tool install rumk==0.0.8
+uv tool install rumk==0.1.0
 # or
-pipx install rumk==0.0.8
+pipx install rumk==0.1.0
 ```
 
 Rumk is alpha-stage `0.0.x` software, so installation names the version explicitly. Release
@@ -78,9 +78,9 @@ runs it, and leaves `rumk` on `PATH` for later steps:
 ```yaml
 steps:
   - uses: actions/checkout@v4
-  - uses: rvben/rumk@v0.0.8
+  - uses: rvben/rumk@v0.1.0
     with:
-      version: 0.0.8
+      version: 0.1.0
       path: .
       report-type: annotations
 ```
@@ -156,7 +156,7 @@ Pin the release tag to keep hook behavior reproducible.
 ```yaml
 repos:
   - repo: https://github.com/rvben/rumk
-    rev: v0.0.8
+    rev: v0.1.0
     hooks:
       - id: rumk-fmt
       - id: rumk-check
