@@ -393,7 +393,9 @@ fn static_include_globs_follow_gnu_make_order_and_directory_rules() {
 #[test]
 fn uncertain_include_globs_keep_dependency_analysis_blocked() {
     let directory = tempfile::tempdir().unwrap();
-    let root = directory.path().canonicalize().unwrap().join("Makefile");
+    let root = dunce::canonicalize(directory.path())
+        .unwrap()
+        .join("Makefile");
     std::fs::create_dir(directory.path().join("mk")).unwrap();
     for pattern in [
         "missing/*.mk",
@@ -419,7 +421,9 @@ fn uncertain_include_globs_keep_dependency_analysis_blocked() {
     std::fs::write(directory.path().join("mk/a.mk"), "VALUE = disk\n").unwrap();
     let mut options = ProjectOptions::default();
     options.source_overrides.insert(
-        directory.path().canonicalize().unwrap().join("mk/b.mk"),
+        dunce::canonicalize(directory.path())
+            .unwrap()
+            .join("mk/b.mk"),
         "VALUE = buffer\n".into(),
     );
     let project =

@@ -473,7 +473,9 @@ fn an_invalid_inline_directive_is_reported_where_it_is_written_and_nowhere_else(
 
     // One in a file an open document includes is reported in that file.
     // Rumk names a file it opened itself by its canonical path.
-    let included_uri = uri(&directory.path().canonicalize().unwrap().join("inc.mk"));
+    let included_uri = uri(&dunce::canonicalize(directory.path())
+        .unwrap()
+        .join("inc.mk"));
     server.open(&including_uri, "include inc.mk\nall:;\n", 1);
     let diagnostics = server.until(|m| {
         m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == included_uri
