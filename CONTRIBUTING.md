@@ -53,3 +53,16 @@ python3 -m unittest discover -s scripts -p 'test_*.py'
 ```
 
 Without these overrides, the tests use the usual `target/debug` paths.
+
+## Private local reports
+
+Audit results, benchmark measurements, comparison write-ups, and diagnostic review
+labels are private local working material. Store them under `reports/private/`
+(which is ignored at the repository root) or outside the repository. Never commit
+them or place them in `docs/`. This applies to hand-written reports as well as
+machine-generated output.
+
+Commit reusable verification tools, synthetic regression fixtures, and product
+or methodology documentation. Before committing, inspect the staged paths and
+diff for private results; ignore rules do not cover files already tracked or
+added with `git add -f`.

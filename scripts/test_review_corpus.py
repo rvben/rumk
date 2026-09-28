@@ -46,6 +46,28 @@ class ReviewTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             REVIEW.review(self.audit, self.labels)
 
+    def test_distinct_findings_on_one_line_require_exact_message_labels(self):
+        root = self.audit["projects"]["example"]["files"][0]
+        root["check"]["stdout"] = json.dumps([
+            dict(self.diagnostic, message="missing first.c"),
+            dict(self.diagnostic, message="missing second.c"),
+        ])
+        with self.assertRaisesRegex(ValueError, "exact message"):
+            REVIEW.review(self.audit, self.labels)
+        self.labels["cases"][0]["message"] = "missing first.c"
+        result = REVIEW.review(self.audit, self.labels)
+        self.assertEqual(result["reviewed_findings_present"], 1)
+        self.assertEqual(result["unreviewed_findings"], 1)
+        second = dict(self.labels["cases"][0], id="second", message="missing second.c")
+        self.labels["cases"].append(second)
+        result = REVIEW.review(self.audit, self.labels)
+        self.assertEqual(result["reviewed_findings_present"], 2)
+        self.assertEqual(result["unreviewed_findings"], 0)
+        second["message"] = "changed wording"
+        result = REVIEW.review(self.audit, self.labels)
+        self.assertEqual(result["reviewed_findings_absent"], 1)
+        self.assertEqual(result["unreviewed_findings"], 1)
+
     def test_duplicate_reviews_and_ambiguous_diagnostics_fail(self):
         labels = copy.deepcopy(self.labels)
         labels["cases"].append(copy.deepcopy(labels["cases"][0]))

@@ -38,3 +38,10 @@ rumk.toml
 
 # Environment variables (secrets)
 .env
+
+# Private local audits, benchmark results, comparison reports, and review notes.
+# Ignore the entire directory, including hand-written reports and review labels.
+/reports/
+# Former private-report locations must not be reintroduced into source control.
+/docs/linter-comparison.md
+/scripts/corpus-review.json

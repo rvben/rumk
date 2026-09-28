@@ -14,8 +14,15 @@ SPEC.loader.exec_module(AUDIT)
 
 def summarize(roots):
     blockers, occurrences, outcomes = Counter(), Counter(), Counter()
+    sole_blockers, combinations, combination_edges = Counter(), Counter(), Counter()
     for root in roots:
         coverage = root["coverage"]
+        reasons = tuple(sorted(coverage["root_blockers"]))
+        if reasons:
+            combinations[reasons] += 1
+            combination_edges[reasons] += len(coverage["edges"])
+        if len(reasons) == 1:
+            sole_blockers.update(reasons)
         blockers.update(coverage["root_blockers"].keys())
         occurrences.update(coverage["root_blockers"])
         outcomes.update(coverage["outcomes"])
@@ -24,6 +31,10 @@ def summarize(roots):
             "roots_with_local_exclusions": sum(bool(r["coverage"].get("local_exclusions")) for r in roots),
             "local_exclusions": sum(len(r["coverage"].get("local_exclusions", [])) for r in roots),
             "roots_by_blocker": dict(blockers.most_common()),
+            "sole_blocker_roots": dict(sorted(sole_blockers.items())),
+            "blocker_sets": [{"blockers": list(reasons), "roots": count,
+                              "visible_edges": combination_edges[reasons]}
+                             for reasons, count in sorted(combinations.items(), key=lambda item: (-item[1], item[0]))],
             "blocker_occurrences": dict(occurrences.most_common()),
             "edge_outcomes": dict(outcomes.most_common()), "visible_edges": sum(outcomes.values())}
 

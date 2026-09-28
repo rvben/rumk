@@ -22,7 +22,7 @@ def review(audit, labels):
         for root in project["files"]:
             roots[name, root["file"]] = root
             for diagnostic in json.loads(root["check"]["stdout"]):
-                key = (name, root["file"], diagnostic["file"], diagnostic["rule"], diagnostic["line"], diagnostic["column"])
+                key = (name, root["file"], diagnostic["file"], diagnostic["rule"], diagnostic["line"], diagnostic["column"], diagnostic.get("message"))
                 if key in findings:
                     raise ValueError(f"Ambiguous diagnostic identity: {key}")
                 findings[key] = diagnostic
@@ -38,7 +38,16 @@ def review(audit, labels):
             raise ValueError(f"Stale review source: {case['id']}")
         if case["classification"] not in CLASSES or not case["reason"].strip():
             raise ValueError(f"Invalid review label: {case['id']}")
-        key = (name, case["root"], case["file"], case["rule"], case["line"], case["column"])
+        location = (name, case["root"], case["file"], case["rule"], case["line"], case["column"])
+        if "message" in case:
+            if not isinstance(case["message"], str) or not case["message"].strip():
+                raise ValueError(f"Invalid diagnostic message: {case['id']}")
+            key = (*location, case["message"])
+        else:
+            candidates = [key for key in findings if key[:-1] == location]
+            if len(candidates) > 1:
+                raise ValueError(f"Review needs an exact message to distinguish diagnostics: {case['id']}")
+            key = candidates[0] if candidates else (*location, None)
         if key in reviewed or any(previous["id"] == case["id"] for previous in cases):
             raise ValueError(f"Duplicate review: {case['id']}")
         reviewed.add(key)
@@ -57,7 +66,8 @@ def review(audit, labels):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--audit", type=Path, required=True)
-    parser.add_argument("--labels", type=Path, default=Path(__file__).with_name("corpus-review.json"))
+    parser.add_argument("--labels", type=Path, required=True,
+                        help="Private review-label JSON; keep it outside version control")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:

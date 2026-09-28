@@ -34,5 +34,13 @@
   "tree-sitter": {
     "repository": "https://github.com/tree-sitter/tree-sitter",
     "revision": "8351896bea2e3359ed2fd893ffb051e9f9ebc69b"
+  },
+  "lz4": {
+    "repository": "https://github.com/lz4/lz4",
+    "revision": "0774d05537f9762f838f7ab541b7765f1a729cb5"
+  },
+  "busybox": {
+    "repository": "https://github.com/mirror/busybox",
+    "revision": "371fe9f71d445d18be28c82a2a6d82115c8af19d"
   }
 }

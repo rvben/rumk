@@ -11,11 +11,12 @@ rumk --no-config coverage Makefile
 The JSON envelope has `schema_version: 1`, `analysis: "MK216"`, and a `roots`
 array. Each root reports whether MK216 is enabled plus its coverage, an explicit
 `ignored` marker, or an `error`. The audit runs independently of rule enablement.
-Configuration discovery follows the CLI working directory; include paths and
-predefined variables use that configuration. Exit 0 means the report was produced,
-not that all dependencies were analyzed or all recipes will succeed. Unreadable
-or invalid UTF-8 roots produce exit 1 while other roots continue; invalid
-configuration produces exit 2. No file is rewritten and no Make process is run.
+Configuration discovery follows each entry Makefile's directory; include paths
+and predefined variables use that configuration. Exit 0 means the report was
+produced, not that all dependencies were analyzed or all recipes will succeed.
+Unreadable or invalid UTF-8 roots produce exit 1 while other roots continue;
+invalid configuration produces exit 2. No file is rewritten and no Make process
+is run.
 
 The older default-configuration contributor tool remains available:
 
@@ -66,3 +67,16 @@ Compare the same revisions and root inventory before and after a rule change.
 Review new findings independently and keep GNU-verified reductions of upstream
 constructs in the behavior tests. Coverage is separate from diagnostic accuracy
 and from success at actually building a project.
+
+The summary also reports `sole_blocker_roots` and `blocker_sets`. These distinguish
+a frequent overlapping blocker from the only obstacle in a particular root.
+Each blocker set records affected roots and their visible edges. Removing a
+blocker does not guarantee eligibility if other blockers remain, and roots with
+no visible edges do not demonstrate increased dependency coverage.
+
+Run `scripts/review-corpus.py` on a matching corpus audit to apply the pinned
+private labels with `--labels reports/private/corpus-review.json`. Labels may
+include an exact `message` to distinguish multiple findings at the same
+rule/file/line/column. A location-only label is rejected when ambiguous; a
+changed message is retained as unreviewed rather than silently inheriting an old
+classification. Raw reports stay local.

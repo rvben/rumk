@@ -28,6 +28,23 @@ class CoverageTest(unittest.TestCase):
         self.assertEqual(report["blocker_occurrences"]["unknown_activity"], 7)
         self.assertEqual(report["visible_edges"], 2)
 
+    def test_ranking_distinguishes_sole_blockers_from_overlapping_exclusions(self):
+        def root(blockers, edges):
+            return {"coverage": {"root_blockers": blockers,
+                                 "outcomes": {"root_excluded": edges}, "edges": [{}] * edges}}
+        report = COVERAGE.summarize([
+            root({"shell_function": 20, "unknown_activity": 3}, 10),
+            root({"unknown_activity": 1, "shell_function": 4}, 5),
+            root({"suffix_rule": 1}, 2),
+            root({}, 0),
+        ])
+        self.assertEqual(report["sole_blocker_roots"], {"suffix_rule": 1})
+        self.assertEqual(report["blocker_sets"], [
+            {"blockers": ["shell_function", "unknown_activity"], "roots": 2, "visible_edges": 15},
+            {"blockers": ["suffix_rule"], "roots": 1, "visible_edges": 2},
+        ])
+        self.assertEqual(report["eligible_roots"], 1)
+
     def test_example_is_repeatable_and_never_executes_make(self):
         binary = Path(os.environ.get("RUMK_COVERAGE_BINARY", ROOT / "target/debug/examples/prerequisite-coverage")).resolve()
         if not binary.exists():
