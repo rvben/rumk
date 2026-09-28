@@ -8,7 +8,7 @@
 
 # Configuration
 CARGO = cargo
-MSRV = 1.82.0
+MSRV = 1.85.0
 INSTALL_PREFIX = /usr/local
 BINARY_NAME = rumk
 VSCODE = editors/vscode
