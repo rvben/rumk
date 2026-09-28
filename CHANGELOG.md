@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.0](https://github.com/rvben/rumk/compare/v0.0.8...v0.1.0) - 2026-09-28
+
 ### Added
 
 - Per-Makefile configuration discovery for CLI linting, formatting, and coverage,
@@ -45,6 +47,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - GNU Make behavior tests and shared comparison fixtures for rebuild dependencies
   and recipe-prefix fixes; SARIF consumer tests cover Unicode, BOM, CRLF, and multiple edits.
 
+- **analysis**: check static pattern, suffix rule and recipe-only roots in MK216 ([f45ab68](https://github.com/rvben/rumk/commit/f45ab68cf6154c57f693e66dcb00ff6d9f7516c7))
+- **project**: read wildcard includes and expand include lists as Make does ([c6b5b67](https://github.com/rvben/rumk/commit/c6b5b67fa964e4bc7884006d50b770dd04744561))
+- **cli**: generate shell completion scripts ([6000d55](https://github.com/rvben/rumk/commit/6000d55ca81a5a41f4b6fd7c01009829ecdedce3))
+- **output**: report the range each finding covers ([5883728](https://github.com/rvben/rumk/commit/5883728f115c821e68a9e57a153a87b9e720c7c7))
+- **cli**: show default status and fix kind in the rule list ([6529d44](https://github.com/rvben/rumk/commit/6529d445a9158392ce2a6888cf323bc50737dd9f))
+- **analysis**: localize unresolved explicit prerequisites ([5ff7354](https://github.com/rvben/rumk/commit/5ff73543789d18ee4be96d85acc5cbf5add59182))
+- **vscode**: add bundled Makefile extension and preview releases ([27ca740](https://github.com/rvben/rumk/commit/27ca740f41109cf345b3e6a6935a2799a028fd58))
+
 ### Changed
 
 - MK216 indexes declared targets and possible implicit input names per analysis,
@@ -79,7 +89,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Windows path spelling and symlink aliases cannot detach SARIF/JSON edits from
   the buffer that owns them.
 
-## [0.0.8] - 2026-09-08
+- **project**: name wildcard include matches as the pattern spells the directory ([3c96e91](https://github.com/rvben/rumk/commit/3c96e9172fb5510312a115608b5b93456e482f5f))
+- **rules**: do not ask MK201 to mark a directory target phony ([b562868](https://github.com/rvben/rumk/commit/b562868313e79877d51fad969d07daa0542bf7de))
+- **rules**: count a target's value in MK211 only where Make can see it ([98b84bd](https://github.com/rvben/rumk/commit/98b84bdfc4276aefd62caba1fc6cff0d6d550b4b))
+- **cli**: check a file named on the command line whatever its name ([b1483bb](https://github.com/rvben/rumk/commit/b1483bb4712ede6d1addb416316df5c2a7bb734b))
+- **lsp**: keep an invalid inline directive to the file it is written in ([4ede305](https://github.com/rvben/rumk/commit/4ede3051582458fdf954fbdfe15b1a8d593f3a74))
+- **cli**: suggest a fix command that names the files and options of the run ([f42b71a](https://github.com/rvben/rumk/commit/f42b71a3fece35a70f9fa47788909ed6316e8435))
+- **rules**: accept a shell variable captured by the next assignment in MK213 ([50faca3](https://github.com/rvben/rumk/commit/50faca376374a9613fe7e53386e21e07ba6ffd67))
+- **rules**: read shell comments in recipe commands ([264f914](https://github.com/rvben/rumk/commit/264f9148c7d8b2a49df2e957e1c7069145261fec))
+- **parser**: keep the command a recipe comment is continued onto ([c7037dd](https://github.com/rvben/rumk/commit/c7037ddfbea6d8a74773a9317e7b56d89e649500))
+- **rules**: see a quoted or continued make invocation in MK203 ([8a889ce](https://github.com/rvben/rumk/commit/8a889cee3ec223ea5ad72fa9982ad01d203d0f3a))
+- **portability**: read a '%' only in the replacement as suffix substitution ([407452a](https://github.com/rvben/rumk/commit/407452a60e322b36de9109360352a287db780a8b))
+- **parser**: keep a ';' after a target variable assignment in its value ([d9159c5](https://github.com/rvben/rumk/commit/d9159c5c87b3fe81885b6bd8f08410bfa7f85360))
+- **lsp**: keep requests and diagnostics across disk-only changes ([08e6ac3](https://github.com/rvben/rumk/commit/08e6ac3cb60e8f10b47ed6a66e39412f5e4cae70))
+- **eval**: expand each recursive variable once per expansion ([e0f5403](https://github.com/rvben/rumk/commit/e0f540308fe38468a8338c60b5cb0c7a11a4c7f5))
+- **cli**: say a missing path does not exist ([5eb0586](https://github.com/rvben/rumk/commit/5eb058679db5347f508f3e888ccfee80418f9727))
+- **cli**: summarize a text check of stdin ([bfbfbc2](https://github.com/rvben/rumk/commit/bfbfbc2e3229fe49e76b8e01c32de22c280d65c1))
+- **cli**: make explain show the full rule detail for any rule code case ([567a718](https://github.com/rvben/rumk/commit/567a718fca137e809867cec1be156f78dc7089f6))
+- **output**: stop emitting an empty color span after unfixable findings ([e038ea4](https://github.com/rvben/rumk/commit/e038ea4f49893f4270353b0c11567c97cc82f7ca))
+- **output**: name the rule in GitHub Actions annotations ([17f5a03](https://github.com/rvben/rumk/commit/17f5a03594e9f150eff103fed0a1e9a6c85e4a2f))
+- **output**: list a file's project findings in line order ([3645150](https://github.com/rvben/rumk/commit/3645150990fba64658d3aa02c3fba9e791c31c68))
+- **analysis**: distinguish inert text from function exclusions ([2f54a4f](https://github.com/rvben/rumk/commit/2f54a4f17adc046baf762617ba8c49d3e3a7079a))
+- **analysis**: distinguish relative files from suffix rules ([43eda56](https://github.com/rvben/rumk/commit/43eda56a7d79b19e3d3d4d3352b233a3367b5d3e))
+- **phony**: preserve explicit stamp-file targets ([1867f9f](https://github.com/rvben/rumk/commit/1867f9fe98ed5c2ddc060495b4c5d54f2b5e8714))
+- **syntax**: honor evaluated conditional activity ([9d5563a](https://github.com/rvben/rumk/commit/9d5563a746a84bd2a4554a1c0e80881320a8d8e7))
+- **lsp**: reject conflicting configuration flags ([569380e](https://github.com/rvben/rumk/commit/569380e736d2b1491885823a03f8ee0afab4a1d0))
+- **bench**: reject changing executables and invalid timings ([416adcf](https://github.com/rvben/rumk/commit/416adcf9b8cc563300749d06b5aff981aa16456f))
+
+### Performance
+
+- **project**: look up parsed records by line while loading ([b0fbe43](https://github.com/rvben/rumk/commit/b0fbe433463ac0fd21e0b5439a979bba32cb6157))
+
+## [0.0.8](https://github.com/rvben/rumk/releases/tag/v0.0.8) - 2026-09-08
 
 ### Added
 
@@ -140,7 +181,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Recipe-prefixed lines that GNU Make reads as ordinary statements when no rule is open, such as
   an indented assignment, are parsed as those statements instead of being dropped.
 
-## [0.0.7] - 2026-08-31
+## [0.0.7](https://github.com/rvben/rumk/releases/tag/v0.0.7) - 2026-08-31
 
 ### Added
 
@@ -160,7 +201,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Dependency proposals must pass Rumk's Rust 1.82 compatibility gate before publication, and the
   Clap requirement remains on its compatible 4.5 minor line until the MSRV is raised.
 
-## [0.0.6] - 2026-08-31
+## [0.0.6](https://github.com/rvben/rumk/releases/tag/v0.0.6) - 2026-08-31
 
 ### Changed
 
@@ -247,8 +288,3 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Recipes, shell assignments, and side-effecting Make functions are never executed during linting.
 - Release packages use an explicit source allowlist that excludes private planning documents.
 - Release artifacts are checksummed and prepared for GitHub build-provenance attestations.
-
-[Unreleased]: https://github.com/rvben/rumk/commits/main
-[0.0.8]: https://github.com/rvben/rumk/releases/tag/v0.0.8
-[0.0.7]: https://github.com/rvben/rumk/releases/tag/v0.0.7
-[0.0.6]: https://github.com/rvben/rumk/releases/tag/v0.0.6
