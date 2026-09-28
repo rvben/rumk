@@ -23,7 +23,7 @@ impl Names {
             _ => self.uncertain = true,
         }
     }
-    fn related(&self, filename: &str) -> bool {
+    fn related(&self, filename: &str, excluded: Option<&str>) -> bool {
         if self.uncertain || (!self.values.is_empty() && !filename.is_ascii()) {
             return true;
         }
@@ -32,14 +32,15 @@ impl Names {
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(&filename);
-        self.values.contains(stem)
-            || self.values.contains(&format!("s.{filename}"))
+        let contains = |name: &str| Some(name) != excluded && self.values.contains(name);
+        contains(stem)
+            || contains(&format!("s.{filename}"))
             || [format!("{stem}."), format!("{filename},")]
                 .iter()
                 .any(|prefix| {
                     self.values
                         .range(prefix.clone()..)
-                        .next()
+                        .find(|name| Some(name.as_str()) != excluded)
                         .is_some_and(|name| name.starts_with(prefix))
                 })
     }
@@ -117,15 +118,28 @@ impl<'a> InputIndex<'a> {
         self.targets.contains(name)
     }
     pub fn plausible(&self, name: &str, directories: &[PathBuf]) -> bool {
+        self.plausible_except(name, directories, None)
+    }
+    pub fn plausible_except(
+        &self,
+        name: &str,
+        directories: &[PathBuf],
+        excluded: Option<&str>,
+    ) -> bool {
         let path = Path::new(name);
         let Some(filename) = path.file_name().and_then(|s| s.to_str()) else {
             return true;
         };
         let parent = path.parent().unwrap_or(Path::new(""));
+        let excluded = excluded
+            .map(Path::new)
+            .filter(|path| path.parent().unwrap_or(Path::new("")) == parent)
+            .and_then(|path| path.file_name()?.to_str())
+            .map(str::to_ascii_lowercase);
         if self
             .parents
             .get(parent)
-            .is_some_and(|names| names.related(filename))
+            .is_some_and(|names| names.related(filename, excluded.as_deref()))
         {
             return true;
         }
@@ -139,7 +153,7 @@ impl<'a> InputIndex<'a> {
                 let names = Names::read(&directory, &mut filesystem.remaining);
                 filesystem.directories.insert(directory.clone(), names);
             }
-            filesystem.directories[&directory].related(filename)
+            filesystem.directories[&directory].related(filename, excluded.as_deref())
         })
     }
 }
@@ -170,14 +184,14 @@ mod tests {
             ".hidden", "a.b.c", "é.o", "other",
         ];
         for filename in cases {
-            assert!(!Names::default().related(filename));
+            assert!(!Names::default().related(filename, None));
         }
         for candidate in cases {
             let mut index = Names::default();
             index.insert(Some(candidate));
             for filename in cases {
                 assert_eq!(
-                    index.related(filename),
+                    index.related(filename, None),
                     related(candidate, filename),
                     "{candidate}/{filename}"
                 );
@@ -185,13 +199,26 @@ mod tests {
         }
     }
     #[test]
+    fn excluding_a_consumer_keeps_other_possible_inputs() {
+        let mut names = Names::default();
+        names.insert(Some("b.o"));
+        assert!(!names.related("b.c", Some("b.o")));
+        names.insert(Some("b.s"));
+        assert!(names.related("b.c", Some("b.o")));
+        names.insert(Some("unrelated"));
+        assert!(!names.related("unrelated.c", Some("unrelated")));
+        names.uncertain = true;
+        assert!(names.related("missing.c", Some("missing.o")));
+    }
+
+    #[test]
     fn exhausted_directory_work_withholds_absence_and_fresh_passes_see_changes() {
         let directory = tempfile::tempdir().unwrap();
         std::fs::write(directory.path().join("unrelated"), "").unwrap();
-        assert!(Names::read(directory.path(), &mut 0).related("missing.o"));
-        assert!(!Names::read(directory.path(), &mut 10).related("missing.o"));
+        assert!(Names::read(directory.path(), &mut 0).related("missing.o", None));
+        assert!(!Names::read(directory.path(), &mut 10).related("missing.o", None));
         std::fs::write(directory.path().join("missing.c"), "").unwrap();
-        assert!(Names::read(directory.path(), &mut 10).related("missing.o"));
-        assert!(!Names::read(&directory.path().join("absent"), &mut 10).related("missing.o"));
+        assert!(Names::read(directory.path(), &mut 10).related("missing.o", None));
+        assert!(!Names::read(&directory.path().join("absent"), &mut 10).related("missing.o", None));
     }
 }

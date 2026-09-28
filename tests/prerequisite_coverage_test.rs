@@ -163,8 +163,8 @@ fn relative_file_targets_do_not_exclude_roots_as_suffix_rules() {
         assert_eq!(MissingPrerequisite.check_project(&project).len(), 1);
     }
     for rule in [
-        ".c.o:;\n",
-        "./.c.o:;\n",
+        ".c.o: extra\n",
+        ".tar.gz.o:;\n",
         ".SUFFIXES: input output\ninputoutput:;\n",
         ".SUFFIXES: .dir/input .o\n.dir/input.o:;\n",
     ] {
@@ -264,4 +264,112 @@ fn phony_coverage_uses_the_expansion_at_each_read() {
     );
     assert!(coverage(&project).root_blockers.is_empty());
     assert_eq!(MissingPrerequisite.check_project(&project).len(), 1);
+}
+
+#[test]
+fn static_pattern_coverage_reports_concrete_per_target_inputs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("a.c"), "").unwrap();
+    let project = Project::load_with_root_content(
+        &dir.path().join("Makefile"),
+        "PATTERN = %.o\na.o b.o: $(PATTERN): %.c | setup\nPATTERN = %.other\nsetup:;\n".into(),
+        &ProjectOptions::default(),
+    )
+    .unwrap();
+    let report = coverage(&project);
+    assert!(
+        report.root_blockers.is_empty(),
+        "{:?}",
+        report.root_blockers
+    );
+    assert!(report.local_exclusions.is_empty());
+    assert_eq!(report.outcomes.get("missing"), Some(&1));
+    assert!(report.edges.iter().any(|edge| edge.target == "b.o"
+        && edge.prerequisite == "b.c"
+        && edge.outcome == "missing"));
+    assert_eq!(
+        report
+            .edges
+            .iter()
+            .filter(|edge| edge.order_only
+                && edge.prerequisite == "setup"
+                && edge.outcome == "declared_target")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn repeated_static_pattern_includes_keep_ambiguous_edge_provenance_opaque() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("rules.mk"), "a.o: $(P): %.c\n").unwrap();
+    let project = Project::load_with_root_content(
+        &dir.path().join("Makefile"),
+        "P := %.o\ninclude rules.mk\nP := a.%\ninclude rules.mk\nprobe: missing.txt\n".into(),
+        &ProjectOptions::default(),
+    )
+    .unwrap();
+    let report = coverage(&project);
+    assert!(report.root_blockers.contains_key("static_pattern_rule"));
+    assert!(MissingPrerequisite.check_project(&project).is_empty());
+}
+
+#[test]
+fn uncertain_recipe_only_settings_do_not_hide_independent_prerequisites() {
+    for conditional in [
+        "ifneq (,$(filter Windows%,$(OS)))\nEXT = .exe\nelse\nEXT =\nendif\n",
+        "ifdef MODE\nEXT = .exe\nelse ifdef OTHER\nEXT = .bin\nendif\n",
+        "ifdef MODE\nFLAGS = $(OPTIONAL_FLAGS)\nendif\nLOCAL = $(FLAGS)\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            format!("{conditional}probe: missing.txt\n\t@echo $(LOCAL) $@$(EXT)\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        let report = coverage(&project);
+        assert!(
+            report.root_blockers.is_empty(),
+            "{conditional}: {:?}",
+            report.root_blockers
+        );
+        assert_eq!(MissingPrerequisite.check_project(&project).len(), 1);
+    }
+}
+
+#[test]
+fn uncertain_graph_changes_and_side_effects_remain_blockers() {
+    for body in [
+        "missing.txt:;\n",
+        "VPATH = inputs\n",
+        "EXT = .exe\n",
+        "FLAGS := $(shell touch sentinel)\n",
+        "FLAGS != touch sentinel\n",
+        "FLAGS := $(eval missing.txt:;)\n",
+        "FLAGS := $(file >sentinel,x)\n",
+        "FLAGS := $(guile (display 1))\n",
+        "include extra.mk\n",
+        ".RECIPEPREFIX = >\n",
+        "undefine INPUT\n",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let target = if body == "EXT = .exe\n" {
+            "probe$(EXT)"
+        } else {
+            "probe"
+        };
+        let project = Project::load_with_root_content(
+            &dir.path().join("Makefile"),
+            format!("ifdef MODE\n{body}endif\n{target}: missing.txt\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert!(!coverage(&project).root_blockers.is_empty(), "{body}");
+        assert!(
+            MissingPrerequisite.check_project(&project).is_empty(),
+            "{body}"
+        );
+        assert!(!dir.path().join("sentinel").exists());
+    }
 }

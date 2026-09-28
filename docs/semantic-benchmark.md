@@ -1,6 +1,6 @@
 # Behavior-verified linter benchmark
 
-`scripts/semantic-benchmark.py` measures thirty-five pairs of authored broken and
+`scripts/semantic-benchmark.py` measures forty-eight pairs of authored broken and
 working Makefiles. Labels describe observable GNU Make behavior before examining linter
 output: overwritten recipes, discarded cycles, missing prerequisites, recursive
 dry runs, lost directories, ignored failures, early expansion, invalid indentation,
@@ -112,3 +112,13 @@ read time. Additional regressions verify clearing, includes, and reassignment.
 
 The simple pattern-prerequisite defect is now detected by excluding reuse of its
 own implicit declaration. Other viable producer declarations remain controls.
+
+Two static-pattern pairs check missing per-target compiler sources, including
+order-only prerequisites. The pattern variable changes after the declaration to
+verify read-time expansion. Declared source targets provide the working controls.
+
+Four corpus-derived pairs cover suffix conversions and recipe-only OS conditions:
+an unrelated misspelled header beside `.c.o`, a suffix conversion with no source,
+and independent missing sources under both Windows and non-Windows recipe
+settings. Working controls retain source files and the same build constructs.
+The OS values are supplied to GNU Make's oracle, not invented by Rumk's evaluator.

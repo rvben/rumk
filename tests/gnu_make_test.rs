@@ -746,3 +746,99 @@ fn accepted_syntax_fixtures_run_in_gnu_make_and_are_clean_for_mk006() {
         }
     }
 }
+
+#[test]
+fn static_pattern_missing_inputs_agree_with_gnu_make() {
+    use rumk::rules::prerequisites::MissingPrerequisite;
+    for prerequisites in ["%.c", "| %.c", "%.c | setup"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("Makefile");
+        std::fs::write(&root, format!(
+            "PATTERN = %.o\na.o b.o: $(PATTERN): {prerequisites}\n\t@echo built-$@\nPATTERN = %.other\nsetup:;\n"
+        )).unwrap();
+        std::fs::write(directory.path().join("a.c"), "").unwrap();
+        for repaired in [false, true] {
+            if repaired {
+                std::fs::write(directory.path().join("b.c"), "").unwrap();
+            }
+            let output = match Command::new("make")
+                .args(["-rR", "-f", "Makefile", "a.o", "b.o"])
+                .current_dir(directory.path())
+                .output()
+            {
+                Ok(output) => output,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("failed to launch GNU Make: {error}"),
+            };
+            assert_eq!(
+                output.status.success(),
+                repaired,
+                "{prerequisites}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+            let findings = MissingPrerequisite.check_project(&project);
+            assert_eq!(findings.len(), usize::from(!repaired), "{findings:?}");
+            if !repaired {
+                assert!(String::from_utf8_lossy(&output.stderr).contains("b.c"));
+                assert!(findings[0].message.contains("'b.c'"));
+            }
+        }
+    }
+}
+
+#[test]
+fn suffix_rule_coverage_agrees_with_gnu_make_for_sources_chains_and_missing_headers() {
+    use rumk::rules::prerequisites::MissingPrerequisite;
+    for rules in [
+        ".SUFFIXES: .src .dat\n.src.dat:\n\t@cp $< $@\n",
+        ".SUFFIXES: .src .mid .dat\n.src.mid:\n\t@cp $< $@\n.mid.dat:\n\t@cp $< $@\n",
+        ".SUFFIXES: .src .dat\n.src.dat:\n\t@cp $< $@\nitem.src:\n\t@printf input > $@\n",
+    ] {
+        for broken in [true, false] {
+            let directory = tempfile::tempdir().unwrap();
+            let root = directory.path().join("Makefile");
+            std::fs::write(directory.path().join("header.h"), "").unwrap();
+            if !rules.contains("item.src:") {
+                std::fs::write(directory.path().join("item.src"), "input").unwrap();
+            }
+            let header = if broken { "hedaer.h" } else { "header.h" };
+            std::fs::write(
+                &root,
+                format!("probe: item.dat {header}\n\t@echo built\n{rules}"),
+            )
+            .unwrap();
+            let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+            let findings = MissingPrerequisite.check_project(&project);
+            assert_eq!(findings.len(), usize::from(broken), "{rules}: {findings:?}");
+            if broken {
+                assert!(findings[0].message.contains("hedaer.h"));
+            }
+            let output = match Command::new("make")
+                .args(["-rR", "probe"])
+                .current_dir(directory.path())
+                .output()
+            {
+                Ok(output) => output,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+                Err(error) => panic!("failed to launch GNU Make: {error}"),
+            };
+            assert_eq!(
+                output.status.success(),
+                !broken,
+                "{rules}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if broken {
+                assert!(String::from_utf8_lossy(&output.stderr).contains("hedaer.h"));
+            } else {
+                let expected = if rules.contains(".src.mid:") {
+                    "built\nrm item.mid\n"
+                } else {
+                    "built\n"
+                };
+                assert_eq!(String::from_utf8_lossy(&output.stdout), expected);
+            }
+        }
+    }
+}

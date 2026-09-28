@@ -126,11 +126,23 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
             .flat_map(|rule| rule.targets.iter().map(String::as_str))
     });
     let inputs = InputIndex::new(project, local_targets);
+    // Most explicit build graphs have no implicit declarations. Avoid scanning
+    // every target for every absent input merely to discover that again.
+    let has_patterns = index.targets.keys().any(|name| name.contains('%'));
     let mut seen = BTreeSet::new();
     let mut diagnostics = Vec::new();
     for target in index.targets.values() {
         for edge in &target.dependencies {
-            let name = normalized(&edge.prerequisite);
+            // Static patterns substitute a stem separately for each explicit target.
+            // Use the pattern captured at read time, never the final variable value.
+            let expanded = target
+                .declarations
+                .iter()
+                .find(|declaration| declaration.location == edge.location)
+                .and_then(|declaration| declaration.target_pattern.as_ref())
+                .and_then(|pattern| pattern_stem(pattern, &target.name))
+                .map(|stem| edge.prerequisite.replacen('%', stem, 1));
+            let name = normalized(expanded.as_deref().unwrap_or(&edge.prerequisite));
             let outcome = if target.special {
                 "special_target"
             } else if target.name.contains('%') {
@@ -158,9 +170,15 @@ fn analyze(project: &Project, mut coverage: Option<&mut Coverage>) -> Vec<Diagno
                 .any(|directory| may_exist(&directory.join(name)))
             {
                 "file_or_io_uncertainty"
-            } else if inputs.plausible(name, &implicit_directories) {
+            } else if inputs.plausible_except(
+                name,
+                &implicit_directories,
+                expanded.as_ref().map(|_| normalized(&target.name)),
+            ) {
                 "possible_builtin_input"
-            } else if possible_pattern_producer(project, name, &implicit_directories, &inputs) {
+            } else if has_patterns
+                && possible_pattern_producer(project, name, &implicit_directories, &inputs)
+            {
                 "possible_pattern_producer"
             } else if !seen.insert((edge.location, name.to_string())) {
                 "duplicate_finding"
@@ -417,12 +435,14 @@ fn root_blockers(
     // Nonstandard suffix names can contain paths or omit the leading dot.
     // Keep those lists opaque rather than mistaking their conversions for files.
     if index.targets.get(".SUFFIXES").is_some_and(|symbol| {
-        symbol.dependencies.iter().any(|edge| {
-            !edge.prerequisite.starts_with('.') || edge.prerequisite.contains(['/', '\\'])
-        })
+        symbol
+            .dependencies
+            .iter()
+            .any(|edge| !plain_suffix(&edge.prerequisite))
     }) {
         add("suffix_rule");
     }
+    let mut static_patterns = BTreeMap::new();
     for (name, symbol) in &index.targets {
         if name == ".DEFAULT" {
             add("default_recipe");
@@ -434,14 +454,22 @@ fn root_blockers(
         if suffix_name.starts_with('.')
             && !suffix_name.contains(['%', '/'])
             && suffix_name[1..].contains('.')
+            && !supported_suffix_rule(suffix_name, symbol)
         {
             add("suffix_rule");
         }
-        if symbol
-            .declarations
-            .iter()
-            .any(|declaration| declaration.target_pattern.is_some())
-        {
+        if symbol.declarations.iter().any(|declaration| {
+            declaration.target_pattern.is_some()
+                && !*static_patterns
+                    .entry(declaration.location)
+                    .or_insert_with(|| {
+                        supported_static_pattern(
+                            project,
+                            declaration.location.source,
+                            declaration.location.line,
+                        )
+                    })
+        }) {
             add("static_pattern_rule");
         }
     }
@@ -460,7 +488,15 @@ fn root_blockers(
             if activity == Truth::False {
                 continue;
             }
-            if activity == Truth::Unknown {
+            // A conditional delimiter adds no targets itself. Its uncertain
+            // body still blocks analysis unless it only assigns values proven
+            // irrelevant to the checked graph. Keep function side-effect checks
+            // below even for these statements.
+            if activity == Truth::Unknown
+                && !matches!(statement.kind, LogicalKind::Conditional(_))
+                && !(statement.kind == LogicalKind::Assignment
+                    && recipe_only.contains(&(file.id, statement.start_line)))
+            {
                 add("unknown_activity");
             }
             let raw = statement.text().trim_start();
@@ -485,6 +521,7 @@ fn root_blockers(
                 ("eval", "eval_function"),
                 ("shell", "shell_function"),
                 ("file", "file_function"),
+                ("guile", "guile_function"),
             ] {
                 if may_call_function(text, function) {
                     add(reason);
@@ -524,6 +561,76 @@ fn root_blockers(
         }
     }
     reasons
+}
+
+// Simple suffix conversions preserve the basename. The existing conservative
+// built-in-input search admits every same-basename extension, including files,
+// declared targets and possible pattern producers. Such rules therefore need
+// not hide independent missing inputs. This does not simulate suffix ordering.
+fn plain_suffix(name: &str) -> bool {
+    name.strip_prefix('.').is_some_and(|suffix| {
+        !suffix.is_empty()
+            && suffix
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    })
+}
+
+fn supported_suffix_rule(
+    name: &str,
+    symbol: &crate::project_analysis::ProjectTargetSymbol,
+) -> bool {
+    let Some((input, output)) = name[1..].split_once('.') else {
+        return false;
+    };
+    plain_suffix(&format!(".{input}"))
+        && plain_suffix(&format!(".{output}"))
+        && symbol.dependencies.is_empty()
+        && symbol
+            .declarations
+            .iter()
+            .all(|d| !d.double_colon && !d.grouped && d.target_pattern.is_none())
+}
+
+// Resolve only unescaped, single-percent patterns whose explicit targets all
+// match. Other spellings retain the existing project-wide uncertainty boundary.
+fn supported_static_pattern(
+    project: &Project,
+    source: crate::project::SourceId,
+    line: usize,
+) -> bool {
+    // The parser normalizes some escaped words. Reject their original spelling
+    // before treating a percent as a stem placeholder. Repeated includes may
+    // instantiate one source location under several different environments.
+    let statements = project.file(source).makefile.logical.statements();
+    if statements
+        .binary_search_by_key(&line, |statement| statement.start_line)
+        .ok()
+        .is_some_and(|index| statements[index].text().contains('\\'))
+    {
+        return false;
+    }
+    let rules = project.evaluation().rules(source, line);
+    rules.len() == 1
+        && rules.iter().all(|rule| {
+            let Some(pattern) = &rule.target_pattern else {
+                return false;
+            };
+            pattern.matches('%').count() == 1
+                && literal(&pattern.replace('%', "stem"))
+                && !rule.targets.is_empty()
+                && rule
+                    .targets
+                    .iter()
+                    .all(|target| literal(target) && pattern_stem(pattern, target).is_some())
+                && rule
+                    .prerequisites
+                    .iter()
+                    .chain(&rule.order_only_prerequisites)
+                    .all(|name| {
+                        name.matches('%').count() <= 1 && literal(&name.replace('%', "stem"))
+                    })
+        })
 }
 
 // Keep nested and dollar-escaped calls: deferred expansion can make them

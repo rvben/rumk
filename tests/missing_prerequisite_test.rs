@@ -84,7 +84,10 @@ fn implicit_rules_and_incomplete_graphs_withhold_a_warning() {
             "probe: output.dat\n%.dat: %.src\n\t@echo generated\n",
             vec![("output.src", "input")],
         ),
-        ("probe: output.dat\n.src.dat:\n\t@echo generated\n", vec![]),
+        (
+            "probe: output.dat\n.src.dat:\n\t@echo generated\n",
+            vec![("output.src", "input")],
+        ),
         (
             "vpath %.txt inputs\nprobe: input.txt\n",
             vec![("inputs/input.txt", "input")],
@@ -404,4 +407,144 @@ fn an_implicit_rule_cannot_rescue_its_own_missing_input() {
     ] {
         assert!(check(source, &files).is_empty(), "{source}");
     }
+}
+
+#[test]
+fn static_patterns_check_each_stem_and_preserve_read_time_values() {
+    for source in [
+        "a.o b.o: %.o: %.c\n",
+        "a.o b.o: %.o: | %.c\n",
+        "PATTERN := %.o\nINPUT := %.c\na.o b.o: $(PATTERN): $(INPUT)\nPATTERN := %.x\nINPUT := %.wrong\n",
+    ] {
+        let findings = check(source, &[("a.c", "")]);
+        assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+        assert!(findings[0].message.contains("'b.c'"));
+        assert!(findings[0].message.contains("'b.o'"));
+        assert!(check(source, &[("a.c", ""), ("b.c", "")]).is_empty());
+    }
+    let findings = check(
+        "include rules.mk\nprobe: absent.txt\n",
+        &[("rules.mk", "obj/a.o: %.o: %.c\n"), ("obj/a.c", "")],
+    );
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert!(findings[0].message.contains("absent.txt"));
+    let findings = check("include rules.mk\n", &[("rules.mk", "obj/a.o: %.o: %.c\n")]);
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].message.contains("obj/a.c"));
+    assert!(findings[0].source.as_ref().unwrap().ends_with("rules.mk"));
+}
+
+#[test]
+fn static_patterns_do_not_take_a_stale_output_as_evidence_for_its_own_input() {
+    for (source, files, missing) in [
+        ("b.o: %.o: %.c\n", vec![("b.o", "")], "'b.c'"),
+        (
+            "a.o b.o: %.o: %.c\n",
+            vec![("a.c", ""), ("b.o", "")],
+            "'b.c'",
+        ),
+        ("obj/b.o: %.o: %.c\n", vec![("obj/b.o", "")], "'obj/b.c'"),
+    ] {
+        let findings = check(source, &files);
+        assert_eq!(findings.len(), 1, "{source}: {findings:?}");
+        assert!(findings[0].message.contains(missing), "{findings:?}");
+    }
+}
+
+#[test]
+fn static_patterns_keep_generated_inputs_search_paths_and_opaque_patterns_conservative() {
+    for (source, files) in [
+        ("a.o: %.o: %.c\na.c:;\n", vec![]),
+        ("a.o: %.o: %.c\nvpath %.c src\n", vec![("src/a.c", "")]),
+        ("a.o: %.o: %.c\n%.c:;\n", vec![]),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
+    }
+    for declaration in [
+        "a.o: $(PATTERN): %.c\n",
+        "a.o: %.x: %.c\n",
+        "a.o: %.o: $(INPUTS)\n",
+        "a.o: %.o: %.c *.h\n",
+        "a.o: %.o: %%.c\n",
+        "a.o: %.o: escaped\\%.c\n",
+        ".SECONDEXPANSION:\na.o: %.o: %.c\n",
+    ] {
+        let source = format!("{declaration}probe: absent.txt\n");
+        assert!(check(&source, &[]).is_empty(), "{source}");
+    }
+}
+
+#[test]
+fn simple_suffix_conversions_do_not_hide_independent_missing_inputs() {
+    for rule in [
+        ".c.o:\n\t@echo compile\n",
+        ".c.o:;\n",
+        "./.c.o:;\n",
+        ".SUFFIXES: .src .dat\n.src.dat:;\n",
+    ] {
+        let findings = check(&format!("probe: soruce.h\n{rule}"), &[("source.h", "")]);
+        assert_eq!(findings.len(), 1, "{rule}: {findings:?}");
+        assert!(findings[0].message.contains("soruce.h"));
+        assert!(check(&format!("probe: source.h\n{rule}"), &[("source.h", "")]).is_empty());
+    }
+}
+
+#[test]
+fn suffix_conversions_keep_viable_sources_and_chains_uncertain() {
+    for (source, files) in [
+        (
+            "probe: item.dat\n.SUFFIXES: .src .dat\n.src.dat:;\n",
+            vec![("item.src", "")],
+        ),
+        (
+            "probe: item.dat\n.SUFFIXES: .src .dat\n.src.dat:;\nitem.src:;\n",
+            vec![],
+        ),
+        (
+            "probe: item.dat\n.SUFFIXES: .src .mid .dat\n.src.mid:;\n.mid.dat:;\n",
+            vec![("item.src", "")],
+        ),
+        (
+            "probe: item.dat\n.SUFFIXES: .src .dat\n.src.dat:;\nVPATH = inputs\n",
+            vec![("inputs/item.src", "")],
+        ),
+        (
+            "probe: item.dat\n.SUFFIXES: .src .dat\n.src.dat:;\n%.src: seed\n\t@echo generated\n",
+            vec![("seed", "")],
+        ),
+    ] {
+        assert!(check(source, &files).is_empty(), "{source}");
+    }
+    let findings = check("probe: item.dat\n.SUFFIXES: .src .dat\n.src.dat:;\n", &[]);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    for rule in [
+        ".SUFFIXES: .tar.gz .o\n.tar.gz.o:;\n",
+        ".c.o::;\n",
+        ".c.o: $(INPUTS)\n",
+        ".c.o: extra\n",
+        ".SUFFIXES: c o\nco:;\n",
+    ] {
+        assert!(
+            check(&format!("probe: missing.txt\n{rule}"), &[]).is_empty(),
+            "{rule}"
+        );
+    }
+}
+
+#[test]
+fn static_include_globs_expose_dependencies_without_guessing_missing_fragments() {
+    let files = [
+        ("mk/a.mk", "probe: generated missing.txt\n"),
+        ("mk/b.mk", "generated:;\n"),
+    ];
+    let findings = check("include mk/*.mk\n", &files);
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].message.contains("missing.txt"));
+    assert!(findings[0].source.as_ref().unwrap().ends_with("mk/a.mk"));
+    assert!(check("-include absent/*.mk\nprobe: missing.txt\n", &files).is_empty());
+    assert!(check(
+        "ifeq (a,b)\ninclude mk/*.mk\nendif\nprobe: generated\ngenerated:;\n",
+        &files
+    )
+    .is_empty());
 }

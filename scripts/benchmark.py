@@ -51,6 +51,12 @@ def generate(root, scale):
         "".join(f"missing{i}: absent{i}.txt\nworking{i}: source{i}.o\n" for i in range(inputs)),
         encoding="utf-8",
     )
+    static_patterns = root / "static-patterns"
+    static_patterns.mkdir()
+    (static_patterns / "Makefile").write_text(
+        " ".join(f"output{i}.o" for i in range(2000 * scale))
+        + ": %.o: %.c\n", encoding="utf-8",
+    )
     portability = root / "portable.mk"
     portability.write_text(
         ".POSIX:\n" + "".join(f"VALUE_{i} ::= value\n" for i in range(2000 * scale)),
@@ -63,6 +69,7 @@ def generate(root, scale):
         ("huge-file", huge, [], None),
         ("many-fixes", fixes, ["--fix", "--enable", "MK001"], original),
         ("prerequisite-fanout", prerequisites / "Makefile", ["--enable", "MK216"], None),
+        ("static-pattern-inputs", static_patterns / "Makefile", ["--enable", "MK216"], None),
         ("portable-assignments", portability, ["--config", str(profile)], None),
     ]
 

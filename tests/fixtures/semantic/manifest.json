@@ -1229,6 +1229,175 @@
       "matchers": {},
       "safe_fix": "withheld",
       "expected_rumk_detection": true
+    },
+    {
+      "name": "static-pattern-source",
+      "title": "Static pattern requires a missing per-target source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "a.c": ""
+      },
+      "args": [
+        "a.o",
+        "b.o"
+      ],
+      "broken": "P := %.o\na.o b.o: $(P): %.c\n\t@echo built-$@\nP := %.other\n",
+      "working": "P := %.o\na.o b.o: $(P): %.c\n\t@echo built-$@\nP := %.other\nb.c:;\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "b.c"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built-a.o\nbuilt-b.o\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "name": "static-pattern-order-only",
+      "title": "Static pattern requires a missing per-target source",
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "files": {
+        "a.c": ""
+      },
+      "args": [
+        "a.o",
+        "b.o"
+      ],
+      "broken": "P := %.o\na.o b.o: $(P): | %.c\n\t@echo built-$@\nP := %.other\n",
+      "working": "P := %.o\na.o b.o: $(P): | %.c\n\t@echo built-$@\nP := %.other\nb.c:;\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "b.c"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built-a.o\nbuilt-b.o\n"
+        }
+      },
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true
+    },
+    {
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "name": "suffix-rule-independent-header",
+      "title": "A conventional suffix rule must not hide a misspelled header",
+      "files": {
+        "source.h": ""
+      },
+      "args": [
+        "probe"
+      ],
+      "broken": "probe: soruce.h\n\t@echo built\n.c.o:\n\t@echo compile\n",
+      "working": "probe: source.h\n\t@echo built\n.c.o:\n\t@echo compile\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "soruce.h"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built\n"
+        }
+      },
+      "source_reduction": "Redis deps/fpconv, hdr_histogram and linenoise Makefiles at the pinned corpus revision use .c.o beside explicit prerequisites."
+    },
+    {
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "name": "suffix-rule-missing-source",
+      "title": "A suffix conversion with no source cannot produce its output",
+      "files": {
+        "present.src": "input\n"
+      },
+      "args": [
+        "probe"
+      ],
+      "broken": "probe: missing.dat\n\t@echo built\n.SUFFIXES: .src .dat\n.src.dat:\n\t@cp $< $@\n",
+      "working": "probe: present.dat\n\t@echo built\n.SUFFIXES: .src .dat\n.src.dat:\n\t@cp $< $@\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "missing.dat"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built\n"
+        }
+      }
+    },
+    {
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "name": "recipe-only-condition-windows_nt",
+      "title": "OS-dependent recipe output does not obscure an independent missing source",
+      "files": {
+        "source.c": ""
+      },
+      "args": [
+        "probe",
+        "OS=Windows_NT"
+      ],
+      "broken": "ifneq (,$(filter Windows%,$(OS)))\nEXT = .exe\nelse\nEXT =\nendif\nprobe: soruce.c\n\t@echo built$(EXT)\n",
+      "working": "ifneq (,$(filter Windows%,$(OS)))\nEXT = .exe\nelse\nEXT =\nendif\nprobe: source.c\n\t@echo built$(EXT)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "soruce.c"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built.exe\n"
+        }
+      },
+      "source_reduction": "LZ4 and zstd lib/dll/example/Makefile select EXT in an OS condition and use it only in recipes."
+    },
+    {
+      "dialect": "GNU Make",
+      "rule": "MK216",
+      "matchers": {},
+      "safe_fix": "withheld",
+      "expected_rumk_detection": true,
+      "name": "recipe-only-condition-linux",
+      "title": "OS-dependent recipe output does not obscure an independent missing source",
+      "files": {
+        "source.c": ""
+      },
+      "args": [
+        "probe",
+        "OS=Linux"
+      ],
+      "broken": "ifneq (,$(filter Windows%,$(OS)))\nEXT = .exe\nelse\nEXT =\nendif\nprobe: soruce.c\n\t@echo built$(EXT)\n",
+      "working": "ifneq (,$(filter Windows%,$(OS)))\nEXT = .exe\nelse\nEXT =\nendif\nprobe: source.c\n\t@echo built$(EXT)\n",
+      "oracle": {
+        "broken": {
+          "exit_code": 2,
+          "stderr_contains": "soruce.c"
+        },
+        "working": {
+          "exit_code": 0,
+          "stdout": "built\n"
+        }
+      },
+      "source_reduction": "LZ4 and zstd lib/dll/example/Makefile select EXT in an OS condition and use it only in recipes."
     }
   ]
 }
