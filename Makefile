@@ -2,6 +2,8 @@
 .PHONY: msrv-check dependency-check check-gnu-fixtures check-corpus fuzz check-fuzz
 .PHONY: release-check benchmark help check-comparison check-semantic
 .PHONY: ci ci-tools ci-quality ci-test ci-compat ci-package check-hooks check-scripts
+.PHONY: release-tools release-validate release-build release-sdist release-checksums
+.PHONY: release-draft release-publish-crate release-pypi-dist release-finalize release-move-action-tag
 .PHONY: vscode-deps vscode-bundle vscode-test vscode-integration vscode-package vscode-verify-packages vscode-publish
 
 # Configuration
@@ -158,6 +160,65 @@ check-fuzz:
 release-check: fmt-check lint test check-gnu-fixtures check-corpus
 	ALLOW_DIRTY=1 ./scripts/validate-release.sh
 
+# Release targets, run by the Release workflow in this order: release-validate,
+# release-build per platform plus release-sdist, release-checksums over the
+# collected RELEASE_DIST, then the publication steps for a pushed tag.
+# pkgid ends in #VERSION or #NAME@VERSION; keep what follows the last separator.
+RELEASE_VERSION ?= $(shell $(CARGO) pkgid --locked | sed 's/.*[^[:alnum:].+-]//')
+RELEASE_TAG ?= v$(RELEASE_VERSION)
+# 0.0.x and suffixed versions are published as GitHub prereleases.
+RELEASE_PRERELEASE ?= $(if $(or $(filter 0.0.%,$(RELEASE_VERSION)),$(findstring -,$(RELEASE_VERSION))),true,false)
+RELEASE_TARGET ?= $(HOST_TARGET)
+RELEASE_FORMAT ?= $(if $(findstring windows,$(RELEASE_TARGET)),zip,tar.gz)
+RELEASE_EXE = $(if $(findstring windows,$(RELEASE_TARGET)),.exe,)
+RELEASE_DIST ?= dist
+# Linux wheels link against an old glibc through zig so they install broadly.
+RELEASE_WHEEL_ARGS = $(if $(findstring linux,$(RELEASE_TARGET)),--compatibility manylinux2014 --zig,)
+RELEASE_MATURIN_SPEC = $(subst maturin,maturin$(if $(findstring linux,$(HOST_TARGET)),[zig],),$(MATURIN_SPEC))
+
+release-tools:
+	$(PYTHON) -m pip install "$(RELEASE_MATURIN_SPEC)"
+
+# Pass RELEASE_EXPECTED=<tag> to require that Cargo.toml names that version.
+RELEASE_EXPECTED ?=
+release-validate:
+	./scripts/validate-release.sh "$(RELEASE_EXPECTED)"
+
+release-build:
+	$(CARGO) build --locked --release --target $(RELEASE_TARGET)
+	target/$(RELEASE_TARGET)/release/$(BINARY_NAME)$(RELEASE_EXE) version
+	target/$(RELEASE_TARGET)/release/$(BINARY_NAME)$(RELEASE_EXE) check Makefile
+	./scripts/package-release.sh $(RELEASE_TARGET) $(RELEASE_VERSION) $(RELEASE_FORMAT)
+	maturin build --locked --release --target $(RELEASE_TARGET) $(RELEASE_WHEEL_ARGS) --out $(RELEASE_DIST)
+
+release-sdist:
+	maturin sdist --out $(RELEASE_DIST)
+
+release-checksums:
+	./scripts/release-checksums.sh $(RELEASE_DIST)
+
+RELEASE_PUBLISH = ./scripts/release-publish.sh
+RELEASE_PUBLISH_ARGS = $(RELEASE_TAG) $(RELEASE_VERSION) $(RELEASE_PRERELEASE) $(RELEASE_DIST)
+
+# Needs GH_TOKEN.
+release-draft:
+	$(RELEASE_PUBLISH) draft $(RELEASE_PUBLISH_ARGS)
+
+# Needs CARGO_REGISTRY_TOKEN.
+release-publish-crate:
+	$(RELEASE_PUBLISH) crate $(RELEASE_PUBLISH_ARGS)
+
+release-pypi-dist:
+	$(RELEASE_PUBLISH) pypi-dist $(RELEASE_PUBLISH_ARGS)
+
+# Needs GH_TOKEN.
+release-finalize:
+	$(RELEASE_PUBLISH) finalize $(RELEASE_PUBLISH_ARGS)
+
+# Needs GH_TOKEN.
+release-move-action-tag:
+	./scripts/move-action-tag.sh $(RELEASE_VERSION)
+
 # The VS Code extension bundles a server built from this checkout for the
 # host platform, so each platform package is built on its own runner.
 vscode-deps:
@@ -211,6 +272,9 @@ help:
 	@echo "  fuzz    - Fuzz every target for FUZZ_TIME seconds (needs nightly)"
 	@echo "  check-fuzz - Type-check the fuzz targets against the library"
 	@echo "  release-check - Run every local release gate and package dry run"
+	@echo "  release-build - Build, smoke-test, and package RELEASE_TARGET into $(RELEASE_DIST)"
+	@echo "  release-sdist - Build the Python source distribution into $(RELEASE_DIST)"
+	@echo "  release-checksums - Write and verify SHA256SUMS for $(RELEASE_DIST)"
 	@echo "  vscode-deps - Install the VS Code extension dependencies"
 	@echo "  vscode-bundle - Build the server bundled into the extension"
 	@echo "  vscode-test - Type-check and unit-test the extension"
