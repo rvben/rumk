@@ -155,7 +155,7 @@ fuzz:
 # unfuzzed. Type-checking the crate needs neither nightly nor a sanitizer, so
 # every commit can afford it.
 check-fuzz:
-	$(CARGO) check --manifest-path fuzz/Cargo.toml --bins
+	$(CARGO) check --locked --manifest-path fuzz/Cargo.toml --bins
 
 release-check: fmt-check lint test check-gnu-fixtures check-corpus
 	ALLOW_DIRTY=1 ./scripts/validate-release.sh
