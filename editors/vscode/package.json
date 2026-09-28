@@ -1,8 +1,8 @@
 {
   "name": "rumk",
-  "displayName": "Rumk \u2014 Makefile Diagnostics & Formatting",
+  "displayName": "Rumk — Makefile Diagnostics & Formatting",
   "description": "Find and fix Makefile bugs with fast, include-aware diagnostics, quick fixes, formatting, and target symbols.",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "rvben",
   "license": "MIT",
   "repository": {
