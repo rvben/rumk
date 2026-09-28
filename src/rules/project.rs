@@ -270,10 +270,10 @@ fn mentioned_outright(project: &Project) -> Mentions {
         for declaration in &symbol.declarations {
             let stem = match declaration.target_pattern.as_deref() {
                 Some(pattern) => {
-                    let Some(pattern) = project.evaluation().expand(pattern).value else {
+                    if pattern.contains(['$', '\\']) {
                         return Mentions::Unread;
-                    };
-                    match pattern_stem(&pattern, target) {
+                    }
+                    match pattern_stem(pattern, target) {
                         Some(stem) => Some(stem.to_string()),
                         None => continue,
                     }

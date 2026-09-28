@@ -136,7 +136,7 @@ impl ProjectSemanticIndex {
                             end_line: rule.end_line,
                             double_colon: rule.double_colon,
                             grouped: rule.grouped,
-                            target_pattern: rule.target_pattern.clone(),
+                            target_pattern: evaluated.target_pattern.clone(),
                             has_recipe: !rule.recipes.is_empty(),
                         });
                         symbol

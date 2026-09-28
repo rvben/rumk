@@ -1938,3 +1938,17 @@ fn reports_a_directory_change_in_an_included_file_against_that_file() {
         Some(dunce::canonicalize(&included).unwrap().as_path())
     );
 }
+
+#[test]
+fn static_target_patterns_use_read_time_values_when_resolving_generated_includes() {
+    for later in ["P := %.other\n", "undefine P\n"] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("Makefile");
+        std::fs::write(directory.path().join("config.mid.src"), "X := 1\n").unwrap();
+        std::fs::write(&root, format!(
+            "include config.mk\nP := %.zz\nconfig.zz: $(P): %.mid\n\t@cp $< $@\n{later}all:\n\t@echo OK\n%.mk: %.mid\n\t@cp $< $@\n%: %.src\n\t@cp $< $@\n"
+        )).unwrap();
+        let diagnostics = MissingInclude.check_project(&load(&root));
+        assert!(diagnostics.is_empty(), "{later}: {diagnostics:?}");
+    }
+}

@@ -99,6 +99,9 @@ pub struct ProjectEvaluation {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluatedRule {
+    /// Static target pattern expanded when the declaration is read.
+    /// Unresolved expressions retain their source spelling.
+    pub target_pattern: Option<String>,
     pub targets: Vec<String>,
     pub prerequisites: Vec<String>,
     pub order_only_prerequisites: Vec<String>,
@@ -432,10 +435,17 @@ impl<'a> Loader<'a> {
                 }
                 LogicalKind::Include(_) => {
                     if let Some(include) = include_at.get(&statement.start_line) {
-                        for expression in &include.paths {
+                        // Make expands the complete list before reading its first file.
+                        let expansions: Vec<_> = include
+                            .paths
+                            .iter()
+                            .map(|expression| self.evaluator.expand(expression))
+                            .collect();
+                        for (expression, expansion) in include.paths.iter().zip(expansions) {
                             self.process_include(
                                 source,
                                 expression,
+                                expansion,
                                 include.optional,
                                 include.line,
                                 activity,
@@ -550,6 +560,7 @@ impl<'a> Loader<'a> {
         &mut self,
         source: SourceId,
         expression: &str,
+        expansion: Expansion,
         optional: bool,
         line: usize,
         activity: Truth,
@@ -569,7 +580,6 @@ impl<'a> Loader<'a> {
             });
             return;
         }
-        let expansion = self.evaluator.expand(expression);
         let Some(value) = expansion
             .value
             .as_deref()
@@ -596,7 +606,14 @@ impl<'a> Loader<'a> {
             self.unread_include |= gap;
             return;
         };
-        for expanded in include_paths(value) {
+        let paths: Vec<_> = include_paths(value)
+            .into_iter()
+            .flat_map(|path| {
+                self.static_include_matches(&path)
+                    .unwrap_or_else(|| vec![path])
+            })
+            .collect();
+        for expanded in paths {
             let (resolution, discovered) = self.resolve_include(&expanded, line);
             self.edges.push(IncludeEdge {
                 from: source,
@@ -696,6 +713,12 @@ impl<'a> Loader<'a> {
                     .entry((source, rule.line))
                     .or_default()
                     .push(EvaluatedRule {
+                        target_pattern: rule.target_pattern.as_ref().map(|pattern| {
+                            self.evaluator
+                                .expand(pattern)
+                                .value
+                                .unwrap_or_else(|| pattern.clone())
+                        }),
                         targets,
                         prerequisites,
                         order_only_prerequisites,
@@ -753,11 +776,73 @@ impl<'a> Loader<'a> {
                 .entry((source, line))
                 .or_default()
                 .push(EvaluatedRule {
+                    target_pattern: None,
                     targets: vec![".PHONY".into()],
                     prerequisites,
                     order_only_prerequisites: Vec::new(),
                 });
         }
+    }
+
+    /// Expand a filename wildcard only within a known directory. Keep complex
+    /// patterns and failed observations opaque, including unmatched patterns
+    /// which Make can attempt to remake as included makefiles.
+    fn static_include_matches(&self, expression: &str) -> Option<Vec<String>> {
+        if !expression.contains(['*', '?'])
+            || expression.contains(['$', '[', ']', '{', '}', '\\', '~'])
+        {
+            return None;
+        }
+        let path = Path::new(expression);
+        let parent = path.parent()?;
+        if parent.to_str()?.contains(['*', '?']) {
+            return None;
+        }
+        let pattern = path.file_name()?.to_str()?;
+        // Globset's recursive ** syntax is not GNU Make glob syntax.
+        if pattern.contains("**") {
+            return None;
+        }
+        let matcher = globset::GlobBuilder::new(pattern)
+            .literal_separator(true)
+            .build()
+            .ok()?
+            .compile_matcher();
+        if matcher.is_match(".") || matcher.is_match("..") {
+            return None;
+        }
+        let directory = self.working_directory.join(parent);
+        let mut candidates = BTreeSet::new();
+        for entry in std::fs::read_dir(&directory).ok()? {
+            candidates.insert(entry.ok()?.file_name().into_string().ok()?);
+        }
+        // Editor buffers can provide included files before they exist on disk.
+        let canonical_directory = canonical_or_normalized(&directory).ok()?;
+        for override_path in self.options.source_overrides.keys() {
+            if override_path.parent() == Some(canonical_directory.as_path()) {
+                candidates.insert(override_path.file_name()?.to_str()?.to_owned());
+            }
+        }
+        let mut matches = Vec::new();
+        for name in candidates {
+            // Sorting and wildcard widths of non-ASCII names depend on locale.
+            if !name.is_ascii() {
+                return None;
+            }
+            if name.starts_with('.') && !pattern.starts_with('.') {
+                continue;
+            }
+            if matcher.is_match(&name) {
+                if name.contains(['$', '*', '?', '[', '\\']) {
+                    return None;
+                }
+                matches.push(parent.join(name).to_str()?.to_owned());
+                if matches.len() > self.options.max_files {
+                    return None;
+                }
+            }
+        }
+        (!matches.is_empty()).then_some(matches)
     }
 
     fn resolve_include(

@@ -323,6 +323,155 @@ fn honors_predefined_variables_and_infers_gnu_default_goal() {
     );
 }
 
+#[test]
+fn static_include_globs_follow_gnu_make_order_and_directory_rules() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::create_dir(directory.path().join("mk")).unwrap();
+    for (name, value) in [("b", "second"), ("a", "first"), (".hidden", "hidden")] {
+        std::fs::write(
+            directory.path().join(format!("mk/{name}.mk")),
+            format!("ORDER += {value}\n"),
+        )
+        .unwrap();
+    }
+    let source = "DIR = mk\ninclude $(DIR)/*.mk\n.PHONY: probe\nprobe:;@echo $(ORDER)\n";
+    std::fs::write(&root, source).unwrap();
+    let project = Project::load(&root, &ProjectOptions::default()).unwrap();
+    assert_eq!(
+        project
+            .edges()
+            .iter()
+            .map(|edge| edge.expanded.as_deref().unwrap())
+            .collect::<Vec<_>>(),
+        ["mk/a.mk", "mk/b.mk"]
+    );
+    assert_eq!(
+        project.evaluation().expand("$(ORDER)").value.as_deref(),
+        Some("first second")
+    );
+    assert!(project
+        .edges()
+        .iter()
+        .all(|edge| matches!(edge.resolution, IncludeResolution::Resolved(_))));
+    let make = std::env::var("GNU_MAKE").unwrap_or_else(|_| "make".into());
+    if std::process::Command::new(&make)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("GNU Make"))
+    {
+        let output = std::process::Command::new(make)
+            .current_dir(directory.path())
+            .env("LC_ALL", "C")
+            .args(["-rR", "-s", "probe"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout).trim(),
+            "first second"
+        );
+    }
+    for pattern in ["mk/?.mk", "mk/a*.mk"] {
+        let project = Project::load_with_root_content(
+            &root,
+            format!("include {pattern}\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert!(project
+            .edges()
+            .iter()
+            .all(|edge| matches!(edge.resolution, IncludeResolution::Resolved(_))));
+    }
+}
+
+#[test]
+fn uncertain_include_globs_keep_dependency_analysis_blocked() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().canonicalize().unwrap().join("Makefile");
+    std::fs::create_dir(directory.path().join("mk")).unwrap();
+    for pattern in [
+        "missing/*.mk",
+        "mk/*.mk",
+        "*/file.mk",
+        "mk/[ab].mk",
+        "mk/**.mk",
+        "$(wildcard mk/*.mk)",
+        "$(UNKNOWN)/*.mk",
+    ] {
+        let project = Project::load_with_root_content(
+            &root,
+            format!("-include {pattern}\n"),
+            &ProjectOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(project.edges().len(), 1, "{pattern}");
+        assert!(
+            matches!(project.edges()[0].resolution, IncludeResolution::Dynamic),
+            "{pattern}"
+        );
+    }
+    std::fs::write(directory.path().join("mk/a.mk"), "VALUE = disk\n").unwrap();
+    let mut options = ProjectOptions::default();
+    options.source_overrides.insert(
+        directory.path().canonicalize().unwrap().join("mk/b.mk"),
+        "VALUE = buffer\n".into(),
+    );
+    let project =
+        Project::load_with_root_content(&root, "include mk/*.mk\n".into(), &options).unwrap();
+    assert_eq!(
+        project.evaluation().expand("$(VALUE)").value.as_deref(),
+        Some("buffer")
+    );
+    options.max_files = 1;
+    let project =
+        Project::load_with_root_content(&root, "include mk/*.mk\n".into(), &options).unwrap();
+    assert!(matches!(
+        project.edges()[0].resolution,
+        IncludeResolution::Dynamic
+    ));
+}
+
+#[test]
+fn include_filename_lists_expand_before_any_fragment_changes_variables() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("Makefile");
+    std::fs::write(directory.path().join("first.mk"), "NEXT = wrong.mk\n").unwrap();
+    std::fs::write(directory.path().join("correct.mk"), "RESULT = correct\n").unwrap();
+    std::fs::write(directory.path().join("wrong.mk"), "RESULT = wrong\n").unwrap();
+    for first in ["first.mk", "first*.mk"] {
+        let source = format!(
+            "NEXT = correct.mk\ninclude {first} $(NEXT)\n.PHONY: probe\nprobe:;@echo $(RESULT)\n"
+        );
+        std::fs::write(&root, &source).unwrap();
+        let project =
+            Project::load_with_root_content(&root, source, &ProjectOptions::default()).unwrap();
+        assert_eq!(
+            project.evaluation().expand("$(RESULT)").value.as_deref(),
+            Some("correct")
+        );
+        let make = std::env::var("GNU_MAKE").unwrap_or_else(|_| "make".into());
+        if std::process::Command::new(&make)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).contains("GNU Make"))
+        {
+            let output = std::process::Command::new(make)
+                .current_dir(directory.path())
+                .args(["-rR", "-s", "probe"])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "correct");
+        }
+    }
+}
+
 /// CPU time the calling thread has spent, which other work on the machine
 /// does not inflate the way it inflates elapsed time.
 #[cfg(unix)]
