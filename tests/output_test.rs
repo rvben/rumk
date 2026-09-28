@@ -9,6 +9,22 @@ fn stdout(command: &mut Command) -> String {
     String::from_utf8(command.output().unwrap().stdout).unwrap()
 }
 
+/// The file and line of each finding in text output. Fields are read from
+/// the right of `path:line:column`, because a Windows path has a colon of
+/// its own.
+fn places(output: &str) -> Vec<(String, usize)> {
+    output
+        .lines()
+        .filter_map(|line| line.split_once(": [MK"))
+        .map(|(location, _)| {
+            let mut fields = location.rsplitn(3, ':');
+            let _column = fields.next().unwrap();
+            let line = fields.next().unwrap().parse().unwrap();
+            (fields.next().unwrap().to_owned(), line)
+        })
+        .collect()
+}
+
 /// A Makefile whose project-level finding (MK201 on line 1) sits above a
 /// file-level one (MK101 on line 4).
 const MIXED: &str = concat!(
@@ -25,11 +41,7 @@ fn text_diagnostics_are_listed_in_line_order() {
     std::fs::write(&path, MIXED).unwrap();
 
     let output = stdout(rumk().args(["check", "--no-config", path.to_str().unwrap()]));
-    let lines: Vec<_> = output
-        .lines()
-        .filter(|line| line.contains(": [MK"))
-        .map(|line| line.split(':').nth(1).unwrap().parse::<usize>().unwrap())
-        .collect();
+    let lines: Vec<_> = places(&output).into_iter().map(|(_, line)| line).collect();
 
     assert_eq!(lines, [1, 4], "{output}");
 }
@@ -64,14 +76,13 @@ fn an_included_file_is_reported_after_the_file_that_includes_it() {
     std::fs::write(directory.path().join("rules.mk"), "x:\n    echo x\n").unwrap();
 
     let output = stdout(rumk().args(["check", "--no-config", path.to_str().unwrap()]));
-    let places: Vec<_> = output
-        .lines()
-        .filter(|line| line.contains(": [MK"))
-        .map(|line| {
-            let mut fields = line.split(':');
-            let file = fields.next().unwrap();
-            let file = std::path::Path::new(file).file_name().unwrap().to_owned();
-            (file, fields.next().unwrap().parse::<usize>().unwrap())
+    let places: Vec<_> = places(&output)
+        .into_iter()
+        .map(|(file, line)| {
+            (
+                std::path::Path::new(&file).file_name().unwrap().to_owned(),
+                line,
+            )
         })
         .collect();
 
@@ -95,11 +106,7 @@ fn a_file_with_invalid_utf8_keeps_its_diagnostics_in_line_order() {
     std::fs::write(&path, content).unwrap();
 
     let output = stdout(rumk().args(["check", "--no-config", path.to_str().unwrap()]));
-    let lines: Vec<_> = output
-        .lines()
-        .filter(|line| line.contains(": [MK"))
-        .map(|line| line.split(':').nth(1).unwrap().parse::<usize>().unwrap())
-        .collect();
+    let lines: Vec<_> = places(&output).into_iter().map(|(_, line)| line).collect();
 
     assert_eq!(lines, [1, 2, 5], "{output}");
 }
