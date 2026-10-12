@@ -135,7 +135,7 @@
     "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
-    "vscode-languageclient": "10.1.1"
+    "vscode-languageclient": "10.1.2"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -145,5 +145,9 @@
     "esbuild": "0.28.2",
     "typescript": "^5.9.3"
   },
-  "preview": true
+  "preview": true,
+  "overrides": {
+    "fast-uri@^3.0.0": "^3.1.8",
+    "brace-expansion@^5.0.0": "^5.0.12"
+  }
 }
