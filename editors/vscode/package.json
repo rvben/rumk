@@ -135,7 +135,7 @@
     "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
-    "vscode-languageclient": "10.1.1"
+    "vscode-languageclient": "11.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
