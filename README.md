@@ -54,6 +54,14 @@ Rumdl so existing users can reuse their workflow.
 
 ## Installation
 
+### Homebrew
+
+```sh
+brew install rvben/tap/rumk
+```
+
+### Other installation methods
+
 ```bash
 cargo install rumk --locked --version 0.1.0
 ```
