@@ -38,7 +38,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Cache Rust build data
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Check formatting, lints, fuzz targets, hooks, and scripts
         run: make ci-quality
@@ -78,7 +78,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust build data
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Test, build, and smoke-test the release binary
         run: make ci-test
@@ -97,7 +97,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust build data
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Verify controlled and production-style fixtures
         run: make ci-compat
@@ -116,7 +116,7 @@ jobs:
           toolchain: 1.85.0
 
       - name: Cache Rust build data
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Check MSRV
         run: make msrv-check
@@ -135,7 +135,7 @@ jobs:
           toolchain: stable
 
       - name: Cache Rust build data
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
 
       - name: Validate metadata, build the wheel and sdist, and smoke-test the wheel
         run: make ci-package
